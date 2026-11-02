@@ -1,0 +1,82 @@
+/* Direction C, "Pebble": soft and native-feeling. Nunito, big radii, white cards on a sage-tinted
+   background, coral for the one primary action, sage for good news, amber when the agent needs you. */
+@import "@fontsource-variable/nunito";
+
+.design-c {
+  --font-sans: "Nunito Variable", -apple-system, "SF Pro Rounded", system-ui, sans-serif;
+  --font-display: "Nunito Variable", -apple-system, "SF Pro Rounded", system-ui, sans-serif;
+  --radius: 1.25rem;
+  --background: oklch(0.97 0.012 150);
+  --foreground: oklch(0.28 0.03 160);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.28 0.03 160);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.28 0.03 160);
+  --primary: oklch(0.68 0.16 35);
+  --primary-foreground: oklch(1 0 0);
+  --secondary: oklch(0.93 0.018 150);
+  --secondary-foreground: oklch(0.28 0.03 160);
+  --muted: oklch(0.94 0.015 150);
+  --muted-foreground: oklch(0.52 0.03 160);
+  --accent: oklch(0.62 0.1 155);
+  --accent-foreground: oklch(1 0 0);
+  --destructive: oklch(0.6 0.2 25);
+  --border: oklch(0.91 0.015 150);
+  --input: oklch(0.91 0.015 150);
+  --ring: oklch(0.68 0.16 35);
+  --amber: oklch(0.78 0.15 80);
+  --amber-soft: oklch(0.96 0.05 90);
+  --sage-soft: oklch(0.94 0.04 155);
+  --coral-soft: oklch(0.95 0.04 35);
+  --blue: oklch(0.6 0.12 250);
+  --blue-soft: oklch(0.94 0.03 250);
+  --chart-1: oklch(0.68 0.16 35);
+  --chart-2: oklch(0.62 0.1 155);
+  --chart-3: oklch(0.78 0.15 80);
+  --chart-4: oklch(0.6 0.12 250);
+  --chart-5: oklch(0.52 0.03 160);
+}
+
+.dark .design-c {
+  --background: oklch(0.17 0.015 160);
+  --foreground: oklch(0.95 0.01 150);
+  --card: oklch(0.23 0.015 160);
+  --card-foreground: oklch(0.95 0.01 150);
+  --popover: oklch(0.26 0.015 160);
+  --popover-foreground: oklch(0.95 0.01 150);
+  --primary: oklch(0.72 0.15 35);
+  --primary-foreground: oklch(0.15 0.02 35);
+  --secondary: oklch(0.29 0.015 160);
+  --secondary-foreground: oklch(0.95 0.01 150);
+  --muted: oklch(0.29 0.015 160);
+  --muted-foreground: oklch(0.7 0.02 155);
+  --accent: oklch(0.7 0.1 155);
+  --accent-foreground: oklch(0.15 0.02 160);
+  --destructive: oklch(0.68 0.18 25);
+  --border: oklch(0.31 0.015 160);
+  --input: oklch(0.31 0.015 160);
+  --ring: oklch(0.72 0.15 35);
+  --amber: oklch(0.8 0.14 80);
+  --amber-soft: oklch(0.3 0.05 80);
+  --sage-soft: oklch(0.3 0.05 155);
+  --coral-soft: oklch(0.32 0.06 35);
+  --blue: oklch(0.7 0.11 250);
+  --blue-soft: oklch(0.3 0.05 250);
+}
+
+.design-c .card {
+  background: var(--card);
+  color: var(--card-foreground);
+  border-radius: var(--radius);
+  box-shadow:
+    0 1px 2px oklch(0 0 0 / 0.04),
+    0 6px 20px -8px oklch(0.3 0.03 160 / 0.12);
+}
+.dark .design-c .card {
+  box-shadow: none;
+  border: 1px solid var(--border);
+}
+.design-c .display {
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
