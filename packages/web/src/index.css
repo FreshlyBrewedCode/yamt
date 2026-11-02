@@ -98,6 +98,8 @@
 }
 
 @theme {
+  /* Display face for headlines and big numbers; the design directions (spike #5) override it. */
+  --font-display: var(--font-sans);
   --font-sans:
     "Inter Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif, "Apple Color Emoji",
     "Segoe UI Emoji", "Noto Color Emoji";
