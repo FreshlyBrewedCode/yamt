@@ -1,0 +1,27 @@
+{
+  "name": "yamt",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "start": "bun packages/server/src/cli.ts start",
+    "dev": "bun packages/server/src/cli.ts start --dev",
+    "build": "bun run --filter @yamt/web build",
+    "lint": "biome check .",
+    "format": "biome check --write .",
+    "typecheck": "bun run --filter '*' typecheck && tsc --noEmit -p e2e",
+    "test": "bun test",
+    "check": "bun run lint && bun run typecheck && bun run test",
+    "e2e": "bun run build && playwright test"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.6.4",
+    "@playwright/test": "1.64.1",
+    "@types/bun": "1.4.4",
+    "@types/node": "24.19.2",
+    "typescript": "7.0.2"
+  }
+}

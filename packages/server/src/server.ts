@@ -1,0 +1,60 @@
+import { Hono } from "hono";
+import type { AuthMode } from "./auth/identity.ts";
+import { ensureDataDir } from "./config.ts";
+import { type Db, openDb } from "./db/index.ts";
+import { createApi } from "./http/api.ts";
+import { staticHandler, WEB_DIST } from "./http/static.ts";
+
+export interface ServerOptions {
+  dataDir: string;
+  /** 0 picks a free port. */
+  port: number;
+  /** Always loopback: remote devices come in through `tailscale serve`. */
+  hostname?: string;
+  /** Serve the built SPA from here; null when Vite serves it (dev mode). */
+  webDist?: string | null;
+  auth: AuthMode;
+  /** Override for tests. */
+  migrationsDir?: string;
+}
+
+export interface AppServer {
+  db: Db;
+  port: number;
+  /** http://localhost:<port>/ */
+  localUrl: string;
+  stop(): Promise<void>;
+}
+
+/** Composition root: data dir, DB, HTTP API and the SPA on one loopback port. */
+export function createServer(opts: ServerOptions): AppServer {
+  const paths = ensureDataDir(opts.dataDir);
+  const db = openDb(paths.db, opts.migrationsDir);
+
+  const app = new Hono();
+  app.route("/api", createApi({ db, auth: opts.auth }));
+  const serveStatic = opts.webDist === null ? null : staticHandler(opts.webDist ?? WEB_DIST);
+
+  const server = Bun.serve({
+    port: opts.port,
+    hostname: opts.hostname ?? "127.0.0.1",
+    fetch(req) {
+      const { pathname } = new URL(req.url);
+      if (pathname === "/api" || pathname.startsWith("/api/")) return app.fetch(req);
+      // /mcp (epic #2, #7) mounts here, behind requireBearer (auth/bearer.ts), not the identity check
+      if (serveStatic) return serveStatic(req);
+      return new Response("not found", { status: 404 });
+    },
+  });
+  const port = server.port!;
+
+  return {
+    db,
+    port,
+    localUrl: `http://localhost:${port}/`,
+    async stop() {
+      await server.stop(true);
+      db.close();
+    },
+  };
+}
