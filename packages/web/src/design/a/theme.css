@@ -1,0 +1,65 @@
+/* Direction A, "Ledger": a kitchen journal on warm paper. Fraunces for headlines and numbers, Inter
+   for everything else, hairline rules instead of cards, one moss-green accent, amber for attention. */
+@import "@fontsource-variable/fraunces";
+
+.design-a {
+  --font-display: "Fraunces Variable", Georgia, "Times New Roman", serif;
+  --radius: 0.25rem;
+  --background: oklch(0.975 0.012 85);
+  --foreground: oklch(0.23 0.02 60);
+  --card: oklch(0.975 0.012 85);
+  --card-foreground: oklch(0.23 0.02 60);
+  --popover: oklch(0.985 0.01 85);
+  --popover-foreground: oklch(0.23 0.02 60);
+  --primary: oklch(0.25 0.02 60);
+  --primary-foreground: oklch(0.975 0.012 85);
+  --secondary: oklch(0.93 0.016 85);
+  --secondary-foreground: oklch(0.23 0.02 60);
+  --muted: oklch(0.935 0.016 85);
+  --muted-foreground: oklch(0.5 0.02 65);
+  --accent: oklch(0.47 0.1 150);
+  --accent-foreground: oklch(0.985 0.01 85);
+  --destructive: oklch(0.55 0.19 27);
+  --border: oklch(0.86 0.016 80);
+  --input: oklch(0.86 0.016 80);
+  --ring: oklch(0.47 0.1 150);
+  --attention: oklch(0.72 0.15 70);
+  --attention-soft: oklch(0.95 0.05 85);
+  --chart-1: oklch(0.47 0.1 150);
+  --chart-2: oklch(0.72 0.15 70);
+  --chart-3: oklch(0.55 0.19 27);
+  --chart-4: oklch(0.5 0.08 250);
+  --chart-5: oklch(0.6 0.02 60);
+}
+
+.dark .design-a {
+  --background: oklch(0.2 0.012 60);
+  --foreground: oklch(0.93 0.014 85);
+  --card: oklch(0.2 0.012 60);
+  --card-foreground: oklch(0.93 0.014 85);
+  --popover: oklch(0.24 0.012 60);
+  --popover-foreground: oklch(0.93 0.014 85);
+  --primary: oklch(0.93 0.014 85);
+  --primary-foreground: oklch(0.2 0.012 60);
+  --secondary: oklch(0.27 0.014 60);
+  --secondary-foreground: oklch(0.93 0.014 85);
+  --muted: oklch(0.27 0.014 60);
+  --muted-foreground: oklch(0.68 0.016 75);
+  --accent: oklch(0.72 0.12 150);
+  --accent-foreground: oklch(0.2 0.012 60);
+  --destructive: oklch(0.68 0.17 25);
+  --border: oklch(0.34 0.014 60);
+  --input: oklch(0.34 0.014 60);
+  --ring: oklch(0.72 0.12 150);
+  --attention: oklch(0.8 0.14 75);
+  --attention-soft: oklch(0.28 0.03 70);
+}
+
+.design-a .display {
+  font-family: var(--font-display);
+  font-variation-settings:
+    "opsz" 72,
+    "SOFT" 30,
+    "WONK" 0;
+  letter-spacing: -0.01em;
+}
