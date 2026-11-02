@@ -29,3 +29,14 @@ export function handleError(err: Error, c: Context): Response {
   console.error("API error", err);
   return c.json<ApiError>({ error: "internal error" }, 500);
 }
+
+/** The request's JSON body (an empty body counts as `{}`); malformed JSON is a 400, not a 500. */
+export async function readJson(c: Context): Promise<unknown> {
+  const text = await c.req.text();
+  if (!text.trim()) return {};
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new HttpError(400, "the body is not valid JSON");
+  }
+}
