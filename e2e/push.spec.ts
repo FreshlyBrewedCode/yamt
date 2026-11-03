@@ -8,9 +8,23 @@ import { type PushResponse, pushPaths } from "../packages/shared/src/api-push.ts
 // PushManager is replaced by a fake that makes a real P-256 key pair and an endpoint on
 // `push.invalid` (a name that never resolves), kept in localStorage across reloads.
 
-/** Replaces PushManager's subscribe/getSubscription with a fake one, before the app loads. */
+/**
+ * Replaces PushManager's subscribe/getSubscription with a fake one, before the app loads, and
+ * makes the Notification permission deterministic (starts "default", "granted" once asked).
+ * Real headless Chromium is not: `context.grantPermissions(["notifications"])` is honoured by a
+ * full browser (e.g. the NixOS chromium used locally) but not by Playwright's own headless
+ * Chromium build, which keeps reporting "denied" regardless — so the app's "blocked" state would
+ * show up here even though nothing actually blocked it. Stubbing the permission instead of
+ * granting it keeps the test's outcome independent of which Chromium build runs it.
+ */
 async function fakePushManager(page: Page) {
   await page.addInitScript(() => {
+    let permission: NotificationPermission = "default";
+    Object.defineProperty(Notification, "permission", { get: () => permission, configurable: true });
+    Notification.requestPermission = async () => {
+      permission = "granted";
+      return permission;
+    };
     const KEY = "e2e-push-subscription";
     const b64 = (bytes: ArrayBuffer | Uint8Array) =>
       btoa(String.fromCharCode(...new Uint8Array(bytes)))
@@ -54,10 +68,8 @@ const subscriptions = async (request: APIRequestContext) =>
 
 test("turn notifications on from the overview, pick events, send a test, turn them off", async ({
   page,
-  context,
   request,
 }) => {
-  await context.grantPermissions(["notifications"]);
   await fakePushManager(page);
   await page.goto("/");
   await page.getByRole("link", { name: "Settings" }).click();
