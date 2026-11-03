@@ -1,6 +1,6 @@
 import { existsSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { defineConfig, devices } from "@playwright/test";
 
 // One throwaway server per run: temp data dir, localhost only, the dev auth bypass (there is no
@@ -42,5 +42,14 @@ export default defineConfig({
     reuseExistingServer: false,
     stdout: "pipe",
     gracefulShutdown: { signal: "SIGTERM", timeout: 5000 },
+    // analyses run against the scripted fake agent, never a real Claude
+    env: {
+      ...(Object.fromEntries(Object.entries(process.env).filter(([, v]) => v !== undefined)) as Record<
+        string,
+        string
+      >),
+      YAMT_ANALYSIS_HARNESS: "custom",
+      YAMT_ANALYSIS_COMMAND: `bun ${resolve("packages/server/test/fake-agent.ts")}`,
+    },
   },
 });
