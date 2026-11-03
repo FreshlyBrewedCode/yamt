@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { MealSummary } from "./api-meals.ts";
 import type { CoreNutrient, NutrientTotals } from "./api-nutrition.ts";
 import type { WeightEntry } from "./api-weight.ts";
+import type { GoalDerivation } from "./goal-calc.ts";
 
 /**
  * Daily goals and the day view (#12). A goal is a set of daily targets in force from a local
@@ -34,6 +35,8 @@ export interface Goal {
   effectiveFrom: string;
   targets: Targets;
   note: string;
+  /** How a guided goal (#24) was calculated; null for targets set by hand. */
+  derivation: GoalDerivation | null;
   createdAt: number;
   updatedAt: number;
 }
