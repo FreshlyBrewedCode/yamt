@@ -1,8 +1,9 @@
 # yamt: architecture
 
 What exists today (the scaffold, #3, the meal backend, #6, the nutrition layer with the yamt
-MCP server, #7, the analysis job over ACP, #8, the transcription worker, #9, and the PWA with
-meal capture, #10), how it fits together, and where wave 1 goes next. Why it is built this way:
+MCP server, #7, the analysis job over ACP, #8, the transcription worker, #9, the PWA with
+meal capture, #10, and the meal detail with questions and corrections, #11), how it fits
+together, and where wave 1 goes next. Why it is built this way:
 [ADR 0001](adr/0001-wave-1-architecture.md). Commands and conventions: [AGENTS.md](../AGENTS.md).
 The design: [design/design.md](design/design.md).
 
@@ -67,7 +68,8 @@ packages/server/src/
   http/                   api.ts (mounts), meals.ts, runs.ts and weight.ts (routes), file-response.ts
                           (media, ranges), middleware.ts (sameOrigin, errors, readJson),
                           origin.ts, static.ts
-  domain/                 errors.ts (HttpError), meals.ts (MealService: captures, retract, analyse),
+  domain/                 errors.ts (HttpError), meals.ts (MealService: captures, retract, analyse,
+                          eaten-at, revision history),
                           revisions.ts (RevisionService: save, views, day summary), foods.ts
                           (FoodService: search, barcode, create), time.ts (days and local times)
   nutrition/              nutrients.ts (OFF/FDC → core set), totals.ts (the only totals), ranking.ts,
@@ -90,19 +92,22 @@ packages/web/
   index.html              iOS/PWA metas, manifest and icon links, the dark-mode switch
   public/                 manifest.webmanifest, icons/ (rendered by scripts/icons.ts)
   sw.js                   the service worker template (vite.config.ts fills in the build's files)
-  test/                   bun tests: the upload queue, the recorder's logic
+  test/                   bun tests: the upload queue, the recorder's logic, the trace parser
 packages/web/src/
   main.tsx                router + query client, starts the upload queue, registers the worker
   routes/                 TanStack file routes: __root.tsx, index.tsx (the overview),
-                          meals.$mealId.tsx (a meal's capture screen); routeTree.gen.ts is generated
+                          meals.$mealId.tsx (a meal: its detail or its capture view); routeTree.gen.ts
+                          is generated
   lib/api.ts, queries.ts  the fetch client and every TanStack Query hook
   lib/outbox/             the upload queue: outbox.ts (Outbox), store.ts (IndexedDB), transport.ts
                           (fetch/XHR), index.ts (the app's queue and its hooks)
   lib/recorder.ts         the recorder's state machine and helpers; hooks/use-recorder.ts wires it
+  lib/trace.ts            a run's NDJSON trace → run metadata and a readable list (parseTrace)
   lib/sw.ts, ids.ts, format.ts  worker registration, client UUIDv7s, number/date formatting
   components/             slab.tsx (the design's primitives), totals-slab, recorder-band,
-                          add-strip (photo/note/link/audio), capture-list; ui/ (shadcn: button,
-                          input, sheet)
+                          add-strip (photo/note/link/audio), capture-list (+ useCaptureRows),
+                          meal-detail (the detail screen), items-list (provenance, confidence,
+                          source), revision-history, trace-view; ui/ (shadcn: button, input, sheet)
   index.css               Tailwind 4 + the D · Slab theme tokens (light/dark)
 e2e/                      Playwright specs (phone viewport)
 docs/adr/                 architecture decision records
@@ -185,14 +190,16 @@ new value never needs a table rebuild.
 - **captures**: the raw material (`audio`, `image`, `text`, `link`, `file`, `correction`,
   `answer`). Media kinds carry `mime_type`, `media_path` (relative to the data dir), `byte_size`,
   `sha256`, `file_name`, and for HEIC/HEIF photos `jpeg_path`/`jpeg_status` (`ok` | `missing`);
-  text-like kinds `text`/`url`; `captured_at` is client-reported, `taken_at` the photo's EXIF
+  text-like kinds `text`/`url` (an `answer` or `correction` is either: typed, with `text`, or
+  spoken, with the recording as its media and a transcript like a voice memo; `isVoice` in
+  `@yamt/shared` tells them apart); `captured_at` is client-reported, `taken_at` the photo's EXIF
   time; `question_id` links an answer to a `meal_questions` row. There is no foreign key (that
   would mean rebuilding this immutable table); captures are only inserted, so an insert trigger
   (`captures_question_of_meal`) enforces the same: the question exists and belongs to the meal.
   The service additionally requires a question of the meal's *current* revision.
   **Immutable**: triggers refuse updates of the raw columns, a second retraction and any delete;
   `retracted_at` is the only change (soft retraction). Meals with captures can't be deleted either.
-- **transcripts**: one per audio capture (`capture_id` is the key), created `pending` with it;
+- **transcripts**: one per voice capture (audio, spoken answer or correction) (`capture_id` is the key), created `pending` with it;
   `done` with text, model, language, duration, `segments` (JSON `[{startMs, endMs, text}]`),
   `elapsed_ms` (the transcription's wall time) and `settings` (JSON: the STT settings it ran
   with), or `failed` with an error. Derived, so replaceable: `upsertPending` resets it for a new
@@ -483,7 +490,7 @@ line: `t` (ms since the run started), `at`, `kind` (`run.start` with harness, mo
 text and hash, then the ACP events above, `run.end` with the verdict, usage and duration). Lines
 are written synchronously, so a crash keeps everything up to it. The run token is redacted
 wherever it appears and image data is replaced by its size. `GET /api/runs/:id/trace` serves the
-file as `application/x-ndjson` (not cached; it grows while the run runs); the UI (#11) renders it.
+file as `application/x-ndjson` (not cached; it grows while the run runs); the meal detail's trace viewer (#11) renders it.
 
 ## Transcription (#9)
 
@@ -575,9 +582,10 @@ All behind the identity check, writes also same-origin; paths in `mealPaths` / `
   including retracted ones, transcripts, and the current revision with items, questions, answers
   and computed totals).
 - `POST /api/meals/:id/captures`: `multipart/form-data` with `file` (+ `id`, `kind`,
-  `capturedAt`) for audio, image and file; JSON for `text`, `link` (http/https `url`),
-  `correction`, `answer` (optional `questionId`: a question of the meal's current revision, else
-  400). A `capturedAt` more than an hour ahead of the server is refused.
+  `capturedAt`, `questionId`) for audio, image and file, and for spoken `answer` / `correction`
+  (audio only; the analysis waits for their transcripts like a memo's); JSON for `text`, `link`
+  (http/https `url`), `correction`, `answer`. An answer's optional `questionId` must be a question
+  of the meal's current revision, else 400 (also on any other kind). A `capturedAt` more than an hour ahead of the server is refused.
 - **Client ids:** meals and captures accept an optional `id` (a UUID; the web app sends UUIDv7s).
   A create with an id that exists answers the stored record with 200 instead of storing it again
   (201 the first time; a capture id of another meal is a 409), so the upload queue can retry after
@@ -588,6 +596,13 @@ All behind the identity check, writes also same-origin; paths in `mealPaths` / `
   409 when retracted); answers the `pending` transcript and the job id.
 - `GET /api/meals/:id` also lists the meal's analysis runs (`runs`, newest first); a revision's
   `runId` names its run. `GET /api/runs/:id` (the run), `GET /api/runs/:id/trace` (NDJSON).
+- `GET /api/meals/:id/revisions` (#11): every revision, newest first, each a full view (items,
+  questions with answers, totals computed from its own items by `computeTotals`), so the UI can
+  show what a correction changed.
+- `PATCH /api/meals/:id` `{eatenAt}` (#11): a time pins it (source `user`: captures and analyses
+  leave it alone; more than an hour ahead is 400); `null` unpins it, and it follows the captures
+  again. A question's `answer` in a revision view is the answer's text, or a spoken answer's
+  transcript (null while pending).
 - `POST /api/weight` (`{kg, measuredAt?, note?}`), `GET /api/weight?from&to&limit`,
   `DELETE /api/weight/:id`.
 
@@ -626,7 +641,7 @@ square corners. The tokens are in `index.css` (shadcn's names mapped onto the pa
 `ink`, `lime`, `lime-soft`, `tint`, `orange` and their foregrounds); the primitives (`Band`,
 `Strip`, `Label`, `SlabButton`, `BottomSlab`, `StatusLabel`) in `components/slab.tsx`.
 
-### Screens (#10)
+### Screens (#10, #11)
 
 - **Overview** (`/`): today's totals as the ink slab (kcal, protein, fat, carbs, fibre; how many
   of today's meals aren't analysed yet; `TotalsSlab` takes `targets` once #12 has them), then the
@@ -635,17 +650,47 @@ square corners. The tokens are in `index.css` (shadcn's names mapped onto the pa
   lime row, failed an orange one. Meals that exist only on this phone so far (started offline)
   are listed from the upload queue; drafts with nothing captured are left out. **Log meal** is the
   sticky lime slab.
-- **Meal** (`/meals/:id`, `?new=1` from Log meal): the capture screen for a new or an existing
-  meal. Log meal makes a UUIDv7 on the phone and opens it; the server learns of the meal with its
-  first capture, so an abandoned "Log meal" leaves nothing behind. Header (time, status, title),
-  for an analysed meal its numbers as the ink slab and its open questions in lime (answered with a
-  memo or note for now; #11 builds the detail with items, provenance, answers, corrections,
-  revisions and the trace between the numbers and the recorder), a failed meal's error in orange,
-  the recorder, the add strip (Photo: `accept="image/*" multiple`, iOS offers camera or library;
+- **Meal** (`/meals/:id`): one route per meal. A meal with an analysis, or a failed one, opens
+  on its **detail** (below); one without (draft, queued or analysing for the first time) on the
+  **capture view**, and so does `?add=1`, the detail's "Add to this meal". The route owns the
+  meal query and hands it down (a second observer would refetch an errored query on mount).
+- **Capture view** (`?new=1` from Log meal): Log meal makes a UUIDv7 on the phone and opens it;
+  the server learns of the meal with its first capture, so an abandoned "Log meal" leaves nothing
+  behind. Header (time, status, title; back goes to the detail when adding), the recorder (the
+  ink slab here), the add strip (Photo: `accept="image/*" multiple`, iOS offers camera or library;
   Audio: `accept="audio/*"` for Voice Memos via Files; Note and Link: sheets), the capture list
   (thumbnail or playback, transcript snippet, upload state, retract with an inline confirm), and
   the bottom slab: Analyse / Analyse queued / Analysing… / Retry analysis / Re-analyse (only with
-  something new since the current revision). Analysing returns to the overview.
+  something new since the current revision). Analysing returns to the overview (to the detail
+  when adding).
+- **Meal detail** (#11, `components/meal-detail.tsx`), top to bottom: the header (back, status
+  chip, the eaten-at time, which opens an editor that PATCHes it, title, summary); a failed
+  analysis's error (orange); the numbers as the ink slab ("preliminary" with open questions,
+  "updating" while re-analysing; on the right the share of kcal that are estimates); the agent's
+  questions in lime, each with why it matters and its kcal impact, a text field, **Speak answer**
+  (recorded in place with the one recorder of the screen and queued at once as a spoken `answer`
+  capture with its `questionId`) and **Skip** (sent as an explicit "No answer: keep your best
+  estimate." answer, so the next analysis stops asking); the items (description, grams, kcal, a
+  provenance marker, a three-step confidence meter; low confidence lime-soft with the agent's
+  note; a tap shows the matched food, its source with a link for OFF/FDC, per-100 g values and
+  the item's share); the assumptions (tint); a free correction (typed, or spoken like an answer);
+  then collapsed rows: captures (with retract, playback, re-transcribe of a failed transcript, and
+  the way to the capture view), revisions (`GET …/revisions` when opened: kcal and the change per
+  revision, what arrived before it, each opening to its items, assumptions, questions with answers
+  and the trace of its run) and the trace of the current revision's run (or the latest run). The
+  bottom slab is the one action: **Answer & re-analyse** / **Correct & re-analyse** /
+  **Re-analyse** / **Retry analysis** (lime) once there is something for the next analysis
+  (typed answers and the correction are sent through the upload queue first, then the analyse
+  entry), disabled with a hint while questions are open, **Add to this meal** (tint) otherwise.
+  The screen stays put while it re-analyses and polls like the overview.
+- **Trace viewer** (`components/trace-view.tsx`, `lib/trace.ts`): fetched only when its row is
+  opened (polled while the run runs). The run's facts (model, harness, start and attempt, how
+  long, outcome, stop reason, tokens, cost when the harness reports it), then the trace as a list:
+  tool calls (name without `mcp__yamt__`, a one-line input summary per known tool, a result
+  summary, the duration from the call to its completed/failed update; a tap shows the full input
+  and output), the agent's messages and thoughts (chunks joined, clamped until tapped),
+  permission decisions, notes (a config option the harness lacks, the harness being stopped) and
+  errors (orange: a failed run, a crashed harness).
 - **Live status:** no push channel; the overview polls `GET /api/meals` every 3 s while a meal is
   queued, analysing or has a pending transcript, the meal screen polls its meal likewise.
 
@@ -708,7 +753,7 @@ The screens merge the queue's entries (`useMealOutbox`) with the server's captur
 
 Meals, captures, media storage, the job queue and weight entries (#6), the nutrition layer
 with the MCP server (#7), the ACP runtime with the analysis job and worker loop (#8), and the
-transcription worker (#9) and the PWA with meal capture (#10) are in. Still to come, in stack
-order: meal detail, questions and corrections (#11); the day view, goals and weight (#12); Web
+transcription worker (#9), the PWA with meal capture (#10) and the meal detail with questions and
+corrections (#11) are in. Still to come, in stack order: the day view, goals and weight (#12); Web
 Push (#13). Spike #4 (speech-to-text) decided ADR 0002; spike #5's chosen design is
 [design/design.md](design/design.md). See the epic for the decisions each one builds on.

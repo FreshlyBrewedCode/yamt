@@ -143,13 +143,34 @@ Units sit next to numbers smaller and muted (`28g`, `72 /160`).
 - **`Strip`**: a section header on tint: display title left (22 px), micro-label meta right.
 - **`Label`**: the micro-label.
 - **`SlabButton`**: a full-width block button, 64 px default, 76 px as the bottom slab;
-  tones `lime`, `ink`, `ghost`; disabled = tint with muted text (never a dimmed lime).
+  tones `lime`, `ink`, `tint`, `ghost`; disabled = tint with muted text (never a dimmed lime).
+  `tint` (full-strength text) is an action that is available but doesn't want the user, like
+  the meal detail's "Add to this meal".
 - **`BottomSlab`**: the sticky footer: an optional tint hint line (why the action waits) above
   one `SlabButton`, padded by the bottom safe area. On the capture screen it is **Analyse**
   (lime when it can be pressed; tint and disabled with nothing captured, while recording, or
   while an upload is refused), "Analyse queued" / "Analysing…" (tint) while it waits or runs,
   "Retry analysis" on a failed meal, and **Re-analyse** on an analysed meal only once something
   new was captured (otherwise no slab).
+- **Meal detail's bottom slab** (#11): lime "Answer & re-analyse" / "Correct & re-analyse" /
+  "Re-analyse" / "Retry analysis" once there is something for the next analysis; disabled with
+  the hint "Answer or skip the question above." while questions are open; tint "Add to this
+  meal" otherwise.
+- **`Disclosure`**: a collapsible 56 px row on the plain page (uppercase title, muted meta,
+  chevron), stacked with dividers; its content mounts only when open, on tint. For what is
+  secondary and heavy: captures, revision history, the trace.
+- **Question band** (lime, #11): a micro-label count, each question in display 22 px with why
+  it matters and its kcal impact in lime-muted, a text field on the page colour, then a true
+  black (`lime-foreground`) "Speak answer" button and a ghost "Skip". A recording in place
+  replaces the field with a stop square, the timer (display 32 px) and a small level meter.
+  Given answers show as quoted text (spoken: play button and transcript) with a remove ✕.
+- **Item row**: description bold, grams in display 20 px with a small "g", kcal muted; under it a
+  provenance marker (shape, not colour: weighed ■ solid, label ■ half, database □ open,
+  estimate ■ faint) and a three-segment confidence meter. Low confidence = `lime-soft` row plus
+  the agent's note. A tap opens the source in the row.
+- **Trace list** (on tint): tool calls as "**name** input summary" with the duration right and
+  "→ result" below, messages under "Agent", thoughts under "Thinking" (muted, clamped), notes
+  muted, errors as orange rows; a tap shows the full input/output in a page-colour block.
 - **Totals slab** (ink): the hero kcal left with its label, a secondary figure right, then a
   4-column grid (Prot, Fat, Carb, Fibre). #12 adds targets: the right figure becomes "left of
   2,400" in lime, each macro gets "/160" and a 6 px bar (track `ink-line`, fill lime). Without

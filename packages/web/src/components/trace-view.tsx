@@ -200,7 +200,7 @@ function Payload({ label, value }: { label: string; value: string }) {
   return (
     <div>
       <Label className="text-[10px] text-muted-foreground">{label}</Label>
-      <pre className="mt-1 max-h-72 overflow-auto whitespace-pre-wrap break-words bg-background p-2 text-xs leading-snug">
+      <pre className="mt-1 max-h-72 overflow-auto font-[inherit] whitespace-pre-wrap break-words bg-background p-2 text-xs leading-snug">
         {value}
       </pre>
     </div>
