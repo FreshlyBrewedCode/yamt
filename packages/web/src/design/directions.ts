@@ -16,6 +16,12 @@ export const directions = [
     name: "Pebble",
     blurb: "Soft and native-feeling: rounded cards, coral and sage, a kcal ring, a round Log meal button.",
   },
+  {
+    key: "d",
+    name: "Slab",
+    blurb:
+      "Round 2, from B: the same type and lime, but built from full-bleed filled bands instead of outlined tiles. Ink for the one thing, lime for what wants you, a tint for the rest.",
+  },
 ] as const;
 
 export const screens = [

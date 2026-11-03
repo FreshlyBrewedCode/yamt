@@ -9,7 +9,7 @@ function Sheet() {
   const direction = directions.find((d) => d.key === dir);
   if (!direction) return <p className="p-4">Unknown direction.</p>;
   return (
-    <div className="fixed inset-0 overflow-auto bg-neutral-200 p-6 text-neutral-900">
+    <div className="fixed inset-0 overflow-auto bg-neutral-200 p-6 text-neutral-900 dark:bg-neutral-800 dark:text-neutral-100">
       <h1 className="mb-4 font-semibold text-xl">
         {direction.key.toUpperCase()} · {direction.name}
       </h1>
@@ -23,7 +23,9 @@ function Sheet() {
               height={844}
               className="block rounded-[28px] border-[6px] border-neutral-800 bg-white shadow-xl"
             />
-            <figcaption className="mt-2 text-center text-neutral-600 text-sm">{s.label}</figcaption>
+            <figcaption className="mt-2 text-center text-neutral-600 text-sm dark:text-neutral-400">
+              {s.label}
+            </figcaption>
           </figure>
         ))}
       </div>

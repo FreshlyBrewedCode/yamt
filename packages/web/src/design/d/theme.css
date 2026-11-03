@@ -1,0 +1,107 @@
+/* Direction D, "Slab": Blockprint's voice (Space Grotesk, big tabular numbers, uppercase micro-labels,
+   acid lime) rebuilt out of full-bleed filled bands. No outlines, no shadows, no floating tiles: sections
+   run edge to edge and are told apart by their fill. Ink for the one thing that matters on a screen, lime
+   for whatever wants the user, a quiet tint for secondary content, plain paper for lists. */
+@import "@fontsource-variable/space-grotesk";
+
+.design-d {
+  --font-sans: "Space Grotesk Variable", "Helvetica Neue", Arial, sans-serif;
+  --font-display: "Space Grotesk Variable", "Helvetica Neue", Arial, sans-serif;
+  --radius: 0rem;
+  --background: oklch(0.985 0.005 95);
+  --foreground: oklch(0.15 0 0);
+  --card: oklch(0.985 0.005 95);
+  --card-foreground: oklch(0.15 0 0);
+  --popover: oklch(0.985 0.005 95);
+  --popover-foreground: oklch(0.15 0 0);
+  --primary: oklch(0.9 0.21 125);
+  --primary-foreground: oklch(0.15 0 0);
+  --secondary: oklch(0.94 0.006 95);
+  --secondary-foreground: oklch(0.15 0 0);
+  --muted: oklch(0.94 0.006 95);
+  --muted-foreground: oklch(0.45 0 0);
+  --accent: oklch(0.9 0.21 125);
+  --accent-foreground: oklch(0.15 0 0);
+  --destructive: oklch(0.62 0.22 30);
+  --border: oklch(0.15 0 0 / 14%);
+  --input: oklch(0.15 0 0 / 14%);
+  --ring: oklch(0.9 0.21 125);
+
+  /* the bands */
+  --ink: oklch(0.15 0 0);
+  --ink-foreground: oklch(0.985 0.005 95);
+  --ink-muted: oklch(0.985 0.005 95 / 60%);
+  --ink-line: oklch(0.985 0.005 95 / 18%);
+  --lime: oklch(0.9 0.21 125);
+  --lime-foreground: oklch(0.15 0 0);
+  --lime-muted: oklch(0.15 0 0 / 60%);
+  --lime-soft: oklch(0.96 0.09 125);
+  --tint: oklch(0.94 0.006 95);
+  --orange: oklch(0.72 0.19 45);
+  --orange-foreground: oklch(0.15 0 0);
+  --chart-1: oklch(0.15 0 0);
+  --chart-2: oklch(0.9 0.21 125);
+  --chart-3: oklch(0.72 0.19 45);
+  --chart-4: oklch(0.62 0.22 30);
+  --chart-5: oklch(0.6 0 0);
+}
+
+/* Dark is its own palette: the page goes near-black, so the "ink" band becomes a raised charcoal slab
+   (lighter than the page, not darker), lime stays lime and tints lift rather than sink. */
+.dark .design-d {
+  --background: oklch(0.13 0 0);
+  --foreground: oklch(0.97 0 0);
+  --card: oklch(0.13 0 0);
+  --card-foreground: oklch(0.97 0 0);
+  --popover: oklch(0.2 0 0);
+  --popover-foreground: oklch(0.97 0 0);
+  --primary: oklch(0.88 0.22 125);
+  --primary-foreground: oklch(0.13 0 0);
+  --secondary: oklch(0.2 0 0);
+  --secondary-foreground: oklch(0.97 0 0);
+  --muted: oklch(0.2 0 0);
+  --muted-foreground: oklch(0.68 0 0);
+  --accent: oklch(0.88 0.22 125);
+  --accent-foreground: oklch(0.13 0 0);
+  --destructive: oklch(0.68 0.21 30);
+  --border: oklch(1 0 0 / 14%);
+  --input: oklch(1 0 0 / 14%);
+  --ring: oklch(0.88 0.22 125);
+
+  --ink: oklch(0.27 0 0);
+  --ink-foreground: oklch(0.97 0 0);
+  --ink-muted: oklch(0.97 0 0 / 60%);
+  --ink-line: oklch(1 0 0 / 16%);
+  --lime: oklch(0.88 0.22 125);
+  --lime-foreground: oklch(0.13 0 0);
+  --lime-muted: oklch(0.13 0 0 / 62%);
+  --lime-soft: oklch(0.3 0.08 125);
+  --tint: oklch(0.2 0 0);
+  --orange: oklch(0.72 0.18 45);
+  --orange-foreground: oklch(0.13 0 0);
+}
+
+.design-d .display {
+  font-weight: 700;
+  letter-spacing: -0.04em;
+  line-height: 0.9;
+}
+.design-d .band-ink {
+  background: var(--ink);
+  color: var(--ink-foreground);
+}
+.design-d .band-lime {
+  background: var(--lime);
+  color: var(--lime-foreground);
+}
+.design-d .band-tint {
+  background: var(--tint);
+}
+.design-d .band-orange {
+  background: var(--orange);
+  color: var(--orange-foreground);
+}
+/* Ink inside lime stays true black in dark too; charcoal on lime would look washed out. */
+.dark .design-d .band-lime .band-ink {
+  background: oklch(0.13 0 0);
+}

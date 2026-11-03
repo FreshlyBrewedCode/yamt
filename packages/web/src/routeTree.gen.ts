@@ -14,6 +14,7 @@ import { Route as DesignIndexRouteImport } from './routes/design/index'
 import { Route as DesignARouteImport } from './routes/design/a'
 import { Route as DesignBRouteImport } from './routes/design/b'
 import { Route as DesignCRouteImport } from './routes/design/c'
+import { Route as DesignDRouteImport } from './routes/design/d'
 import { Route as DesignAIndexRouteImport } from './routes/design/a/index'
 import { Route as DesignAGoalsRouteImport } from './routes/design/a/goals'
 import { Route as DesignALogRouteImport } from './routes/design/a/log'
@@ -26,6 +27,10 @@ import { Route as DesignCIndexRouteImport } from './routes/design/c/index'
 import { Route as DesignCGoalsRouteImport } from './routes/design/c/goals'
 import { Route as DesignCLogRouteImport } from './routes/design/c/log'
 import { Route as DesignCMealRouteImport } from './routes/design/c/meal'
+import { Route as DesignDIndexRouteImport } from './routes/design/d/index'
+import { Route as DesignDGoalsRouteImport } from './routes/design/d/goals'
+import { Route as DesignDLogRouteImport } from './routes/design/d/log'
+import { Route as DesignDMealRouteImport } from './routes/design/d/meal'
 import { Route as DesignSheetDirRouteImport } from './routes/design/sheet/$dir'
 
 const IndexRoute = IndexRouteImport.update({
@@ -51,6 +56,11 @@ const DesignBRoute = DesignBRouteImport.update({
 const DesignCRoute = DesignCRouteImport.update({
   id: '/design/c',
   path: '/design/c',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DesignDRoute = DesignDRouteImport.update({
+  id: '/design/d',
+  path: '/design/d',
   getParentRoute: () => rootRouteImport,
 } as any)
 const DesignAIndexRoute = DesignAIndexRouteImport.update({
@@ -113,6 +123,26 @@ const DesignCMealRoute = DesignCMealRouteImport.update({
   path: '/meal',
   getParentRoute: () => DesignCRoute,
 } as any)
+const DesignDIndexRoute = DesignDIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => DesignDRoute,
+} as any)
+const DesignDGoalsRoute = DesignDGoalsRouteImport.update({
+  id: '/goals',
+  path: '/goals',
+  getParentRoute: () => DesignDRoute,
+} as any)
+const DesignDLogRoute = DesignDLogRouteImport.update({
+  id: '/log',
+  path: '/log',
+  getParentRoute: () => DesignDRoute,
+} as any)
+const DesignDMealRoute = DesignDMealRouteImport.update({
+  id: '/meal',
+  path: '/meal',
+  getParentRoute: () => DesignDRoute,
+} as any)
 const DesignSheetDirRoute = DesignSheetDirRouteImport.update({
   id: '/design/sheet/$dir',
   path: '/design/sheet/$dir',
@@ -124,6 +154,7 @@ export interface FileRoutesByFullPath {
   '/design/a': typeof DesignARouteWithChildren
   '/design/b': typeof DesignBRouteWithChildren
   '/design/c': typeof DesignCRouteWithChildren
+  '/design/d': typeof DesignDRouteWithChildren
   '/design/': typeof DesignIndexRoute
   '/design/a/goals': typeof DesignAGoalsRoute
   '/design/a/log': typeof DesignALogRoute
@@ -134,10 +165,14 @@ export interface FileRoutesByFullPath {
   '/design/c/goals': typeof DesignCGoalsRoute
   '/design/c/log': typeof DesignCLogRoute
   '/design/c/meal': typeof DesignCMealRoute
+  '/design/d/goals': typeof DesignDGoalsRoute
+  '/design/d/log': typeof DesignDLogRoute
+  '/design/d/meal': typeof DesignDMealRoute
   '/design/sheet/$dir': typeof DesignSheetDirRoute
   '/design/a/': typeof DesignAIndexRoute
   '/design/b/': typeof DesignBIndexRoute
   '/design/c/': typeof DesignCIndexRoute
+  '/design/d/': typeof DesignDIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -151,10 +186,14 @@ export interface FileRoutesByTo {
   '/design/c/goals': typeof DesignCGoalsRoute
   '/design/c/log': typeof DesignCLogRoute
   '/design/c/meal': typeof DesignCMealRoute
+  '/design/d/goals': typeof DesignDGoalsRoute
+  '/design/d/log': typeof DesignDLogRoute
+  '/design/d/meal': typeof DesignDMealRoute
   '/design/sheet/$dir': typeof DesignSheetDirRoute
   '/design/a': typeof DesignAIndexRoute
   '/design/b': typeof DesignBIndexRoute
   '/design/c': typeof DesignCIndexRoute
+  '/design/d': typeof DesignDIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -162,6 +201,7 @@ export interface FileRoutesById {
   '/design/a': typeof DesignARouteWithChildren
   '/design/b': typeof DesignBRouteWithChildren
   '/design/c': typeof DesignCRouteWithChildren
+  '/design/d': typeof DesignDRouteWithChildren
   '/design/': typeof DesignIndexRoute
   '/design/a/goals': typeof DesignAGoalsRoute
   '/design/a/log': typeof DesignALogRoute
@@ -172,10 +212,14 @@ export interface FileRoutesById {
   '/design/c/goals': typeof DesignCGoalsRoute
   '/design/c/log': typeof DesignCLogRoute
   '/design/c/meal': typeof DesignCMealRoute
+  '/design/d/goals': typeof DesignDGoalsRoute
+  '/design/d/log': typeof DesignDLogRoute
+  '/design/d/meal': typeof DesignDMealRoute
   '/design/sheet/$dir': typeof DesignSheetDirRoute
   '/design/a/': typeof DesignAIndexRoute
   '/design/b/': typeof DesignBIndexRoute
   '/design/c/': typeof DesignCIndexRoute
+  '/design/d/': typeof DesignDIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -184,6 +228,7 @@ export interface FileRouteTypes {
     | '/design/a'
     | '/design/b'
     | '/design/c'
+    | '/design/d'
     | '/design/'
     | '/design/a/goals'
     | '/design/a/log'
@@ -194,10 +239,14 @@ export interface FileRouteTypes {
     | '/design/c/goals'
     | '/design/c/log'
     | '/design/c/meal'
+    | '/design/d/goals'
+    | '/design/d/log'
+    | '/design/d/meal'
     | '/design/sheet/$dir'
     | '/design/a/'
     | '/design/b/'
     | '/design/c/'
+    | '/design/d/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -211,16 +260,21 @@ export interface FileRouteTypes {
     | '/design/c/goals'
     | '/design/c/log'
     | '/design/c/meal'
+    | '/design/d/goals'
+    | '/design/d/log'
+    | '/design/d/meal'
     | '/design/sheet/$dir'
     | '/design/a'
     | '/design/b'
     | '/design/c'
+    | '/design/d'
   id:
     | '__root__'
     | '/'
     | '/design/a'
     | '/design/b'
     | '/design/c'
+    | '/design/d'
     | '/design/'
     | '/design/a/goals'
     | '/design/a/log'
@@ -231,10 +285,14 @@ export interface FileRouteTypes {
     | '/design/c/goals'
     | '/design/c/log'
     | '/design/c/meal'
+    | '/design/d/goals'
+    | '/design/d/log'
+    | '/design/d/meal'
     | '/design/sheet/$dir'
     | '/design/a/'
     | '/design/b/'
     | '/design/c/'
+    | '/design/d/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -242,6 +300,7 @@ export interface RootRouteChildren {
   DesignARoute: typeof DesignARouteWithChildren
   DesignBRoute: typeof DesignBRouteWithChildren
   DesignCRoute: typeof DesignCRouteWithChildren
+  DesignDRoute: typeof DesignDRouteWithChildren
   DesignIndexRoute: typeof DesignIndexRoute
   DesignSheetDirRoute: typeof DesignSheetDirRoute
 }
@@ -281,6 +340,13 @@ declare module '@tanstack/react-router' {
       path: '/design/c'
       fullPath: '/design/c'
       preLoaderRoute: typeof DesignCRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/design/d': {
+      id: '/design/d'
+      path: '/design/d'
+      fullPath: '/design/d'
+      preLoaderRoute: typeof DesignDRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/design/a/': {
@@ -367,6 +433,34 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DesignCMealRouteImport
       parentRoute: typeof DesignCRoute
     }
+    '/design/d/': {
+      id: '/design/d/'
+      path: '/'
+      fullPath: '/design/d/'
+      preLoaderRoute: typeof DesignDIndexRouteImport
+      parentRoute: typeof DesignDRoute
+    }
+    '/design/d/goals': {
+      id: '/design/d/goals'
+      path: '/goals'
+      fullPath: '/design/d/goals'
+      preLoaderRoute: typeof DesignDGoalsRouteImport
+      parentRoute: typeof DesignDRoute
+    }
+    '/design/d/log': {
+      id: '/design/d/log'
+      path: '/log'
+      fullPath: '/design/d/log'
+      preLoaderRoute: typeof DesignDLogRouteImport
+      parentRoute: typeof DesignDRoute
+    }
+    '/design/d/meal': {
+      id: '/design/d/meal'
+      path: '/meal'
+      fullPath: '/design/d/meal'
+      preLoaderRoute: typeof DesignDMealRouteImport
+      parentRoute: typeof DesignDRoute
+    }
     '/design/sheet/$dir': {
       id: '/design/sheet/$dir'
       path: '/design/sheet/$dir'
@@ -428,11 +522,29 @@ const DesignCRouteChildren: DesignCRouteChildren = {
 const DesignCRouteWithChildren =
   DesignCRoute._addFileChildren(DesignCRouteChildren)
 
+interface DesignDRouteChildren {
+  DesignDGoalsRoute: typeof DesignDGoalsRoute
+  DesignDLogRoute: typeof DesignDLogRoute
+  DesignDMealRoute: typeof DesignDMealRoute
+  DesignDIndexRoute: typeof DesignDIndexRoute
+}
+
+const DesignDRouteChildren: DesignDRouteChildren = {
+  DesignDGoalsRoute: DesignDGoalsRoute,
+  DesignDLogRoute: DesignDLogRoute,
+  DesignDMealRoute: DesignDMealRoute,
+  DesignDIndexRoute: DesignDIndexRoute,
+}
+
+const DesignDRouteWithChildren =
+  DesignDRoute._addFileChildren(DesignDRouteChildren)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   DesignARoute: DesignARouteWithChildren,
   DesignBRoute: DesignBRouteWithChildren,
   DesignCRoute: DesignCRouteWithChildren,
+  DesignDRoute: DesignDRouteWithChildren,
   DesignIndexRoute: DesignIndexRoute,
   DesignSheetDirRoute: DesignSheetDirRoute,
 }
