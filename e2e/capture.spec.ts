@@ -73,9 +73,12 @@ test("log a meal: record, photos, note, link, analyse", async ({ page }) => {
   await expect(row).toContainText("500");
   await expect(page.getByTestId("today-totals").getByTestId("kcal")).not.toHaveText("—");
 
-  // opening it again: its numbers, no Re-analyse until something new is added
+  // opening it again: its detail with the numbers; adding more goes to the capture view, which
+  // offers Re-analyse once something new is there
   await row.click();
   await expect(page.getByTestId("meal-totals")).toContainText("500");
+  await page.getByRole("button", { name: "Add to this meal" }).click();
+  await expect(page).toHaveURL(/\?add=/);
   await expect(page.getByRole("button", { name: "Re-analyse" })).toHaveCount(0);
   await page.getByRole("button", { name: "Add note" }).click();
   await page.getByRole("textbox", { name: "Note", exact: true }).fill("ohne Zucker");

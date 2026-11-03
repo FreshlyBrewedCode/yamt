@@ -54,7 +54,11 @@ function MealRoute() {
   if (detail && (detail.revision || detail.meal.status === "failed") && !search.add) {
     return <MealDetail detail={detail} />;
   }
-  return <MealCapture mealId={mealId} isNew={search.new === true} adding={search.add === true} />;
+  // the query goes along: a second observer mounting here would refetch an errored query, which
+  // flips it back to pending (Loading) and unmounts this again, offline in a loop
+  return (
+    <MealCapture mealId={mealId} query={query} isNew={search.new === true} adding={search.add === true} />
+  );
 }
 
 /**
@@ -63,9 +67,18 @@ function MealRoute() {
  * add notes and links; everything goes through the upload queue (kept on the phone until the
  * server has it); Analyse / Re-analyse at the bottom.
  */
-function MealCapture({ mealId, isNew, adding }: { mealId: string; isNew: boolean; adding: boolean }) {
+function MealCapture({
+  mealId,
+  query,
+  isNew,
+  adding,
+}: {
+  mealId: string;
+  query: ReturnType<typeof useMeal>;
+  isNew: boolean;
+  adding: boolean;
+}) {
   const navigate = useNavigate();
-  const query = useMeal(mealId);
   const detail = query.data ?? null;
   const { snapshot, entries } = useMealOutbox(mealId);
   const [problem, setProblem] = useState<string | null>(null);

@@ -209,10 +209,12 @@ export function parseTrace(text: string): ParsedTrace {
       case "process.exit": {
         const code = num(e.code);
         const stderr = str(e.stderr)?.trim();
-        if ((code !== null && code !== 0) || str(e.signal)) {
-          const how = code !== null ? `exit code ${code}` : `signal ${str(e.signal)}`;
+        const signal = str(e.signal);
+        if ((code !== null && code !== 0) || signal) {
+          const how = code !== null ? `exit code ${code}` : `signal ${signal}`;
           items.push({
-            type: "error",
+            // yamt stops the harness with SIGTERM/SIGKILL once the turn is over: not a failure
+            type: code === null && (signal === "SIGTERM" || signal === "SIGKILL") ? "notice" : "error",
             text: `the harness ended with ${how}${stderr ? `: ${tail(stderr)}` : ""}`,
             t: e.t,
           });

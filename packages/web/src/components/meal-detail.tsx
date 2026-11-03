@@ -274,7 +274,11 @@ export function MealDetail({ detail }: { detail: MealDetailResponse }) {
         refused={refused}
         online={snapshot.online}
         recording={recorder.busy}
-        answers={draftAnswers.length}
+        answers={
+          draftAnswers.length +
+          live.filter((c) => c.kind === "answer" && revisionAt !== null && c.createdAt > revisionAt).length +
+          captureEntries.filter((e) => e.capture.kind === "answer").length
+        }
         openQuestions={questions.filter((q) => !answered.has(q.id)).length - draftAnswers.length}
         correction={draftCorrection !== ""}
         newCaptures={newSince + pendingCaptures}
@@ -772,6 +776,7 @@ function DetailSlab(props: {
   refused: number;
   online: boolean;
   recording: boolean;
+  /** Answers for the next analysis: typed or skipped here, or spoken and already queued. */
   answers: number;
   /** Questions still without an answer, a draft or a skip. */
   openQuestions: number;
