@@ -48,5 +48,7 @@ describe("server", () => {
     const route = await fetch(url("/meals/123"));
     expect(route.status).toBe(200);
     expect(await route.text()).toContain("<title>yamt</title>");
+    // an older build's chunk that is gone is a 404, not index.html served as JavaScript
+    expect((await fetch(url("/assets/app-old.js"))).status).toBe(404);
   });
 });
