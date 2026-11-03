@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { MealRevisionView } from "./api-nutrition.ts";
+import type { MealRevisionView, NutrientTotals } from "./api-nutrition.ts";
 import type { AnalysisRun } from "./api-runs.ts";
 
 /**
@@ -122,19 +122,54 @@ export interface MealSummary extends Meal {
   captureKinds: Partial<Record<CaptureKind, number>>;
   /** The first live photo, for a thumbnail. */
   coverCaptureId: string | null;
+  /** Live audio captures whose transcript is still `pending`. */
+  pendingTranscripts: number;
+  /** The current revision's title; null until the first analysis. */
+  title: string | null;
+  /** The current revision's totals (computed, like every total); null until the first analysis. */
+  totals: NutrientTotals | null;
+  /** Questions of the current revision without an answer yet. */
+  openQuestions: number;
+}
+
+/**
+ * A calendar day's totals over the meals of a `GET /api/meals` answer that were eaten that day
+ * (in the requested zone): every item of their current revisions, computed in code.
+ */
+export interface DayTotals {
+  /** `YYYY-MM-DD` in the zone. */
+  date: string;
+  meals: number;
+  /** Meals of the day without an analysis yet (they count nothing). */
+  unanalysed: number;
+  totals: NutrientTotals;
 }
 
 const epochMs = z.number().int().nonnegative();
 
-/** `POST /api/meals`. `eatenAt` pins the time (source `user`); otherwise the captures set it. */
-export const CreateMealBody = z.object({ eatenAt: epochMs.optional() }).strict();
+/**
+ * A client-chosen id (a UUID, v7 by convention) makes a create idempotent: sending it again
+ * answers what the first request stored instead of storing it twice. The web app's upload queue
+ * relies on it to retry after a lost response.
+ */
+const clientId = z.uuid().optional();
+
+/**
+ * `POST /api/meals`. `eatenAt` pins the time (source `user`); otherwise the captures set it.
+ * With an `id` the create is idempotent (201 the first time, 200 with the stored meal after).
+ */
+export const CreateMealBody = z.object({ id: clientId, eatenAt: epochMs.optional() }).strict();
 export type CreateMealBody = z.infer<typeof CreateMealBody>;
 
-/** `GET /api/meals?from&to&limit`: meals whose `eatenAt` is in [from, to), newest first. */
+/**
+ * `GET /api/meals?from&to&limit&tz`: meals whose `eatenAt` is in [from, to), newest first, and
+ * the totals of each day they fall on, reckoned in `tz` (an IANA zone; the server's by default).
+ */
 export const MealsQuery = z.object({
   from: z.coerce.number().int().nonnegative().optional(),
   to: z.coerce.number().int().nonnegative().optional(),
   limit: z.coerce.number().int().min(1).max(500).default(200),
+  tz: z.string().min(1).max(64).optional(),
 });
 export type MealsQuery = z.infer<typeof MealsQuery>;
 
@@ -144,6 +179,10 @@ export interface MealResponse {
 
 export interface MealsResponse {
   meals: MealSummary[];
+  /** One entry per day with meals in `meals`, newest first. */
+  days: DayTotals[];
+  /** The zone the days are reckoned in. */
+  timeZone: string;
 }
 
 /**
@@ -162,11 +201,15 @@ export interface MealDetailResponse {
 const captureText = z.string().trim().min(1).max(20_000);
 const capturedAt = epochMs.optional();
 
-/** `POST /api/meals/:id/captures` with a JSON body: the text-like kinds. */
+/**
+ * `POST /api/meals/:id/captures` with a JSON body: the text-like kinds. An `id` makes it
+ * idempotent (see `CreateMealBody`): the same id again answers the stored capture with 200.
+ */
 export const JsonCaptureBody = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("text"), text: captureText, capturedAt }).strict(),
+  z.object({ id: clientId, kind: z.literal("text"), text: captureText, capturedAt }).strict(),
   z
     .object({
+      id: clientId,
       kind: z.literal("link"),
       url: z.url({ protocol: /^https?$/ }).max(4_000),
       /** An optional note about the link. */
@@ -174,9 +217,10 @@ export const JsonCaptureBody = z.discriminatedUnion("kind", [
       capturedAt,
     })
     .strict(),
-  z.object({ kind: z.literal("correction"), text: captureText, capturedAt }).strict(),
+  z.object({ id: clientId, kind: z.literal("correction"), text: captureText, capturedAt }).strict(),
   z
     .object({
+      id: clientId,
       kind: z.literal("answer"),
       text: captureText,
       /** The question answered; it must belong to the meal's current revision. */
@@ -192,6 +236,8 @@ export type JsonCaptureBody = z.infer<typeof JsonCaptureBody>;
  * fields. Without `kind` it follows the content (image/*, audio/*, else file).
  */
 export const UploadCaptureFields = z.object({
+  /** Idempotency, as for JSON captures. */
+  id: clientId,
   kind: UploadCaptureKind.optional(),
   capturedAt: z.coerce.number().int().nonnegative().optional(),
 });
