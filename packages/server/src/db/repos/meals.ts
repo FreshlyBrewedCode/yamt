@@ -136,6 +136,14 @@ export class MealRepo {
     return this.get(id);
   }
 
+  /** Unpins `eatenAt`: it follows the captures again (or the creation time without any). */
+  unpinEatenAt(id: string, now = Date.now()): Meal | null {
+    return this.db.transaction(() => {
+      this.db.query("UPDATE meals SET eaten_at_source = 'created' WHERE id = ?").run(id);
+      return this.capturesChanged(id, now);
+    })();
+  }
+
   /**
    * After its captures changed: bumps `updatedAt` and, unless the time was pinned (`user`,
    * `agent`), sets `eatenAt` to the earliest live capture (or back to the creation time).

@@ -185,9 +185,16 @@ export class RevisionService {
     });
     const questions: MealQuestionView[] = this.repos.revisions.questions(revisionId).map((q) => ({
       ...q,
-      answer: q.answeredByCaptureId ? (this.repos.captures.get(q.answeredByCaptureId)?.text ?? null) : null,
+      answer: q.answeredByCaptureId ? this.answerText(q.answeredByCaptureId) : null,
     }));
     return { revision, items: itemViews, questions, totals: totalsOf(items) };
+  }
+
+  /** What an answer says: its text, or a spoken one's transcript (null while it is pending). */
+  private answerText(captureId: string): string | null {
+    const c = this.repos.captures.get(captureId);
+    if (!c) return null;
+    return c.text ?? this.repos.transcripts.get(captureId)?.text ?? null;
   }
 
   /** The meal's current revision, if it has one. */

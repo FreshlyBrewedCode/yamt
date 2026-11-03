@@ -5,6 +5,11 @@
 //
 //   save (default)  saves one revision with an estimated item → the meal is `analysed`
 //   question        saves a revision with a question → `needs_input`
+//   meal[:question] a made-up curry for the UI (#11): creates a label and a custom food, saves
+//                   five items with every provenance, thinks and talks a little; with `question`
+//                   it asks one until the meal has an answer capture. Every correction or answer
+//                   captured since makes the rice 30 g smaller, so revisions differ
+//   auth            fails the prompt with ACP's auth_required (not retried → the meal `failed`)
 //   nosave          ends its turn with a reply and no save_meal_revision
 //   twice           calls save_meal_revision twice (the second is refused)
 //   crash           exits with code 3 mid-turn
@@ -194,6 +199,7 @@ const app = acp
           id: string;
           kind: string;
           text?: string;
+          answersQuestionId?: string;
           media?: { path: string };
           transcript?: { status: string; text: string | null } | null;
         }[];
@@ -221,6 +227,105 @@ const app = acp
       });
 
       switch (script) {
+        case "auth":
+          throw acp.RequestError.authRequired({}, "Not logged in: run `claude` once (fake)");
+        case "meal": {
+          const said = (t: string) =>
+            update({ sessionUpdate: "agent_thought_chunk", content: { type: "text", text: t } });
+          await said("Die Sprachnotiz nennt Kürbis und Linsen, ");
+          await said("das Foto zeigt Reis und eine Kokosmilch-Dose.");
+          await say("Ich lege die Kokosmilch vom Etikett an.");
+          const label = await tool(
+            "create_food",
+            {
+              source: "label",
+              name: "Kokosmilch",
+              brand: "Testmarke",
+              barcode: "0000000000017",
+              per100g: { energyKcal: 178, protein: 1.6, fat: 18, carbohydrate: 2.6, fiber: 0, salt: 0.05 },
+            },
+            c,
+          );
+          const custom = await tool(
+            "create_food",
+            {
+              source: "custom",
+              name: "Rote Currypaste",
+              per100g: { energyKcal: 120, protein: 2, fat: 6, carbohydrate: 12, fiber: 3, salt: 6 },
+            },
+            c,
+          );
+          const foodId = (r: { text: string }) => (JSON.parse(r.text) as { foodId: string }).foodId;
+          const fixes = data.captures.filter((x) => x.kind === "correction" || x.kind === "answer").length;
+          const answered = data.captures.some((x) => x.kind === "answer");
+          const saved = await tool(
+            "save_meal_revision",
+            {
+              mealId,
+              title: "Kürbis-Linsen-Curry mit Reis",
+              summary: "Curry aus Hokkaido, roten Linsen und Kokosmilch, dazu Basmatireis.",
+              assumptions: [
+                "1 EL Olivenöl zum Anbraten angenommen.",
+                "Kokosmilch vollfett, Werte vom Etikett.",
+                "Reisportion aus dem Foto geschätzt.",
+              ],
+              items: [
+                {
+                  description: "Hokkaido-Kürbis",
+                  grams: 220,
+                  estimatePer100g: { energyKcal: 41, protein: 1.7, fat: 0.5, carbohydrate: 8.5, fiber: 2.5 },
+                  provenance: "weighed",
+                  confidence: "high",
+                },
+                {
+                  description: "Rote Linsen, trocken",
+                  grams: 90,
+                  estimatePer100g: { energyKcal: 353, protein: 24, fat: 1.5, carbohydrate: 52, fiber: 11 },
+                  provenance: "weighed",
+                  confidence: "high",
+                },
+                {
+                  description: "Basmatireis, gekocht",
+                  grams: Math.max(60, 180 - 30 * fixes),
+                  estimatePer100g: { energyKcal: 130, protein: 2.7, fat: 0.3, carbohydrate: 28, fiber: 0.4 },
+                  provenance: "estimate",
+                  confidence: fixes > 0 ? "medium" : "low",
+                  note: fixes > 0 ? "Menge laut Antwort." : "Portion aus dem Foto geschätzt.",
+                },
+                {
+                  description: "Kokosmilch",
+                  grams: 100,
+                  foodId: foodId(label),
+                  provenance: "label",
+                  confidence: "high",
+                },
+                {
+                  description: "Rote Currypaste",
+                  grams: 15,
+                  foodId: foodId(custom),
+                  provenance: "database",
+                  confidence: "medium",
+                },
+              ],
+              questions:
+                arg === "question" && !answered
+                  ? [
+                      {
+                        question: "Wie viel Reis war auf dem Teller?",
+                        whyItMatters: "Das Foto lässt etwa 180 g gekocht vermuten, die Notiz sagt nichts.",
+                        impactKcal: 120,
+                      },
+                    ]
+                  : [],
+            },
+            c,
+          );
+          s.record.save = saved;
+          save(s);
+          await say(saved.isError ? `Speichern fehlgeschlagen: ${saved.text}` : "Gespeichert.");
+          await c.close();
+          return stop();
+        }
         case "crash":
           await say("Kurz vor dem Absturz.");
           process.exit(3);

@@ -1,6 +1,6 @@
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import type { RunStatus } from "@yamt/shared";
+import { isVoice, type RunStatus } from "@yamt/shared";
 import { adapters } from "../acp/adapters/index.ts";
 import { httpMcpServer } from "../acp/mcp.ts";
 import type * as acp from "../acp/protocol.ts";
@@ -71,7 +71,7 @@ export class AnalysisJob implements JobHandler<"analyse"> {
       return { status: "failed", error: "nothing to analyse: every capture was retracted", retryable: false };
     }
     const transcripts = new Map(repos.transcripts.listForMeal(mealId).map((t) => [t.captureId, t]));
-    const pending = captures.filter((c) => c.kind === "audio" && transcripts.get(c.id)?.status === "pending");
+    const pending = captures.filter((c) => isVoice(c) && transcripts.get(c.id)?.status === "pending");
     if (pending.length > 0) {
       return {
         status: "reschedule",

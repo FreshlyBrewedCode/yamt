@@ -1,4 +1,4 @@
-import type { Transcript } from "@yamt/shared";
+import { isVoice, type Transcript } from "@yamt/shared";
 import type * as acp from "../acp/protocol.ts";
 import type { CaptureRecord } from "../db/repos/captures.ts";
 import { isoLocal } from "../domain/time.ts";
@@ -140,11 +140,9 @@ export function failedTranscripts(
   captures: CaptureRecord[],
   transcripts: Map<string, Transcript>,
 ): PromptInput["failedTranscripts"] {
-  return captures
-    .filter((c) => c.kind === "audio")
-    .flatMap((c) => {
-      const t = transcripts.get(c.id);
-      if (t && t.status !== "failed") return [];
-      return [{ captureId: c.id, error: t?.error ?? (t ? null : "no transcript") }];
-    });
+  return captures.filter(isVoice).flatMap((c) => {
+    const t = transcripts.get(c.id);
+    if (t && t.status !== "failed") return [];
+    return [{ captureId: c.id, error: t?.error ?? (t ? null : "no transcript") }];
+  });
 }

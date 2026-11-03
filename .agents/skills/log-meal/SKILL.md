@@ -33,7 +33,8 @@ Call `get_meal` first and read every capture before you decide anything:
 - **Text notes** and **links** (`url`): a recipe link goes through `fetch_recipe`; any other
   product or restaurant page you may fetch with web fetch if it helps.
 - **Corrections** and **answers**: the user's word beats everything else, including photos and
-  earlier revisions. An answer names the question it answers (`answersQuestionId`).
+  earlier revisions. An answer names the question it answers (`answersQuestionId`). Either may
+  be spoken: then its words are in `transcript.text`, like a voice memo's.
 - Times: the meal's `eatenAt` and each capture's `at` are local times with offset.
 
 ## 2. Re-analysis: start from the previous revision

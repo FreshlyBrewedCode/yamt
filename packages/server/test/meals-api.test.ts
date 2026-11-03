@@ -7,6 +7,7 @@ import {
   type CaptureResponse,
   type MealDetailResponse,
   type MealResponse,
+  type MealRevisionsResponse,
   type MealsResponse,
   mealPaths,
   type RetractResponse,
@@ -68,8 +69,16 @@ describe("auth", () => {
   test("the new routes need the identity, and writes our origin", async () => {
     expect((await fetch(url(mealPaths.meals))).status).toBe(401);
     expect((await fetch(url(weightPaths.weight))).status).toBe(401);
+    expect((await fetch(url(mealPaths.revisions("x")))).status).toBe(401);
     const cross = await call("POST", mealPaths.meals, {}, { origin: "https://evil.example" });
     expect(cross.status).toBe(403);
+    const patch = await call(
+      "PATCH",
+      mealPaths.meal("x"),
+      { eatenAt: 1 },
+      { origin: "https://evil.example" },
+    );
+    expect(patch.status).toBe(403);
   });
 });
 
@@ -514,6 +523,171 @@ describe("analyse", () => {
     });
     expect(res.body.meal.status).toBe("analysed");
     expect(app.services.repos.jobs.list().some((j) => j.dedupeKey === `analyse:${meal.id}`)).toBe(false);
+  });
+});
+
+/** A revision for a meal, as an analysis would save it: one estimated item of `grams` at 200 kcal/100 g. */
+const saveRevision = (mealId: string, grams: number, questions: string[] = []) =>
+  app.services.revisions.save({
+    mealId,
+    runId: null,
+    title: `Curry ${grams}`,
+    summary: "",
+    eatenAt: null,
+    assumptions: [],
+    items: [
+      {
+        description: "Curry",
+        grams,
+        provenance: "estimate",
+        confidence: "low",
+        estimatePer100g: { energyKcal: 200, protein: 10, fat: 5, carbohydrate: 20, fiber: 2 },
+      },
+    ],
+    questions: questions.map((question) => ({ question, whyItMatters: "rice", impactKcal: 120 })),
+  });
+
+describe("revision history", () => {
+  test("every revision newest first, totals from its own items", async () => {
+    const meal = await newMeal();
+    expect((await call<MealRevisionsResponse>("GET", mealPaths.revisions(meal.id))).body).toEqual({
+      revisions: [],
+    });
+    await call("POST", mealPaths.captures(meal.id), { kind: "text", text: "Curry" });
+    const first = saveRevision(meal.id, 400, ["Wie viel Reis?"]);
+    await call("POST", mealPaths.captures(meal.id), {
+      kind: "answer",
+      text: "Nur 150 g",
+      questionId: first.questions[0]!.id,
+    });
+    saveRevision(meal.id, 300);
+
+    const res = await call<MealRevisionsResponse>("GET", mealPaths.revisions(meal.id));
+    expect(res.status).toBe(200);
+    expect(
+      res.body.revisions.map((r) => [r.revision.number, r.revision.status, r.totals.nutrients.energyKcal]),
+    ).toEqual([
+      [2, "analysed", 600],
+      [1, "needs_input", 800],
+    ]);
+    // an old revision keeps its question and the answer it got
+    expect(res.body.revisions[1]?.questions).toMatchObject([
+      { question: "Wie viel Reis?", answer: "Nur 150 g" },
+    ]);
+    expect((await call("GET", mealPaths.revisions("nope"))).status).toBe(404);
+  });
+});
+
+describe("eaten at", () => {
+  test("PATCH pins the time against captures and the analysis; null follows the captures again", async () => {
+    const meal = await newMeal();
+    const capturedAt = Date.now() - 3_600_000;
+    await call("POST", mealPaths.captures(meal.id), { kind: "text", text: "Brot", capturedAt });
+    const pinned = Date.now() - 5 * 3_600_000;
+    const res = await call<MealResponse>("PATCH", mealPaths.meal(meal.id), { eatenAt: pinned });
+    expect(res.status).toBe(200);
+    expect(res.body.meal).toMatchObject({ eatenAt: pinned, eatenAtSource: "user" });
+
+    await call("POST", mealPaths.captures(meal.id), {
+      kind: "text",
+      text: "Butter",
+      capturedAt: capturedAt - 60_000,
+    });
+    app.services.revisions.save({ ...revisionInput(meal.id), eatenAt: capturedAt - 120_000 });
+    expect(app.services.repos.meals.get(meal.id)).toMatchObject({ eatenAt: pinned, eatenAtSource: "user" });
+
+    const unpinned = await call<MealResponse>("PATCH", mealPaths.meal(meal.id), { eatenAt: null });
+    expect(unpinned.body.meal).toMatchObject({ eatenAt: capturedAt - 60_000, eatenAtSource: "capture" });
+
+    const patch = (body: unknown) => call<ApiError>("PATCH", mealPaths.meal(meal.id), body);
+    expect((await patch({ eatenAt: Date.now() + 86_400_000 })).status).toBe(400);
+    expect((await patch({})).status).toBe(400);
+    expect((await patch({ eatenAt: "yesterday" })).status).toBe(400);
+    expect((await patch({ eatenAt: pinned, status: "analysed" })).status).toBe(400);
+    expect((await call("PATCH", mealPaths.meal("nope"), { eatenAt: pinned })).status).toBe(404);
+  });
+});
+
+const revisionInput = (mealId: string) => ({
+  mealId,
+  runId: null,
+  title: "Brot",
+  summary: "",
+  eatenAt: null,
+  assumptions: [],
+  items: [
+    {
+      description: "Brot",
+      grams: 50,
+      provenance: "estimate" as const,
+      confidence: "medium" as const,
+      estimatePer100g: { energyKcal: 250 },
+    },
+  ],
+  questions: [],
+});
+
+describe("spoken answers and corrections", () => {
+  test("an answer recorded in place: audio media, a transcript, and it answers its question", async () => {
+    const meal = await newMeal();
+    await call("POST", mealPaths.captures(meal.id), { kind: "text", text: "Curry" });
+    const q = saveRevision(meal.id, 400, ["Wie viel Reis?"]).questions[0]!;
+
+    const res = await call<CaptureResponse>(
+      "POST",
+      mealPaths.captures(meal.id),
+      upload(new Blob([fakeM4a()], { type: "audio/mp4" }), "voice-memo.m4a", {
+        kind: "answer",
+        questionId: q.id,
+      }),
+    );
+    expect(res.status).toBe(201);
+    expect(res.body.capture).toMatchObject({
+      kind: "answer",
+      questionId: q.id,
+      mimeType: "audio/mp4",
+      text: null,
+    });
+    expect(res.body.transcript).toMatchObject({ status: "pending" });
+    const id = res.body.capture.id;
+    expect(app.services.repos.jobs.list().some((j) => j.dedupeKey === `transcribe:${id}`)).toBe(true);
+
+    // answered at once; the answer's words arrive with the transcript
+    let detail = (await call<MealDetailResponse>("GET", mealPaths.meal(meal.id))).body;
+    expect(detail.revision?.questions[0]).toMatchObject({ answeredByCaptureId: id, answer: null });
+    app.services.repos.transcripts.complete(id, {
+      text: "Etwa 150 Gramm",
+      model: "fake",
+      language: "de",
+      durationMs: 1200,
+      segments: null,
+    });
+    detail = (await call<MealDetailResponse>("GET", mealPaths.meal(meal.id))).body;
+    expect(detail.revision?.questions[0]?.answer).toBe("Etwa 150 Gramm");
+    expect((await call("POST", mealPaths.transcribe(id))).status).toBe(200);
+
+    // a spoken correction works the same way, without a question
+    const correction = await call<CaptureResponse>(
+      "POST",
+      mealPaths.captures(meal.id),
+      upload(new Blob([fakeM4a()], { type: "audio/mp4" }), "voice-memo.m4a", { kind: "correction" }),
+    );
+    expect(correction.body.capture).toMatchObject({ kind: "correction", questionId: null });
+    expect(correction.body.transcript?.status).toBe("pending");
+  });
+
+  test("refused: not audio, a question of another revision, a question on anything but an answer", async () => {
+    const meal = await newMeal();
+    await call("POST", mealPaths.captures(meal.id), { kind: "text", text: "Curry" });
+    const old = saveRevision(meal.id, 400, ["Wie viel Reis?"]).questions[0]!;
+    saveRevision(meal.id, 300, ["Welches Öl?"]);
+    const post = (fields: Record<string, string>, blob = new Blob([fakeM4a()], { type: "audio/mp4" })) =>
+      call<ApiError>("POST", mealPaths.captures(meal.id), upload(blob, "a.m4a", fields));
+    expect((await post({ kind: "answer", questionId: old.id })).status).toBe(400);
+    expect((await post({ kind: "audio", questionId: old.id })).status).toBe(400);
+    const jpeg = new Blob([fixture("gradient.jpg")], { type: "image/jpeg" });
+    expect((await post({ kind: "answer" }, jpeg)).status).toBe(400);
+    expect((await post({ kind: "correction" }, jpeg)).status).toBe(400);
   });
 });
 
