@@ -17,6 +17,7 @@ bun run dev            # same with Vite HMR (web on port+1, proxying /api)
 bun run format         # biome --write
 # local only, no Tailscale, no auth, scratch data (what agents and the design work use):
 bun packages/server/src/cli.ts start --local --no-auth --data-dir /tmp/yamt-dev [--dev]
+bun packages/server/src/cli.ts mcp-token [--rotate] [--data-dir …]   # print the interactive MCP token
 ```
 
 - `start` and `dev` publish the app on the tailnet with `tailscale serve --https=7444` (foreground;
@@ -28,7 +29,28 @@ bun packages/server/src/cli.ts start --local --no-auth --data-dir /tmp/yamt-dev 
 - `start` rebuilds the web app when its sources are newer than the last build (`--no-build`
   skips the check); `--dev` uses Vite and never needs it.
 - Data lives in `~/.yamt/` (`--data-dir` / `YAMT_DATA_DIR`): `yamt.db`, `media/`, `runs/`,
-  `config.json`. Tests use temp dirs. Never point a test or a scratch run at the real one.
+  `config.json`, `mcp-token`. Tests use temp dirs. Never point a test or a scratch run at the
+  real one.
+- Food data: Open Food Facts needs nothing; USDA FoodData Central needs a key (`FDC_API_KEY`, or
+  `{"fdcApiKey": "…"}` in `<data>/config.json`; free at https://fdc.nal.usda.gov/api-key-signup).
+  Without one, searches skip FDC and say so. Never commit a key; tests use recorded fixtures
+  (`packages/server/test/fixtures/nutrition/`, re-record with its `record.ts`, `DEMO_KEY` works).
+
+### Connecting an interactive session to yamt (MCP)
+
+The repo's `.mcp.json` points Claude Code at the yamt MCP server
+(`http://127.0.0.1:${YAMT_PORT:-7890}/mcp`) with the token from the environment. With yamt
+running (the real one, or a scratch `start --local --no-auth --data-dir /tmp/yamt-dev`):
+
+```sh
+export YAMT_MCP_TOKEN=$(bun packages/server/src/cli.ts mcp-token [--data-dir /tmp/yamt-dev])
+export YAMT_PORT=7890          # only if the server runs on another port
+claude                         # approve the project server "yamt" once; tools: mcp__yamt__*
+```
+
+`claude mcp list` shows "Pending approval" until it is approved. Without the variable the server
+answers 401 and the session just has no yamt tools. The token is a secret: never paste it into
+the repo, an issue or a PR. `mcp-token --rotate` replaces it (the old one stops working at once).
 - On NixOS, Playwright needs a nix chromium: `nix build nixpkgs#chromium -o .chromium` (the
   config picks it up). In CI, `bunx playwright install` provides one.
 - Leave nothing running: stop servers with Ctrl+C or SIGTERM (by PID, not `pkill -f`), which
@@ -54,7 +76,11 @@ API, auth, SQLite), `packages/web` (Vite + React + TanStack Router/Query + Tailw
   `api-<area>.ts`). The server parses every request body with the zod schema.
 - Auth: every `/api` route except `/api/health` sits behind `requireTailnetIdentity`, writes also
   behind `sameOrigin` (`http/api.ts`). Machine clients (`/mcp`) use `requireBearer`
-  (`auth/bearer.ts`), never the identity header.
+  (`auth/bearer.ts`) with `McpTokens`, never the identity header, and only from this machine.
+- Nutrition: the model reads, code computes. Totals only ever come from `computeTotals`
+  (`nutrition/totals.ts`); never store or accept a total from the model. New MCP tools go into
+  `mcp/tools.ts` with a zod schema and a scope (`meal`, `food`, `interactive`), and get a test in
+  `mcp.test.ts` through the SDK client. Tests never hit the network (`fixtureFetch`).
 - Database: `bun:sqlite`, no ORM. SQL lives in repositories (`db/repos/<entity>.ts`, one per
   aggregate, taking a `Db` and returning shared types). Ids are UUIDv7 (`newId()`). Migrations:
   a new `db/migrations/<YYYYMMDDHHmm>_<what>.sql`; never edit an applied one (the runner checks
