@@ -4,17 +4,20 @@ import {
   calculateGoal,
   DAILY_LIFE_KEYS,
   DURATIONS,
+  type Duration,
   defaultChoices,
   FAT_PERCENT,
   GOAL_KINDS,
   type GoalChoices,
   type GoalInputs,
   type GoalResult,
+  goalMethod,
   goalWeight,
   guidedLabel,
   INTENSITIES,
   PACES,
   PROTEIN_PRESETS,
+  rmrEquation,
   TRAINING_TYPES,
 } from "../src/goal-calc.ts";
 
@@ -40,25 +43,82 @@ function calc(inputs: Partial<GoalInputs>, choices: Partial<GoalChoices> = {}): 
 }
 
 describe("resting energy", () => {
-  test("the fixture: Mifflin-St Jeor 1,780, Cunningham 1,996", () => {
-    expect(calc({ bodyFatPct: null }).rmr).toEqual({ kcal: 1780, equation: "mifflin", ffmKg: null });
-    expect(calc({}).rmr).toEqual({ kcal: 1996, equation: "cunningham", ffmKg: 68 });
+  const trainingOf = (sessionsPerWeek: number, minutes: number) => ({
+    ...fixture.training,
+    sessionsPerWeek,
+    minutes: minutes as Duration,
+  });
+
+  test("the fixture: Cunningham 1,996 (lean, 3 × 60 min), Mifflin-St Jeor 1,780 without body fat", () => {
+    expect(calc({}).rmr).toEqual({
+      kcal: 1996,
+      equation: "cunningham",
+      ffmKg: 68,
+      basis: "lean_and_training",
+      alternative: { equation: "mifflin", kcal: 1780 },
+    });
+    expect(calc({ bodyFatPct: null }).rmr).toEqual({
+      kcal: 1780,
+      equation: "mifflin",
+      ffmKg: null,
+      basis: "no_body_fat",
+      alternative: null,
+    });
   });
 
   test("Cunningham only when lean: under 25 % body fat for men, 32 % for women", () => {
     expect(calc({ bodyFatPct: 24.9 }).rmr.equation).toBe("cunningham");
-    expect(calc({ bodyFatPct: 25 }).rmr.equation).toBe("mifflin");
+    expect(calc({ bodyFatPct: 25 }).rmr).toMatchObject({ equation: "mifflin", basis: "not_lean" });
     const woman = { sex: "female" as const, weightKg: 60, heightCm: 165 };
     expect(calc({ ...woman, bodyFatPct: 31 }).rmr.equation).toBe("cunningham");
-    // Mifflin for women: 10·60 + 6.25·165 − 5·30 − 161 = 1,320.25
-    expect(calc({ ...woman, bodyFatPct: 32 }).rmr).toEqual({ kcal: 1320, equation: "mifflin", ffmKg: null });
+    // Mifflin for women: 10·60 + 6.25·165 − 5·30 − 161 = 1,320.25; lean mass 40.8 kg → 1,398
+    expect(calc({ ...woman, bodyFatPct: 32 }).rmr).toEqual({
+      kcal: 1320,
+      equation: "mifflin",
+      ffmKg: 40.8,
+      basis: "not_lean",
+      alternative: { equation: "cunningham", kcal: 1398 },
+    });
   });
 
-  test("the line names the equation and what it rests on", () => {
+  test("and only with training like ten Haaf 2014's athletes: at least 2 sessions and 3 h a week", () => {
+    const eq = (sessions: number, minutes: number) =>
+      rmrEquation({ sex: "male", bodyFatPct: 15, training: trainingOf(sessions, minutes) });
+    expect(eq(2, 90)).toEqual({ equation: "cunningham", basis: "lean_and_training" }); // 3 h
+    expect(eq(3, 60)).toEqual({ equation: "cunningham", basis: "lean_and_training" }); // the fixture
+    expect(eq(4, 45)).toEqual({ equation: "cunningham", basis: "lean_and_training" }); // 3 h
+    expect(eq(3, 45)).toEqual({ equation: "mifflin", basis: "little_training" }); // 2.25 h
+    expect(eq(1, 180)).toEqual({ equation: "mifflin", basis: "little_training" }); // one session
+    expect(eq(0, 90)).toEqual({ equation: "mifflin", basis: "little_training" });
+    // body fat given but little training: Mifflin, with Cunningham as the alternative
+    expect(calc({ training: trainingOf(3, 45) }).rmr).toEqual({
+      kcal: 1780,
+      equation: "mifflin",
+      ffmKg: 68,
+      basis: "little_training",
+      alternative: { equation: "cunningham", kcal: 1996 },
+    });
+    // enough training but not lean: Mifflin
+    expect(calc({ bodyFatPct: 28, training: trainingOf(5, 90) }).rmr).toMatchObject({
+      kcal: 1780,
+      equation: "mifflin",
+      basis: "not_lean",
+    });
+  });
+
+  test("the line names the equation, what it rests on, why it, and what the other gives", () => {
     expect(calc({ bodyFatPct: null }).lines.rmr).toBe(
-      "≈1,780 kcal at rest from height, weight, age and sex (Mifflin-St Jeor, typically ±10 %)",
+      "≈1,780 kcal at rest: Mifflin-St Jeor (1990) from weight, height, age and sex, the most accurate general equation (±10 %)",
     );
-    expect(calc({}).lines.rmr).toContain("lean mass (68.0 kg at 15 % body fat; Cunningham");
+    expect(calc({}).lines.rmr).toBe(
+      "≈2,000 kcal at rest: Cunningham (1980) from your lean mass (68.0 kg at 15 % body fat), because you're lean and train ≥ 3 h a week, the group it was validated for; Mifflin-St Jeor would give ≈1,780",
+    );
+    expect(calc({ training: trainingOf(3, 45) }).lines.rmr).toEndWith(
+      "(±10 %). Cunningham (≈2,000) is for lean people who train ≥ 2 × and ≥ 3 h a week",
+    );
+    expect(calc({ bodyFatPct: 28 }).lines.rmr).toEndWith(
+      "(±10 %). Cunningham (≈1,770) is only for body fat under 25 %",
+    );
   });
 });
 
@@ -71,14 +131,20 @@ describe("maintenance", () => {
     expect(r.exerciseKcal).toBe(107);
     expect(r.maintenance).toEqual({ kcal: 3100, capped: false });
     expect(r.lines.exercise).toBe(
-      "+110 kcal a day for 3 strength sessions a week (60 min), counted conservatively",
+      "+110 kcal a day for 3 strength sessions a week (60 min) at 5 MET (2024 Compendium), counted at 75 %: the body makes up part of it",
     );
+    expect(r.lines.dailyLife).toBe(
+      "× 1.5 for daily life, sitting with some walking (PAL, FAO/WHO and DGE): ≈2,990 kcal without training",
+    );
+    expect(r.lines.maintenance).toBe("≈3,100 kcal a day keeps your weight: resting × daily life + training");
   });
 
   test("no sessions: no training counted, whatever the rest says", () => {
+    // and no Cunningham: Mifflin 1,780 × 1.5
     const r = calc({ training: { ...noTraining, type: "endurance", intensity: "hard" } });
+    expect(r.rmr.equation).toBe("mifflin");
     expect(r.exerciseKcal).toBe(0);
-    expect(r.maintenance.kcal).toBe(2990);
+    expect(r.maintenance.kcal).toBe(2670);
     expect(r.lines.exercise).toBe("No training counted");
   });
 
@@ -97,7 +163,7 @@ describe("pace, caps and floors", () => {
     expect(r.pace).toMatchObject({ rate: 0.5, requested: -440, delta: -440, cap: null });
     expect(r.kcal).toMatchObject({ value: 2660, floorApplied: false });
     expect(r.lines.delta).toBe(
-      "−440 kcal a day for about 0.4 kg (0.5 %) a week; slower cuts keep more muscle",
+      "−440 kcal a day for about 0.4 kg (0.5 %) a week at 7,700 kcal per kg; slower cuts keep more muscle (Helms 2014)",
     );
   });
 
@@ -215,9 +281,10 @@ describe("macros", () => {
   test("the fixture's cut: 160 g protein (2.0 g/kg), 30 % fat, fibre from energy, carbs the rest", () => {
     const r = calc({}, { goal: "cut" });
     expect(r.targets).toEqual({ energyKcal: 2660, protein: 160, fat: 90, carbohydrate: 285, fiber: 35 });
-    expect(r.lines.protein).toBe("160 g ≈ 2.0 g/kg, protects muscle while cutting");
-    expect(r.lines.fat).toBe("90 g ≈ 30 % of energy (DGE); never below 20 %");
-    expect(r.lines.fiber).toBe("at least 35 g (14 g per 1,000 kcal)");
+    expect(r.lines.protein).toBe("160 g ≈ 2.0 g/kg, protects muscle while cutting (Helms 2014, ISSN)");
+    expect(r.lines.fat).toBe("90 g ≈ 30 % of energy, as the DGE recommends; never below 20 %");
+    expect(r.lines.carbs).toBe("285 g, the energy left after protein, fat and fibre");
+    expect(r.lines.fiber).toBe("at least 35 g: 14 g per 1,000 kcal (IOM), above the DGE's 30 g");
     expect(r.split.protein + r.split.fat + r.split.carbs + r.split.fiber).toBeCloseTo(1, 2);
   });
 
@@ -423,8 +490,32 @@ describe("made-up profiles end to end", () => {
       },
       { goal: "bulk" },
     );
-    expect(r.rmr).toEqual({ kcal: 1895, equation: "cunningham", ffmKg: 63.4 });
+    expect(r.rmr).toMatchObject({ kcal: 1895, equation: "cunningham", ffmKg: 63.4 });
     expect(r.maintenance.kcal).toBe(2820);
     expect(r.targets).toEqual({ energyKcal: 3020, protein: 115, fat: 100, carbohydrate: 395, fiber: 40 });
+  });
+});
+
+describe("how it's calculated", () => {
+  test("every formula with its source, by version", () => {
+    const v2 = goalMethod(ALGORITHM_VERSION);
+    expect(ALGORITHM_VERSION).toBe(2);
+    expect(v2.map((m) => m.label)).toEqual([
+      "Resting energy",
+      "Daily life",
+      "Training",
+      "Pace",
+      "Protein",
+      "Fat",
+      "Fibre",
+      "Carbs",
+    ]);
+    expect(v2[0]!.text).toContain("ten Haaf 2014");
+    expect(v2[0]!.text).toContain("≥ 2 × and ≥ 3 h a week");
+    // a v1 goal explains the v1 rule it was made with
+    const v1 = goalMethod(1);
+    expect(v1[0]!.text).toContain("Version 1 used Cunningham");
+    expect(v1[0]!.text).not.toContain("ten Haaf");
+    expect(v1.slice(1)).toEqual(v2.slice(1));
   });
 });

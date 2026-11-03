@@ -2,6 +2,7 @@ import { createFileRoute, useCanGoBack, useRouter } from "@tanstack/react-router
 import {
   ageOf,
   bmiOf,
+  CUNNINGHAM_TRAINING,
   calculateGoal,
   DAILY_LIFE,
   DAILY_LIFE_KEYS,
@@ -22,6 +23,7 @@ import {
   goalWeight,
   INTENSITIES,
   type Intensity,
+  LEAN_BODY_FAT,
   MAX_SESSIONS,
   PACE_LABEL,
   PACE_RATES,
@@ -51,6 +53,7 @@ import {
   type SplitPart,
   Stepper,
 } from "@/components/choice";
+import { GoalMethod } from "@/components/goal-explanation";
 import { Band, BottomSlab, iconButtonClass, Label, SlabButton, Strip } from "@/components/slab";
 import { dayLabel, formatDelta, formatKg, formatNumber, localDate, startOfDay } from "@/lib/format";
 import { useGoals, useProfile, useRecentWeight, useSaveGuidedGoal } from "@/lib/queries";
@@ -517,9 +520,11 @@ function YouStep({
         <Band className="px-5 pt-4 pb-5">
           <Label className="text-muted-foreground">Why these</Label>
           <p className="mt-2 font-medium text-muted-foreground text-sm">
-            Sex, age, height and weight give your resting energy (Mifflin-St Jeor). With body fat under 25 %
-            (men) or 32 % (women), yamt uses your lean mass instead (Cunningham), which fits lean, active
-            people better. A smart scale's figure is good enough.
+            Sex, age, height and weight give your resting energy (Mifflin-St Jeor). If you're lean (body fat
+            under {LEAN_BODY_FAT.male} % for men, {LEAN_BODY_FAT.female} % for women) and train at least{" "}
+            {CUNNINGHAM_TRAINING.minSessions} times and {CUNNINGHAM_TRAINING.minHours} hours a week, yamt uses
+            your lean mass instead (Cunningham), the equation validated for that group. A smart scale's figure
+            is good enough.
           </p>
         </Band>
       )}
@@ -875,6 +880,7 @@ function Review({
           {weight.basis === "average" ? ` (7-day average of ${weight.count})` : ""}.
         </p>
       </Band>
+      <GoalMethod version={r.version} />
     </>
   );
 }

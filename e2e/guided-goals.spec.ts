@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, type Page, test } from "@playwright/test";
 
 // Guided goal setup (#24) on the phone: the research report's fixture (man, 30 y, 180 cm, 80 kg,
 // 15 % body fat, sitting with some walking, 3 strength sessions of 60 min), cut at the standard
@@ -69,8 +69,24 @@ test("guided setup: refusals, five steps, live presets, saved from today with it
   await expect(slab.getByTestId("review-fat")).toContainText("90g");
   await expect(slab.getByTestId("review-carbs")).toContainText("285g");
   await expect(slab.getByTestId("review-fiber")).toContainText("35g");
-  await expect(page.getByText("160 g ≈ 2.0 g/kg, protects muscle while cutting")).toBeVisible();
-  await expect(page.getByText(/at rest from your lean mass/)).toBeVisible();
+  // every number names its formula or source
+  await expect(
+    page.getByText("160 g ≈ 2.0 g/kg, protects muscle while cutting (Helms 2014, ISSN)"),
+  ).toBeVisible();
+  await expect(
+    page.getByText(/Cunningham \(1980\) from your lean mass .* Mifflin-St Jeor would give ≈1,780$/),
+  ).toBeVisible();
+  await expect(page.getByText(/at 5 MET \(2024 Compendium\), counted at 75 %/)).toBeVisible();
+  // and how it's calculated, closed until asked
+  const method = page.getByTestId("goal-method");
+  await expect(method).not.toContainText("ten Haaf");
+  await method.getByRole("button", { name: "How this is calculated" }).click();
+  await expect(method).toContainText("ten Haaf 2014");
+  await expect(method).toContainText("A starting estimate");
+  await expect(method.getByTestId("goal-research")).toHaveAttribute(
+    "href",
+    /reports\/Goal%20setting%20research\.md$/,
+  );
   await expect(page.getByTestId("split-bar")).toHaveAttribute("aria-label", /Prot 24 %, Fat 30 %, Carb 43 %/);
 
   // back keeps the answers
@@ -110,6 +126,9 @@ test("guided setup: refusals, five steps, live presets, saved from today with it
   await page.getByRole("button", { name: /^Why these targets/ }).click();
   await expect(page.getByTestId("goal-explanation")).toContainText("Guided · cut, gentle pace");
   await expect(page.getByTestId("goal-explanation")).toContainText("190 g ≈ 2.4 g/kg");
+  await expect(page.getByTestId("goal-explanation")).toContainText("Algorithm v2");
+  await page.getByTestId("goal-why").getByRole("button", { name: "How this is calculated" }).click();
+  await expect(page.getByTestId("goal-why").getByTestId("goal-method")).toContainText("Cunningham (1980)");
   await page.getByRole("button", { name: /^History/ }).click();
   await expect(page.locator('[data-testid="goal-row"][data-in-force="true"]')).toContainText(
     "Guided · cut, gentle pace",
@@ -134,3 +153,58 @@ test("guided setup: refusals, five steps, live presets, saved from today with it
   await next.click();
   await expect(page.getByTestId("pace-gentle")).toHaveAttribute("aria-pressed", "true");
 });
+
+// A goal saved by algorithm v1 keeps its stored explanation, and "How this is calculated" shows
+// v1's rule (Cunningham whenever lean), not today's.
+test("a v1 guided goal explains itself as v1 did", async ({ page }) => {
+  await page.goto("/goals");
+  await saveFixtureGoal(page);
+  await page.route("**/api/goals", async (route) => {
+    const res = await route.fetch();
+    const body = await res.json();
+    for (const goal of body.goals) {
+      const d = goal.derivation;
+      if (!d) continue;
+      d.version = 1;
+      d.result.version = 1;
+      d.result.rmr = { kcal: 1996, equation: "cunningham", ffmKg: 68 };
+      d.result.lines.rmr =
+        "≈2,000 kcal at rest from your lean mass (68.0 kg at 15 % body fat; Cunningham, suits lean, active people)";
+      d.result.lines.protein = "160 g ≈ 2.0 g/kg, protects muscle while cutting";
+    }
+    await route.fulfill({ response: res, json: body });
+  });
+  await page.reload();
+  const why = page.getByTestId("goal-why");
+  await why.getByRole("button", { name: /^Why these targets/ }).click();
+  await expect(why.getByTestId("goal-explanation")).toContainText("Cunningham, suits lean, active people");
+  await expect(why.getByTestId("goal-explanation")).toContainText(
+    "160 g ≈ 2.0 g/kg, protects muscle while cutting",
+  );
+  await expect(why.getByTestId("goal-explanation")).toContainText("Algorithm v1");
+  await why.getByRole("button", { name: "How this is calculated" }).click();
+  await expect(why.getByTestId("goal-method")).toContainText("Version 1 used Cunningham");
+  await expect(why.getByTestId("goal-method")).not.toContainText("ten Haaf");
+});
+
+/** The fixture as a guided goal from today, through the API (what the flow posts). */
+async function saveFixtureGoal(page: Page) {
+  const origin = new URL(page.url()).origin;
+  const res = await page.request.post("/api/goals/guided", {
+    headers: { origin },
+    data: {
+      profile: {
+        sex: "male",
+        birthYear: new Date().getFullYear() - 30,
+        heightCm: 180,
+        bodyFatPct: 15,
+        dailyLife: "some_walking",
+        training: { sessionsPerWeek: 3, minutes: 60, type: "strength", intensity: "moderate" },
+      },
+      choices: { goal: "cut", pace: "standard", protein: "high", fatPercent: 30 },
+      pregnantOrBreastfeeding: false,
+      weightKg: 80,
+    },
+  });
+  expect(res.status()).toBe(201);
+}

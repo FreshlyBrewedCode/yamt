@@ -333,7 +333,7 @@ describe("guided goals and the profile (#24)", () => {
       rmr: { kcal: 1996, equation: "cunningham" },
       maintenance: { kcal: 3100 },
     });
-    expect(d.result.lines.protein).toBe("160 g ≈ 2.0 g/kg, protects muscle while cutting");
+    expect(d.result.lines.protein).toBe("160 g ≈ 2.0 g/kg, protects muscle while cutting (Helms 2014, ISSN)");
     expect(guidedLabel(d)).toBe("Guided · cut, standard pace");
 
     expect((await req<WeightResponse>("GET", weightPaths.weight)).body.entries.map((e) => e.kg)).toEqual([

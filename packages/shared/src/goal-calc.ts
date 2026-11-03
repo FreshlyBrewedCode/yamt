@@ -7,14 +7,23 @@ import type { Targets } from "./api-goals.ts";
  * save and stores its result, so stored targets never come from the client's arithmetic.
  *
  * The numbers and their sources: `reports/Goal setting research.md`. Resting energy by
- * Mifflin-St Jeor (Cunningham when body fat is known and lean), a daily-life PAL plus a
+ * Mifflin-St Jeor (Cunningham when body fat is known, lean, and training matches the people it
+ * was validated on), a daily-life PAL plus a
  * discounted exercise term, the pace as % body weight per week (7,700 kcal/kg), protein in g/kg
  * of a reference weight, fat as a share of energy with a floor, fibre from energy, carbs as the
  * remainder (EU energy factors; carbs exclude fibre, which counts 2 kcal/g).
  */
 
-/** Bump when a rule or a number changes: every stored derivation records the version it ran. */
-export const ALGORITHM_VERSION = 1;
+/**
+ * Bump when a rule or a number changes: every stored derivation records the version it ran.
+ * v2: Cunningham only for lean people who train like ten Haaf 2014's recreational athletes; the
+ * lines name their formula or source.
+ */
+export const ALGORITHM_VERSION = 2;
+
+/** The research report on GitHub: what every number rests on. */
+export const GOAL_RESEARCH_URL =
+  "https://github.com/FreshlyBrewedCode/yamt/blob/main/reports/Goal%20setting%20research.md";
 
 export const SEXES = ["female", "male"] as const;
 export type Sex = (typeof SEXES)[number];
@@ -146,13 +155,49 @@ const FAT_FLOOR_G_PER_KG = 0.6;
 
 const CARBS_LOW_G = 130;
 
+/** Body fat below which someone counts as lean (%, by sex). */
+export const LEAN_BODY_FAT: Record<Sex, number> = { male: 25, female: 32 };
+/**
+ * Cunningham (lean mass) only for the people it was validated on: recreational athletes, who
+ * trained at least twice and 3 hours a week (ten Haaf 2014's inclusion criteria; O'Neill 2023).
+ * Everyone else gets Mifflin-St Jeor, also with body fat given.
+ */
+export const CUNNINGHAM_TRAINING = { minSessions: 2, minHours: 3 } as const;
+
+export type RmrEquation = "mifflin" | "cunningham";
+
+/** Why one equation and not the other: the second only exists with body fat given. */
+export type RmrBasis = "no_body_fat" | "not_lean" | "little_training" | "lean_and_training";
+
+/** Which resting-energy equation the inputs call for (v2), and why. */
+export function rmrEquation(inputs: Pick<GoalInputs, "sex" | "bodyFatPct" | "training">): {
+  equation: RmrEquation;
+  basis: RmrBasis;
+} {
+  const { sex, bodyFatPct: bf, training: t } = inputs;
+  if (bf === null) return { equation: "mifflin", basis: "no_body_fat" };
+  if (bf >= LEAN_BODY_FAT[sex]) return { equation: "mifflin", basis: "not_lean" };
+  const sessions = Math.max(0, Math.min(MAX_SESSIONS, Math.round(t.sessionsPerWeek)));
+  const trains =
+    sessions >= CUNNINGHAM_TRAINING.minSessions &&
+    (sessions * t.minutes) / 60 >= CUNNINGHAM_TRAINING.minHours - 1e-9;
+  return trains
+    ? { equation: "cunningham", basis: "lean_and_training" }
+    : { equation: "mifflin", basis: "little_training" };
+}
+
+export const mifflinOf = (sex: Sex, weightKg: number, heightCm: number, age: number): number =>
+  10 * weightKg + 6.25 * heightCm - 5 * age + (sex === "male" ? 5 : -161);
+
+export const cunninghamOf = (ffmKg: number): number => 500 + 22 * ffmKg;
+
 /** What the user is, does and weighs: the questions of the flow's first three steps. */
 export interface GoalInputs {
   sex: Sex;
   birthYear: number;
   heightCm: number;
   weightKg: number;
-  /** Optional; switches to Cunningham when lean. */
+  /** Optional; switches to Cunningham when lean and training enough (`rmrEquation`). */
   bodyFatPct: number | null;
   dailyLife: DailyLife;
   training: Training;
@@ -198,7 +243,16 @@ export interface GoalResult {
   version: number;
   age: number;
   bmi: number;
-  rmr: { kcal: number; equation: "mifflin" | "cunningham"; ffmKg: number | null };
+  rmr: {
+    kcal: number;
+    equation: RmrEquation;
+    /** Lean mass, with body fat given (v1: only when Cunningham ran). */
+    ffmKg: number | null;
+    /** v2: why this equation (absent in v1 derivations). */
+    basis?: RmrBasis;
+    /** v2: what the other equation gives, with body fat given; null without (absent in v1). */
+    alternative?: { equation: RmrEquation; kcal: number } | null;
+  };
   pal: number;
   /** Resting × PAL: a day without training. */
   dailyLifeKcal: number;
@@ -360,11 +414,20 @@ function trainingWords(t: Training): string {
 }
 
 const PROTEIN_WHY: Record<ProteinPreset, (goal: GoalKind) => string> = {
-  basic: () => "covers everyday needs without training (the DGE minimum is 0.8 g/kg)",
-  moderate: (goal) => (goal === "bulk" ? "enough to build muscle" : "where muscle gain levels off"),
-  high: (goal) => (goal === "cut" ? "protects muscle while cutting" : "generous; more than most people need"),
-  very_high: () => "the upper end; more brings nothing extra",
+  basic: () => "covers everyday needs without training (DGE minimum 0.8 g/kg)",
+  moderate: (goal) =>
+    goal === "bulk"
+      ? "enough to build muscle (Morton 2018: gains level off at 1.6)"
+      : "where muscle gain levels off (Morton 2018)",
+  high: (goal) =>
+    goal === "cut"
+      ? "protects muscle while cutting (Helms 2014, ISSN)"
+      : "the top of the ISSN range; more than most people need",
+  very_high: () => "the upper end for lean cuts (Helms 2014); more brings nothing extra",
 };
+
+/** "5", "6.5": a MET value without a trailing zero. */
+const fmtMet = (n: number): string => String(n);
 
 /**
  * Daily targets from inputs and choices, with the intermediate values and one explanation line
@@ -380,12 +443,18 @@ export function calculateGoal(inputs: GoalInputs, choices: GoalChoices): GoalCal
   const bmi = bmiOf(w, h);
   const notes: string[] = [];
 
-  // 1. resting energy: Cunningham from lean mass when lean, else Mifflin-St Jeor
-  const lean = bf !== null && bf < (sex === "male" ? 25 : 32);
-  const ffmKg = lean ? round(w * (1 - bf / 100), 0.1) : null;
-  const rmr = Math.round(
-    ffmKg !== null ? 500 + 22 * ffmKg : 10 * w + 6.25 * h - 5 * age + (sex === "male" ? 5 : -161),
-  );
+  // 1. resting energy: Cunningham from lean mass for lean people who train enough, else Mifflin-St Jeor
+  const { equation, basis } = rmrEquation(inputs);
+  const ffmKg = bf !== null ? round(w * (1 - bf / 100), 0.1) : null;
+  const mifflin = Math.round(mifflinOf(sex, w, h, age));
+  const cunningham = ffmKg !== null ? Math.round(cunninghamOf(ffmKg)) : null;
+  const rmr = equation === "cunningham" ? cunningham! : mifflin;
+  const alternative =
+    cunningham === null
+      ? null
+      : equation === "cunningham"
+        ? { equation: "mifflin" as const, kcal: mifflin }
+        : { equation: "cunningham" as const, kcal: cunningham };
 
   // 2. daily life, 3. training (net of resting, discounted, averaged over the week)
   const pal = DAILY_LIFE[inputs.dailyLife].pal;
@@ -505,27 +574,24 @@ export function calculateGoal(inputs: GoalInputs, choices: GoalChoices): GoalCal
   // the explanation, one line per number
   const kgWord = `${fmt1(Math.abs(kgPerWeek))} kg (${fmtRate(Math.abs(percentPerWeek))} %)`;
   const lines: GoalLines = {
-    rmr:
-      ffmKg !== null
-        ? `≈${fmt(round(rmr, 10))} kcal at rest from your lean mass (${fmt1(ffmKg)} kg at ${fmt(bf!)} % body fat; Cunningham, suits lean, active people)`
-        : `≈${fmt(round(rmr, 10))} kcal at rest from height, weight, age and sex (Mifflin-St Jeor, typically ±10 %)`,
-    dailyLife: `× ${pal.toFixed(2).replace(/0$/, "")} for daily life, ${DAILY_LIFE[inputs.dailyLife].label.toLowerCase()}: ≈${fmt(round(dailyLifeKcal, 10))} kcal without training`,
+    rmr: rmrLine(rmr, basis, ffmKg, bf, alternative?.kcal ?? null, sex),
+    dailyLife: `× ${pal.toFixed(2).replace(/0$/, "")} for daily life, ${DAILY_LIFE[inputs.dailyLife].label.toLowerCase()} (PAL, FAO/WHO and DGE): ≈${fmt(round(dailyLifeKcal, 10))} kcal without training`,
     exercise:
       sessions === 0
         ? "No training counted"
-        : `+${fmt(round(exerciseKcal, 10))} kcal a day for ${trainingWords({ ...training, sessionsPerWeek: sessions })}, counted conservatively`,
-    maintenance: `≈${fmt(maintenance)} kcal a day keeps your weight`,
+        : `+${fmt(round(exerciseKcal, 10))} kcal a day for ${trainingWords({ ...training, sessionsPerWeek: sessions })} at ${fmtMet(met)} MET (2024 Compendium), counted at 75 %: the body makes up part of it`,
+    maintenance: `≈${fmt(maintenance)} kcal a day keeps your weight: resting × daily life + training`,
     delta:
       goal === "maintain" && delta === 0
         ? "No deficit or surplus: eat at maintenance"
         : goal === "maintain"
           ? `${signed(delta)} kcal a day, up to the floor`
-          : `${signed(delta)} kcal a day for about ${kgWord} a week; ${
+          : `${signed(delta)} kcal a day for about ${kgWord} a week at 7,700 kcal per kg; ${
               floorApplied || cap
                 ? "limited, see below"
                 : goal === "cut"
-                  ? "slower cuts keep more muscle"
-                  : "a small surplus adds less fat"
+                  ? "slower cuts keep more muscle (Helms 2014)"
+                  : "a small surplus adds less fat (Helms 2023)"
             }`,
     protein: proteinCapped
       ? `${fmt(protein)} g, capped at 35 % of energy (${fmt1(protein / referenceWeightKg)} g/kg)`
@@ -534,11 +600,14 @@ export function calculateGoal(inputs: GoalInputs, choices: GoalChoices): GoalCal
         : `${fmt(protein)} g ≈ ${fmt1(gPerKg)} g/kg${referenceWeightKg !== w ? ` of ${fmt1(referenceWeightKg)} kg (your weight at BMI 25)` : ""}, ${PROTEIN_WHY[choices.protein](goal)}`,
     fat: fatFloorApplied
       ? `${fmt(fat)} g ≈ ${pct(split.fat)} of energy, raised to the floor of 0.6 g/kg`
-      : `${fmt(fat)} g ≈ ${pct(split.fat)} of energy${fatPercent === 30 ? " (DGE)" : ""}; never below 20 %`,
+      : `${fmt(fat)} g ≈ ${pct(split.fat)} of energy${fatPercent === 30 ? ", as the DGE recommends" : " (DGE: 30 %)"}; never below 20 %`,
     carbs: carbsLow
-      ? `${fmt(carbs)} g, the rest: under the usual 130 g`
-      : `${fmt(carbs)} g, the rest, for training and fibre-rich food`,
-    fiber: fiber > 30 ? `at least ${fmt(fiber)} g (14 g per 1,000 kcal)` : `at least ${fmt(fiber)} g (DGE)`,
+      ? `${fmt(carbs)} g, the energy left after protein, fat and fibre: under the usual 130 g`
+      : `${fmt(carbs)} g, the energy left after protein, fat and fibre`,
+    fiber:
+      fiber > 30
+        ? `at least ${fmt(fiber)} g: 14 g per 1,000 kcal (IOM), above the DGE's 30 g`
+        : `at least ${fmt(fiber)} g (DGE)`,
   };
 
   return {
@@ -546,7 +615,7 @@ export function calculateGoal(inputs: GoalInputs, choices: GoalChoices): GoalCal
     version: ALGORITHM_VERSION,
     age,
     bmi: round(bmi, 0.1),
-    rmr: { kcal: rmr, equation: ffmKg !== null ? "cunningham" : "mifflin", ffmKg },
+    rmr: { kcal: rmr, equation, ffmKg, basis, alternative },
     pal,
     dailyLifeKcal,
     exerciseKcal,
@@ -579,6 +648,86 @@ export function calculateGoal(inputs: GoalInputs, choices: GoalChoices): GoalCal
     targets: { energyKcal: kcal, protein, fat, carbohydrate: carbs, fiber },
   };
 }
+
+/** The resting-energy line: the equation, what it rests on, why it and not the other. */
+function rmrLine(
+  rmr: number,
+  basis: RmrBasis,
+  ffmKg: number | null,
+  bf: number | null,
+  other: number | null,
+  sex: Sex,
+): string {
+  const at = `≈${fmt(round(rmr, 10))} kcal at rest`;
+  const otherKcal = other === null ? "" : `≈${fmt(round(other, 10))}`;
+  const { minSessions, minHours } = CUNNINGHAM_TRAINING;
+  const mifflin = `${at}: Mifflin-St Jeor (1990) from weight, height, age and sex, the most accurate general equation (±10 %)`;
+  switch (basis) {
+    case "lean_and_training":
+      return `${at}: Cunningham (1980) from your lean mass (${fmt1(ffmKg!)} kg at ${fmt(bf!)} % body fat), because you're lean and train ≥ ${minHours} h a week, the group it was validated for; Mifflin-St Jeor would give ${otherKcal}`;
+    case "not_lean":
+      return `${mifflin}. Cunningham (${otherKcal}) is only for body fat under ${LEAN_BODY_FAT[sex]} %`;
+    case "little_training":
+      return `${mifflin}. Cunningham (${otherKcal}) is for lean people who train ≥ ${minSessions} × and ≥ ${minHours} h a week`;
+    case "no_body_fat":
+      return mifflin;
+  }
+}
+
+export interface MethodItem {
+  /** "Resting energy", "Protein", … */
+  label: string;
+  text: string;
+}
+
+/**
+ * How a version calculates, formula by formula with short citations: the "How this is
+ * calculated" disclosure. By version, so an old goal explains the rules it was made with.
+ */
+export function goalMethod(version: number): MethodItem[] {
+  const { minSessions, minHours } = CUNNINGHAM_TRAINING;
+  const mifflin =
+    "Mifflin-St Jeor (1990): 10 × kg + 6.25 × cm − 5 × age, + 5 for men, − 161 for women, the most accurate general equation (Frankenfield 2005).";
+  const rest =
+    version <= 1
+      ? `${mifflin} Version 1 used Cunningham (1980), 500 + 22 × lean kg, whenever body fat was under 25 % (men) or 32 % (women).`
+      : `${mifflin} Cunningham (1980), 500 + 22 × lean kg, only with body fat under 25 % (men) or 32 % (women) and training ≥ ${minSessions} × and ≥ ${minHours} h a week: the recreational athletes it was validated on (ten Haaf 2014, O'Neill 2023).`;
+  return [
+    { label: "Resting energy", text: rest },
+    {
+      label: "Daily life",
+      text: "Resting × a physical activity level (PAL) for a usual day without training: 1.4 mostly sitting, 1.5 some walking, 1.65 on your feet, 1.85 physical work (FAO/WHO/UNU 2004, DGE).",
+    },
+    {
+      label: "Training",
+      text: "Per session (MET − 1) × hours × resting / 24, MET values from the 2024 Adult Compendium, averaged over the week. Counted at 75 %: the body compensates about a quarter (Careau 2021) and training tends to be overestimated. Maintenance stays under 2.4 × resting.",
+    },
+    {
+      label: "Pace",
+      text: "% of body weight a week × 7,700 kcal per kg. Cuts 0.25–0.75 % (Helms 2014, Garthe 2011), at most 25 % below maintenance and 1,000 kcal; bulks 0.1–0.4 % (Iraki 2019), at most 15 % above. Never under 1,200 kcal (women) or 1,500 (men), a cut never under resting energy.",
+    },
+    {
+      label: "Protein",
+      text: "Grams per kg, of the weight at BMI 25 above it (DGE): 1.2 everyday, 1.6 where muscle gain levels off (Morton 2018), 2.0 the top of the ISSN range and for cuts (Helms 2014), 2.4 the upper end. At least 0.8 (DGE; 1.0 from 65), at most 35 % of energy.",
+    },
+    {
+      label: "Fat",
+      text: "30 % of energy (DGE), adjustable 20–40 %; never under 20 % (EFSA, ACSM) or 0.6 g per kg.",
+    },
+    {
+      label: "Fibre",
+      text: "At least 30 g (DGE), or 14 g per 1,000 kcal when that's more (IOM).",
+    },
+    {
+      label: "Carbs",
+      text: "The rest: (kcal − 4 × protein − 9 × fat − 2 × fibre) / 4, EU energy factors; carbs exclude fibre.",
+    },
+  ];
+}
+
+/** Under the method: what the numbers are, and what corrects them. */
+export const METHOD_FOOTER =
+  "A starting estimate: any equation is off by about ±10 % for one person. Your weight trend over the next weeks will show what you really burn, and the targets get adjusted to it.";
 
 /** "Guided · cut, standard pace" for a goal's history. */
 export function guidedLabel(d: Pick<GoalDerivation, "choices">): string {

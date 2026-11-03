@@ -698,10 +698,16 @@ percentages rather than raw kcal and grams. The research behind every number:
   again on save and stores its result, so stored targets never come from the client's
   arithmetic. Change a rule or a number → bump `ALGORITHM_VERSION`; old goals keep the
   derivation they were made with.
-- **v1, in short:** resting energy by Mifflin-St Jeor, or Cunningham (`500 + 22·FFM`) when body
-  fat is given and under 25 % (men) / 32 % (women); × a daily-life PAL (1.40 / 1.50 / 1.65 /
-  1.85, exercise excluded); plus training at 75 % of `sessions × hours × (MET − 1) × RMR/24`
-  per week, per day; maintenance rounded to 10, capped at 2.4 × resting. The pace in % body
+- **v2, in short:** resting energy by Mifflin-St Jeor (`rmrEquation`), or Cunningham
+  (`500 + 22·FFM`) only for the people it was validated on: body fat given and under 25 % (men)
+  / 32 % (women) **and** training of at least 2 sessions and 3 hours a week (ten Haaf 2014's
+  inclusion criteria for recreational athletes; `LEAN_BODY_FAT`, `CUNNINGHAM_TRAINING`). Always
+  one named equation, never a blend; with body fat given the result also carries the other
+  equation's value (`rmr.alternative`) and the reason (`rmr.basis`). v1 used Cunningham whenever
+  body fat was lean, whatever the training: lean-mass resting energy times a PAL calibrated on
+  population equations overshot for people who train little. The rest is as in v1: × a
+  daily-life PAL (1.40 / 1.50 / 1.65 / 1.85, exercise excluded); plus training at 75 % of
+  `sessions × hours × (MET − 1) × RMR/24` per week, per day; maintenance rounded to 10, capped at 2.4 × resting. The pace in % body
   weight per week (cut 0.25 / 0.5 / 0.75, bulk 0.1 / 0.25 / 0.4) at 7,700 kcal/kg, a cut's
   deficit at most 25 % of maintenance and 1,000 kcal, a bulk's surplus at most 15 %; never under
   1,200 / 1,500 kcal, a cut never under resting. Protein in g per kg of a reference weight
@@ -710,6 +716,14 @@ percentages rather than raw kcal and grams. The research behind every number:
   factors (carbs exclude fibre, which counts 2 kcal/g), so 4P + 9F + 4C + 2·fibre matches the
   kcal within ±10 after rounding to 5 g. Defaults: protein by training, goal and age, the
   standard pace, fat 30 %.
+- **Transparent by construction:** every explanation line names its formula or source
+  (equation and year with its inputs and why it was chosen, PAL with FAO/WHO and DGE, MET from
+  the 2024 Compendium and the 75 % discount, 7,700 kcal/kg, the protein tier's reference, DGE
+  for fat and fibre, carbs as the remainder). `goalMethod(version)` lists each formula with its
+  short citation for the "How this is calculated" disclosure, by version, so a v1 goal still
+  explains v1's rule; `METHOD_FOOTER` says it's a starting estimate the weight trend corrects,
+  and `GOAL_RESEARCH_URL` links the research report. Stored v1 derivations stay as they were
+  (their lines and numbers; `rmr.basis` and `rmr.alternative` are absent).
 - **The weight** comes from the log (`goalWeight`): the mean of the last 7 days with at least 4
   entries, else the newest entry. A weight typed in the flow is logged as an entry on save and
   then counts like any other.
@@ -842,7 +856,8 @@ square corners. The tokens are in `index.css` (shadcn's names mapped onto the pa
   maintain / bulk, then the paces with what they mean ("≈ 0.4 kg a week, −440 kcal a day"). 5
   **Your targets**: the kcal in the ink slab with maintenance, the change and the macro split
   bar; the explanation lines per section with the pace, protein and fat presets and a fat
-  slider, all live; notes on floors and caps; **Save · from today** posts the inputs and choices
+  slider, all live; notes on floors and caps; a closed "How this is calculated" disclosure
+  (`GoalMethod`, also under a goal's "Why these targets"); **Save · from today** posts the inputs and choices
   (not the numbers) and goes back. The profile (`useProfile`) and the guided goal in force
   pre-fill the next run ("Recalculate").
 - Back buttons (`BackButton`) go back in the app's history, or to the overview when the screen

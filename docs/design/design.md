@@ -240,7 +240,12 @@ Units sit next to numbers smaller and muted (`28g`, `72 /160`).
   the grams. Then a strip per number (Energy, Protein, Fat, Carbs, Fibre; meta "160 g · 24 %"),
   its explanation lines (15 px, medium, foreground: they are content the user reads) and its
   presets right under them. Floors, caps and warnings are a tint band of "■" lines at the end,
-  never orange (nothing failed), with the reminder that it's a starting estimate.
+  never orange (nothing failed), with the reminder that it's a starting estimate. Every line
+  names its formula or source in a few words ("Mifflin-St Jeor (1990)", "5 MET (2024
+  Compendium)", "(Helms 2014)"); the formulas in full sit in a closed `Disclosure` "How this is
+  calculated" at the end (micro-label per number, the formula and its short citation on tint,
+  the starting-estimate sentence, an underlined link to the research report). A goal's "Why
+  these targets" ends with the same disclosure, nested under a divider.
 - **Guided row** (#24, goals screen): a 72 px row under "Daily targets" with a compass, the
   caption ("Guided setup", or "Recalculate" once a profile exists) and a muted line; **lime**
   while no goal is in force (setting one wants the user), **tint** once there is one. A guided
