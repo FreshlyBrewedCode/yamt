@@ -1,22 +1,46 @@
-import { Camera, FileAudio, Link2, type LucideIcon, NotebookPen, X } from "lucide-react";
+import { Camera, ClipboardPaste, FileAudio, Link2, type LucideIcon, NotebookPen, X } from "lucide-react";
 import { useRef, useState } from "react";
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet";
+import { capturesFromPaste, type PasteFallback, pasteFromClipboard, readDataTransfer } from "@/lib/clipboard";
+import type { PendingCapture } from "@/lib/outbox";
 import { Label, SlabButton } from "./slab";
 
 export interface AddHandlers {
   onFiles: (kind: "image" | "audio", files: File[]) => void;
   onNote: (text: string) => void;
   onLink: (url: string, note: string) => void;
+  /** What Paste found: images, audio, links and notes, each a capture of its own. */
+  onCaptures: (captures: PendingCapture[]) => void;
 }
 
 /**
- * Add more: four equal targets under the recorder. Photo opens iOS's camera-or-library choice
- * (several at once), Audio the Files picker (long Voice Memos recordings), Note and Link a sheet.
+ * Add more: five equal targets under the recorder. Photo opens iOS's camera-or-library choice
+ * (several at once), Audio the Files picker (long Voice Memos recordings), Note and Link a sheet,
+ * Paste reads the clipboard (iOS asks with its own "Paste" callout) and falls back to a sheet
+ * to paste into when it can't, or found nothing it could use.
  */
-export function AddStrip({ onFiles, onNote, onLink, disabled }: AddHandlers & { disabled?: boolean }) {
+export function AddStrip({
+  onFiles,
+  onNote,
+  onLink,
+  onCaptures,
+  disabled,
+}: AddHandlers & { disabled?: boolean }) {
   const photos = useRef<HTMLInputElement>(null);
   const audio = useRef<HTMLInputElement>(null);
-  const [sheet, setSheet] = useState<"note" | "link" | null>(null);
+  const [sheet, setSheet] = useState<"note" | "link" | "paste" | null>(null);
+  const [fallback, setFallback] = useState<PasteFallback | null>(null);
+
+  const paste = async () => {
+    // first thing in the tap: iOS only lets a gesture read the clipboard
+    const res = await pasteFromClipboard();
+    if ("captures" in res) {
+      onCaptures(res.captures);
+      return;
+    }
+    setFallback(res);
+    setSheet("paste");
+  };
 
   const pick = (kind: "image" | "audio") => (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = [...(e.target.files ?? [])];
@@ -29,18 +53,25 @@ export function AddStrip({ onFiles, onNote, onLink, disabled }: AddHandlers & { 
     ["Note", NotebookPen, () => setSheet("note")],
     ["Link", Link2, () => setSheet("link")],
     ["Audio", FileAudio, () => audio.current?.click()],
+    ["Paste", ClipboardPaste, () => void paste()],
   ];
 
   return (
     <>
-      <div className="grid grid-cols-4 divide-x divide-border border-border border-b">
+      <div className="grid grid-cols-5 divide-x divide-border border-border border-b">
         {targets.map(([label, Icon, onClick]) => (
           <button
             key={label}
             type="button"
             onClick={onClick}
             disabled={disabled}
-            aria-label={label === "Audio" ? "Attach audio file" : `Add ${label.toLowerCase()}`}
+            aria-label={
+              label === "Audio"
+                ? "Attach audio file"
+                : label === "Paste"
+                  ? "Paste from the clipboard"
+                  : `Add ${label.toLowerCase()}`
+            }
             className="flex h-[68px] flex-col items-center justify-center gap-1 font-bold text-xs uppercase tracking-[0.08em] outline-none focus-visible:bg-lime-soft active:bg-lime active:text-lime-foreground disabled:text-muted-foreground"
           >
             <Icon className="size-6" strokeWidth={2.5} />
@@ -81,6 +112,15 @@ export function AddStrip({ onFiles, onNote, onLink, disabled }: AddHandlers & { 
           setSheet(null);
         }}
       />
+      <PasteSheet
+        open={sheet === "paste"}
+        fallback={fallback}
+        onClose={() => setSheet(null)}
+        onAdd={(captures) => {
+          onCaptures(captures);
+          setSheet(null);
+        }}
+      />
     </>
   );
 }
@@ -111,7 +151,9 @@ function CaptureSheet({
         onOpenAutoFocus={(e) => {
           // focus the field, not the close button, so the keyboard comes up at once
           e.preventDefault();
-          (e.currentTarget as HTMLElement).querySelector<HTMLElement>("textarea, input")?.focus();
+          (e.currentTarget as HTMLElement)
+            .querySelector<HTMLElement>("textarea, input, [contenteditable]")
+            ?.focus();
         }}
       >
         <div className="flex items-end justify-between px-5 pt-5 pb-4">
@@ -232,6 +274,98 @@ function LinkSheet({
       <SlabButton onClick={add} disabled={!valid}>
         Add link
       </SlabButton>
+    </CaptureSheet>
+  );
+}
+
+/** Why the sheet is open, in one quiet line: what the Paste button ran into. */
+const FALLBACK_TEXT: Record<PasteFallback["reason"], string> = {
+  unsupported: "This browser doesn't let the Paste button read the clipboard.",
+  denied: "Reading the clipboard wasn't allowed.",
+  failed: "The clipboard couldn't be read.",
+  nothing: "The Paste button found nothing yamt can use.",
+};
+
+const typeList = (types: string[]) => (types.length ? types.join(", ") : "nothing at all");
+
+/**
+ * The paste fallback: a target to touch and hold (iOS's callout then offers Paste), whose
+ * `paste` event can carry files the clipboard API doesn't, maybe a copied voice memo. What
+ * arrives is added at once; if nothing usable does, the sheet says so and lists the types the
+ * clipboard offered, so it's clear what the other app put there.
+ */
+function PasteSheet({
+  open,
+  fallback,
+  onClose,
+  onAdd,
+}: {
+  open: boolean;
+  fallback: PasteFallback | null;
+  onClose: () => void;
+  onAdd: (captures: PendingCapture[]) => void;
+}) {
+  const [offered, setOffered] = useState<string[] | null>(null);
+  const close = () => {
+    setOffered(null);
+    onClose();
+  };
+  const onPaste = async (e: React.ClipboardEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    const { files, strings } = readDataTransfer(e.clipboardData);
+    const res = await capturesFromPaste(files, strings);
+    if (res.captures.length > 0) {
+      setOffered(null);
+      onAdd(res.captures);
+    } else {
+      setOffered(res.offered);
+    }
+  };
+  const before = fallback?.reason === "nothing" ? fallback.offered : null;
+  return (
+    <CaptureSheet open={open} onClose={close} title="Paste" description="From the clipboard">
+      {/* contenteditable, not a textarea: iOS offers Paste on a long press only on something
+          editable, and only rich editing takes images and files */}
+      {/* biome-ignore lint/a11y/useSemanticElements: a textarea would take only text (see above) */}
+      <div
+        contentEditable
+        suppressContentEditableWarning
+        role="textbox"
+        aria-label="Paste here"
+        tabIndex={0}
+        onPaste={(e) => void onPaste(e)}
+        // nothing is typed here: only what is pasted counts
+        onBeforeInput={(e) => e.preventDefault()}
+        onInput={(e) => {
+          e.currentTarget.textContent = "";
+        }}
+        onDrop={(e) => e.preventDefault()}
+        className="relative flex min-h-36 w-full items-center justify-center bg-lime px-5 py-6 text-lime-foreground caret-transparent outline-none focus-visible:ring-4 focus-visible:ring-foreground/40 focus-visible:ring-inset"
+        data-testid="paste-target"
+      >
+        <span
+          className="pointer-events-none flex select-none flex-col items-center gap-2 text-center"
+          aria-hidden
+        >
+          <ClipboardPaste className="size-8" strokeWidth={2.5} />
+          <span className="font-bold text-lg">Touch and hold here, then Paste</span>
+        </span>
+      </div>
+      {offered !== null ? (
+        <div className="bg-orange px-5 py-3 text-orange-foreground" role="alert" data-testid="paste-nothing">
+          <p className="font-bold">Nothing usable on the clipboard.</p>
+          <p className="mt-1 break-words font-medium text-sm">It had: {typeList(offered)}</p>
+        </div>
+      ) : (
+        fallback && (
+          <div className="bg-tint px-5 py-3" role="status" data-testid="paste-why">
+            <p className="font-medium text-muted-foreground text-sm">
+              {FALLBACK_TEXT[fallback.reason]}
+              {before && <> It had: {typeList(before)}.</>} Pasting here can bring more along, like audio.
+            </p>
+          </div>
+        )
+      )}
     </CaptureSheet>
   );
 }
