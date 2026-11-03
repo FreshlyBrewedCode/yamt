@@ -154,3 +154,45 @@
     padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left);
   }
 }
+
+/* A slider (#24, the fat share): a square 28 px thumb in the foreground on an 8 px tint track,
+   44 px tall to touch. No rounded browser chrome. */
+@layer components {
+  .slab-range {
+    appearance: none;
+    width: 100%;
+    height: 44px;
+    background: transparent;
+    outline: none;
+    touch-action: pan-y;
+  }
+  .slab-range::-webkit-slider-runnable-track {
+    height: 8px;
+    background: var(--tint);
+  }
+  .slab-range::-webkit-slider-thumb {
+    appearance: none;
+    width: 28px;
+    height: 28px;
+    margin-top: -10px;
+    border-radius: 0;
+    background: var(--foreground);
+  }
+  .slab-range::-moz-range-track {
+    height: 8px;
+    background: var(--tint);
+  }
+  .slab-range::-moz-range-thumb {
+    width: 28px;
+    height: 28px;
+    border: 0;
+    border-radius: 0;
+    background: var(--foreground);
+  }
+  .slab-range:focus-visible::-webkit-slider-thumb {
+    box-shadow: 0 0 0 4px var(--lime);
+  }
+  .slab-range:focus-visible::-moz-range-thumb {
+    box-shadow: 0 0 0 4px var(--lime);
+  }
+}

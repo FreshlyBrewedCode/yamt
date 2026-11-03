@@ -1,5 +1,5 @@
 import { createFileRoute, Link, redirect, useNavigate } from "@tanstack/react-router";
-import { addDays, LocalDate } from "@yamt/shared";
+import { addDays, goalLabel, LocalDate } from "@yamt/shared";
 import { cn } from "cn";
 import { ArrowRight, ChevronLeft, ChevronRight, Scale, Square } from "lucide-react";
 import { useMemo } from "react";
@@ -100,7 +100,7 @@ function DayView() {
             {!data
               ? " "
               : goal
-                ? `Goal since ${formatShortDate(goal.effectiveFrom)}${goal.note ? ` · ${goal.note}` : ""}`
+                ? `Goal since ${formatShortDate(goal.effectiveFrom)}${goalLabel(goal) ? ` · ${goalLabel(goal)}` : ""}`
                 : "No targets for this day"}
           </span>
           <Label className="flex items-center gap-1 text-muted-foreground">

@@ -310,32 +310,29 @@ export function defaultChoices(
   return { goal, pace: "standard", protein: defaultProtein(inputs, goal), fatPercent: FAT_PERCENT.default };
 }
 
+/** Why yamt doesn't calculate targets, said neutrally (shown in the flow and as the API's 422). */
+export const REFUSALS: Record<GoalRefusalReason, string> = {
+  under_18:
+    "yamt doesn't calculate targets under 18: growing bodies need more than a formula. A doctor or dietitian can help, and the manual targets stay open.",
+  pregnancy:
+    "During pregnancy and breastfeeding needs change from month to month, so yamt doesn't calculate them. Your midwife or doctor can help, and the manual targets stay open.",
+  underweight_cut: "At a BMI under 18.5 yamt doesn't plan a cut. Maintain or bulk are open.",
+};
+
 /** Whether the inputs rule out a plan, or a cut. Null: fine. */
-export function refusalFor(inputs: GoalInputs, goal?: GoalKind): GoalRefusal | null {
-  const refuse = (reason: GoalRefusalReason, message: string): GoalRefusal => ({
+export function refusalFor(
+  inputs: Pick<GoalInputs, "birthYear" | "today" | "pregnantOrBreastfeeding" | "weightKg" | "heightCm">,
+  goal?: GoalKind,
+): GoalRefusal | null {
+  const refuse = (reason: GoalRefusalReason): GoalRefusal => ({
     ok: false,
     version: ALGORITHM_VERSION,
     reason,
-    message,
+    message: REFUSALS[reason],
   });
-  if (ageOf(inputs.birthYear, inputs.today) < 18) {
-    return refuse(
-      "under_18",
-      "yamt doesn't calculate targets under 18: growing bodies need more than a formula. A doctor or dietitian can help, and the manual targets stay open.",
-    );
-  }
-  if (inputs.pregnantOrBreastfeeding) {
-    return refuse(
-      "pregnancy",
-      "During pregnancy and breastfeeding needs change from month to month, so yamt doesn't calculate them. Your midwife or doctor can help, and the manual targets stay open.",
-    );
-  }
-  if (goal === "cut" && bmiOf(inputs.weightKg, inputs.heightCm) < 18.5) {
-    return refuse(
-      "underweight_cut",
-      "At a BMI under 18.5 yamt doesn't plan a cut. Maintain or bulk are open.",
-    );
-  }
+  if (ageOf(inputs.birthYear, inputs.today) < 18) return refuse("under_18");
+  if (inputs.pregnantOrBreastfeeding) return refuse("pregnancy");
+  if (goal === "cut" && bmiOf(inputs.weightKg, inputs.heightCm) < 18.5) return refuse("underweight_cut");
   return null;
 }
 

@@ -1,16 +1,19 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import {
   type Goal,
   goalInForce,
   goalPeriods,
+  guidedLabel,
   TARGET_KEYS,
   type TargetKey,
   type Targets,
   type WeightEntry,
 } from "@yamt/shared";
 import { cn } from "cn";
-import { Check, X } from "lucide-react";
+import { ArrowRight, Compass, X } from "lucide-react";
 import { useState } from "react";
+import { CheckSquare } from "@/components/choice";
+import { GoalExplanation } from "@/components/goal-explanation";
 import { BackButton, BottomSlab, Disclosure, Label, SafeBottom, SlabButton, Strip } from "@/components/slab";
 import { WeightEntryBand } from "@/components/weight-entry";
 import { WeightTrend } from "@/components/weight-trend";
@@ -24,7 +27,7 @@ import {
   localDate,
   startOfDay,
 } from "@/lib/format";
-import { useDeleteWeight, useGoals, useSaveGoal, useWeight } from "@/lib/queries";
+import { useDeleteWeight, useGoals, useProfile, useSaveGoal, useWeight } from "@/lib/queries";
 
 export const Route = createFileRoute("/goals")({ component: Goals });
 
@@ -202,6 +205,7 @@ function TargetsForm({
         }
         className="bg-background"
       />
+      <GuidedEntry hasGoal={current !== null} />
       <div className="divide-y divide-border border-border border-t" data-testid="targets">
         {FIELDS.map(([key, label, unit]) => (
           <label key={key} className="flex h-16 items-center gap-3 px-5">
@@ -244,14 +248,7 @@ function TargetsForm({
             className="flex min-h-16 w-full items-center gap-3 bg-tint px-5 text-left outline-none focus-visible:underline"
             data-testid="fix-toggle"
           >
-            <span
-              className={cn(
-                "flex size-7 shrink-0 items-center justify-center",
-                fixing ? "bg-foreground text-background" : "bg-background",
-              )}
-            >
-              {fixing && <Check className="size-5" strokeWidth={3} />}
-            </span>
+            <CheckSquare on={fixing} className={fixing ? undefined : "bg-background"} />
             <span>
               <span className="block font-bold">Fix a typo in the current goal</span>
               <span className="block font-medium text-muted-foreground text-sm">
@@ -261,6 +258,12 @@ function TargetsForm({
           </button>
         )}
       </div>
+
+      {current?.derivation && (
+        <Disclosure title="Why these targets" className="border-t" data-testid="goal-why">
+          <GoalExplanation derivation={current.derivation} />
+        </Disclosure>
+      )}
 
       <Disclosure
         title="History"
@@ -344,10 +347,69 @@ function GoalHistory({ goals, today }: { goals: Goal[]; today: string }) {
                 </div>
               ))}
             </div>
-            {g.note && <div className="mt-1 font-medium text-muted-foreground text-sm">{g.note}</div>}
+            {(g.note || g.derivation) && (
+              <div className="mt-1 font-medium text-muted-foreground text-sm">
+                {[g.derivation ? guidedLabel(g.derivation) : "", g.note].filter(Boolean).join(" · ")}
+              </div>
+            )}
+            {g.derivation && <WhyToggle goal={g} />}
           </li>
         );
       })}
     </ul>
+  );
+}
+
+/** A guided goal's explanation, opened in its history row. */
+function WhyToggle({ goal }: { goal: Goal }) {
+  const [open, setOpen] = useState(false);
+  if (!goal.derivation) return null;
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        aria-expanded={open}
+        className="-ml-1 mt-1 flex min-h-11 items-center px-1 font-bold text-sm uppercase tracking-[0.08em] outline-none focus-visible:underline"
+      >
+        {open ? "Hide why" : "Why these numbers"}
+      </button>
+      {open && <GoalExplanation derivation={goal.derivation} className="-mx-5 bg-background" />}
+    </>
+  );
+}
+
+/**
+ * The way into the guided setup (#24), next to the manual targets: lime while there is no goal
+ * (setting one wants the user), a full-strength tint row once there is ("Recalculate" with a
+ * saved profile: it starts from the last answers).
+ */
+function GuidedEntry({ hasGoal }: { hasGoal: boolean }) {
+  const profile = useProfile();
+  const recalc = Boolean(profile.data?.profile);
+  return (
+    <Link
+      to="/goals/guided"
+      className={cn(
+        "flex min-h-[72px] items-center gap-4 px-5 py-3 outline-none active:opacity-80 focus-visible:underline",
+        hasGoal ? "bg-tint" : "bg-lime text-lime-foreground",
+      )}
+      data-testid="guided-entry"
+    >
+      <Compass className="size-7 shrink-0" strokeWidth={2.5} />
+      <span className="min-w-0 flex-1">
+        <span className="block font-bold text-lg uppercase tracking-wide">
+          {recalc ? "Recalculate" : "Guided setup"}
+        </span>
+        <span
+          className={cn("block font-medium text-sm", hasGoal ? "text-muted-foreground" : "text-lime-muted")}
+        >
+          {recalc
+            ? "From your profile and today's weight, explained"
+            : "Cut, maintain or bulk: targets from your body and week, explained"}
+        </span>
+      </span>
+      <ArrowRight className="size-6 shrink-0" strokeWidth={2.5} />
+    </Link>
   );
 }
