@@ -392,9 +392,14 @@ describe("transcription in the server", () => {
     expect(done.durationMs).toBeGreaterThan(0);
     // nudged: the analysis doesn't wait out its 60 s re-check
     await waitFor("analysed", () => s.repos.meals.get(mealId)!.status === "analysed");
-    const [run] = s.repos.runs.listForMeal(mealId);
-    expect(run!.startedAt - done.updatedAt).toBeLessThan(2000);
-    const agent = JSON.parse(readFileSync(join(dataPaths(dataDir).runs, run!.id, "fake-agent.json"), "utf8"));
+    // the meal is analysed inside save_meal_revision; the agent writes its record after that call
+    // returns, so read it once the run has ended
+    const run = await waitFor("the run ended", () =>
+      s.repos.runs.listForMeal(mealId).find((r) => r.status !== "running"),
+    );
+    expect(run.status).toBe("succeeded");
+    expect(run.startedAt - done.updatedAt).toBeLessThan(2000);
+    const agent = JSON.parse(readFileSync(join(dataPaths(dataDir).runs, run.id, "fake-agent.json"), "utf8"));
     expect(agent.transcripts).toEqual([
       { status: "done", text: "Zum Frühstück achtzig Gramm Haferflocken mit Milch." },
     ]);
