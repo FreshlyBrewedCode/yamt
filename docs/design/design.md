@@ -209,6 +209,43 @@ Units sit next to numbers smaller and muted (`28g`, `72 /160`).
   "Fix current goal". History is a `Disclosure` of tint rows: the period ("14 Oct – today", "29
   Sept – 13 Oct", "replaced the same day"), a five-column grid of targets, the note, and a small
   ink "In force" chip.
+- **Step flow** (#24, the guided setup): one question block per screen. The header has the back
+  square (a step back; on the first step it leaves), a micro-label "Guided setup · 2 / 5" on the
+  right, the step's title (36 px display), one muted lead line and a progress bar of five 6 px
+  segments with 4 px gaps (foreground up to the current step, tint after). The bottom slab is
+  lime **Next** (disabled tint with a hint saying what's missing), on the last step **Save · from
+  today**. Back keeps every answer. A refusal ("not calculated", under 18, pregnancy) is a tint
+  band with a neutral why and takes the slab's place: there is nothing to wait for.
+- **Choice rows** (#24): a single choice as full-width plain rows (≥ 72 px, dividers): the title
+  bold 17 px, one muted example line, a 28 px check square on the right (filled foreground with a
+  ✓ when chosen, tint when not; the same square as the goals screen's "Fix a typo" toggle). The
+  row itself stays plain: a tint row would merge with a tint strip above it. A row that isn't
+  available is muted, without a square, and says why in its example line.
+- **Preset chips** (#24): what the user picks instead of typing a number. Equal cells in one row
+  with 2 px gaps of the page colour, tint; the chosen one takes the foreground fill (like the
+  switch, never lime: a choice doesn't want the user). The number on top in display 20 px
+  ("0.5 %", "2.0"), the preset's name under it as an 11 px micro-label ("Standard", "High");
+  64 px tall, 56 px without a number.
+- **Stepper** (#24): − and + in 64 px tint squares around the value in display 64 px with its
+  unit as a micro-label under it ("3 / sessions a week", "0 / No training"); the ends disable.
+- **Slider** (#24, the fat share): a native range input styled square: an 8 px tint track, a
+  28 px foreground square thumb, 44 px tall to touch, the stops (20 … 40) as micro-labels under
+  it with the current one in the foreground. Presets above it set the same value.
+- **Split bar** (#24): the macro split on the ink slab, a 12 px bar with a segment per macro's
+  share of the kcal and 2 px gaps in the slab's colour: protein lime, fat paper
+  (`ink-foreground`), carbs `ink-muted`, fibre `ink-line`. Under it the 4-column grid of grams with
+  a matching 10 px swatch, the name and the percentage, so it never relies on the fills alone.
+- **Review of targets** (#24): the ink slab carries the kcal (64 px), maintenance on the right
+  (28 px), the change as one muted line ("−440 kcal a day · ≈ 0.4 kg a week"), the split bar and
+  the grams. Then a strip per number (Energy, Protein, Fat, Carbs, Fibre; meta "160 g · 24 %"),
+  its explanation lines (15 px, medium, foreground: they are content the user reads) and its
+  presets right under them. Floors, caps and warnings are a tint band of "■" lines at the end,
+  never orange (nothing failed), with the reminder that it's a starting estimate.
+- **Guided row** (#24, goals screen): a 72 px row under "Daily targets" with a compass, the
+  caption ("Guided setup", or "Recalculate" once a profile exists) and a muted line; **lime**
+  while no goal is in force (setting one wants the user), **tint** once there is one. A guided
+  goal in force adds a "Why these targets" disclosure (its explanation on tint), and guided goals
+  in the history read "Guided · cut, standard pace" with "Why these numbers" to open theirs.
 - **Recorder** (ink): the 96 px lime circle (mic / stop square), the timer in display 60 px,
   a level meter of thin vertical bars (lime for the live part, `ink-line` for the rest), and the
   lock note under a thin `ink-line` divider, always visible.
