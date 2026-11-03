@@ -390,3 +390,41 @@ test("a guided goal's label", () => {
   expect(guidedLabel({ choices: defaultChoices(fixture, "cut") })).toBe("Guided · cut, standard pace");
   expect(guidedLabel({ choices: defaultChoices(fixture, "maintain") })).toBe("Guided · maintain");
 });
+
+describe("made-up profiles end to end", () => {
+  test("a woman cutting: 35 y, 168 cm, 74 kg (BMI 26), on her feet, 2 × 45 min mixed", () => {
+    const r = calc(
+      {
+        sex: "female",
+        birthYear: 1991,
+        heightCm: 168,
+        weightKg: 74,
+        bodyFatPct: null,
+        dailyLife: "on_feet",
+        training: { sessionsPerWeek: 2, minutes: 45, type: "mixed", intensity: "moderate" },
+      },
+      { goal: "cut" },
+    );
+    expect(r.rmr.kcal).toBe(1454);
+    expect(r.maintenance.kcal).toBe(2450);
+    expect(r.targets).toEqual({ energyKcal: 2040, protein: 140, fat: 70, carbohydrate: 200, fiber: 30 });
+    expect(r.lines.protein).toContain("of 70.6 kg (your weight at BMI 25)");
+  });
+
+  test("a lean man bulking: 24 y, 185 cm, 72 kg, 12 % body fat, sitting, 4 × 60 min hard strength", () => {
+    const r = calc(
+      {
+        birthYear: 2002,
+        heightCm: 185,
+        weightKg: 72,
+        bodyFatPct: 12,
+        dailyLife: "sitting",
+        training: { sessionsPerWeek: 4, minutes: 60, type: "strength", intensity: "hard" },
+      },
+      { goal: "bulk" },
+    );
+    expect(r.rmr).toEqual({ kcal: 1895, equation: "cunningham", ffmKg: 63.4 });
+    expect(r.maintenance.kcal).toBe(2820);
+    expect(r.targets).toEqual({ energyKcal: 3020, protein: 115, fat: 100, carbohydrate: 395, fiber: 40 });
+  });
+});
