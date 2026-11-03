@@ -1,8 +1,8 @@
 # yamt: architecture
 
 What exists today (the scaffold, #3, the meal backend, #6, the nutrition layer with the yamt
-MCP server, #7, and the analysis job over ACP, #8), how it fits together, and where wave 1 goes
-next. Why it is built this way: [ADR 0001](adr/0001-wave-1-architecture.md).
+MCP server, #7, the analysis job over ACP, #8, and the transcription worker, #9), how it fits
+together, and where wave 1 goes next. Why it is built this way: [ADR 0001](adr/0001-wave-1-architecture.md).
 Commands and conventions: [AGENTS.md](../AGENTS.md).
 
 ## Components
@@ -18,12 +18,15 @@ yamt start   (one Bun process, binds 127.0.0.1:7890 only)
   ├─ MCP server      /mcp     bearer tokens (agent runs, interactive Claude Code sessions),
   │                           loopback callers only; the agent's only way to read and write
   ├─ SPA             /*       packages/web/dist   (dev: Vite on 7891 proxies /api)
-  ├─ job worker      drains the `jobs` table: `analyse` (one at a time), `transcribe` (#9)
-  │    └─ analysis run: one harness process per run, ACP over stdio, cwd ~/.yamt/runs/<run>/
-  │         claude-agent-acp (node) → `claude` │ custom ACP command
-  │         └─ MCP over HTTP back to 127.0.0.1:7890/mcp with a per-run token
+  ├─ job worker      drains the `jobs` table: `analyse` (one at a time), `transcribe` (one batch
+  │    │             at a time, alongside)
+  │    ├─ analysis run: one harness process per run, ACP over stdio, cwd ~/.yamt/runs/<run>/
+  │    │    claude-agent-acp (node) → `claude` │ custom ACP command
+  │    │    └─ MCP over HTTP back to 127.0.0.1:7890/mcp with a per-run token
+  │    └─ transcription batch: ffmpeg per memo → 16 kHz WAV in a temp dir, then one
+  │         services/stt process (uv, Python, faster-whisper on the CPU) for the batch
   └─ SQLite          ~/.yamt/yamt.db   (WAL, foreign keys, 0600)
-     data dir        ~/.yamt/  (0700): yamt.db, media/, runs/, config.json, mcp-token
+     data dir        ~/.yamt/  (0700): yamt.db, media/, runs/, models/, config.json, mcp-token
         │
         └─ outbound: Open Food Facts, USDA FoodData Central, recipe pages (timeouts, size caps,
                      rate limits; results cached in `foods`); the model API, via the harness
@@ -48,9 +51,13 @@ packages/server/src/
   acp/                    the ACP layer (no DB, no HTTP): protocol.ts (the SDK entrypoint), process.ts
                           (AcpProcess), run.ts (runPrompt: one session, one turn), mcp.ts, adapters/
                           (claude-code, custom)
-  jobs/worker.ts          JobWorker: the in-process loop over `jobs`, handlers by type
+  jobs/worker.ts          JobWorker: the in-process loop over `jobs`, handlers by type (single or batch)
   analysis/               job.ts (the `analyse` handler), prompt.ts (prompt and photos), permissions.ts
                           (the policy), skill.ts (loads log-meal), trace.ts (TraceWriter)
+  transcription/          job.ts (the `transcribe` handler, settleTranscript, nudgeAnalysis), backend.ts
+                          (the SttBackend interface), local.ts (LocalWhisperBackend: the services/stt
+                          process and its NDJSON protocol), ffmpeg.ts (normalisation), tools.ts (finding
+                          ffmpeg)
   tailscale.ts            `tailscale serve --https=<port>` in the foreground
   build-stamp.ts          rebuild packages/web/dist when its sources changed
   auth/identity.ts        requireTailnetIdentity: the Tailscale-User-Login check, dev bypass
@@ -74,7 +81,9 @@ packages/server/src/
 packages/server/test/     bun tests, temp dirs only; fixtures/ holds made-up images and, in
                           nutrition/, recorded OFF/FDC answers and a trimmed recipe page
                           (record.ts re-records them; the gate never hits the network);
-                          fake-agent.ts is a scripted ACP agent (tests never start a real harness)
+                          fake-agent.ts is a scripted ACP agent (tests never start a real harness),
+                          fake-stt.ts a scripted STT process and fake-ffmpeg.ts an ffmpeg stand-in
+                          (tests never load a speech model); fixtures/memo-de.m4a is synthetic speech
 packages/web/src/
   main.tsx                router + query client
   routes/                 TanStack file routes (__root.tsx, index.tsx); routeTree.gen.ts is generated
@@ -85,6 +94,10 @@ e2e/                      Playwright specs (phone viewport)
 docs/adr/                 architecture decision records
 .agents/skills/log-meal/  SKILL.md: how to analyse a meal (the job's system prompt, and a skill for
                           interactive sessions through the `.claude/skills` link)
+services/stt/             the speech-to-text process, a uv project (Python 3.12, faster-whisper; ruff,
+                          pytest): run.sh (uv from PATH or nixpkgs; `transcribe`, `check`, `smoke`),
+                          yamt_stt/ (__main__: one batch; protocol.py; audio.py; backends.py: Whisper,
+                          stub), tests/
 ```
 
 ## Hosting
@@ -124,9 +137,11 @@ docs/adr/                 architecture decision records
 ## Data
 
 - `~/.yamt/` (`--data-dir`, `YAMT_DATA_DIR`), created and kept at 0700 together with `media/`
-  (raw captures) and `runs/` (one dir per analysis run: the harness's cwd and `trace.ndjson`);
+  (raw captures), `runs/` (one dir per analysis run: the harness's cwd and `trace.ndjson`) and
+  `models/` (the speech model's Hugging Face cache, downloaded on first use);
   `mcp-token` (0600) holds the interactive MCP token, `config.json` the optional `login`,
-  `fdcApiKey` and `analysis` (see [Analysis](#analysis-8)). Nothing personal is ever inside the repo;
+  `fdcApiKey`, `analysis` (see [Analysis](#analysis-8)) and `transcription` (see
+  [Transcription](#transcription-9)). Nothing personal is ever inside the repo;
   the `.gitignore` blocks `*.db` and data dirs as a second line of defence.
 - `yamt.db`: `bun:sqlite`, `journal_mode=WAL`, `synchronous=NORMAL`, `foreign_keys=ON`,
   `busy_timeout=5000`; the file and its -wal/-shm are chmod 0600 on open.
@@ -164,8 +179,10 @@ new value never needs a table rebuild.
   **Immutable**: triggers refuse updates of the raw columns, a second retraction and any delete;
   `retracted_at` is the only change (soft retraction). Meals with captures can't be deleted either.
 - **transcripts**: one per audio capture (`capture_id` is the key), created `pending` with it;
-  `done` with text, model, language, duration and `segments` (JSON `[{startMs, endMs, text}]`), or
-  `failed` with an error. Derived, so replaceable: `upsertPending` resets it for a new run.
+  `done` with text, model, language, duration, `segments` (JSON `[{startMs, endMs, text}]`),
+  `elapsed_ms` (the transcription's wall time) and `settings` (JSON: the STT settings it ran
+  with), or `failed` with an error. Derived, so replaceable: `upsertPending` resets it for a new
+  run (`POST /api/captures/:id/transcribe`).
 - **jobs**: see the queue below.
 - **runs**: one per analysis attempt: `meal_id`, `job_id`, `attempt`, `harness`, `model` (the one
   that answered, as the harness reports it), `status` (`running` → `succeeded` | `failed` |
@@ -214,8 +231,8 @@ new value never needs a table rebuild.
 
 ### Job queue
 
-`jobs` (`db/repos/jobs.ts`) is a small SQLite queue for one in-process worker loop (#8 analyse,
-#9 transcribe). Types and payloads: `transcribe {captureId}`, `analyse {mealId}`.
+`jobs` (`db/repos/jobs.ts`) is a small SQLite queue for one in-process worker loop (analyse,
+transcribe). Types and payloads: `transcribe {captureId}`, `analyse {mealId}`.
 
 - `enqueue(type, payload, {dedupeKey, runAfter, maxAttempts})` is idempotent per `dedupe_key`
   while a job is `queued` (a partial unique index backs it): one open `analyse:<meal>` per meal,
@@ -226,6 +243,8 @@ new value never needs a table rebuild.
   8 min … while attempts remain, else `failed` (final: the worker marks the meal/transcript).
   `reschedule(id, runAfter)` → `queued` without spending an attempt (waiting for transcripts, GPU
   host asleep). A requeue that meets a newer queued job with the same key is `cancelled` instead.
+- `expedite(key)` makes a queued job that waits for later due now (a finished transcript wakes
+  the analysis waiting for it).
 - `cancelQueued(key)` (a retracted audio capture cancels its transcription) and
   `releaseInterrupted()`, which the server runs at startup: jobs a previous process left
   `running` count a failed attempt and are queued again.
@@ -236,10 +255,11 @@ new value never needs a table rebuild.
 
 **The worker loop** (`jobs/worker.ts`, `JobWorker`): one per server process, started by
 `createServer({worker: true})` (`yamt start` does, unless `--no-worker`; tests and tools that
-only need the API don't, so they never spawn an agent). Handlers register by job type with their
-own concurrency (`analyse`: 1; #9 registers `transcribe` on the same worker, running alongside).
+only need the API don't, so they never spawn an agent or an STT process). Handlers register by
+job type with their own concurrency (`analyse`: 1; `transcribe`: 1 batch, running alongside).
 Every poll (1 s, or at once after `wake()`) fills each type's lane with `claim({types: [type]})`;
-the queue already keeps two jobs with the same key (one meal) from running together. A handler
+a batch handler (`runBatch`, `batchSize`) claims up to that many due jobs per slot and returns one
+outcome each. The queue already keeps two jobs with the same key (one meal) from running together. A handler
 returns `done`, `failed` (`retryable: false` fails at once) or `reschedule` (no attempt spent);
 throwing counts as a retryable failure. `settled(job)` then sees the job as it ended up (`done`,
 `queued`, `failed`, `cancelled`). `stop()` (server shutdown) aborts the running handlers' signal
@@ -355,8 +375,9 @@ saved revision. ADR 0001 (6–8) has the why.
 ### The `analyse` job (`analysis/job.ts`)
 
 1. **Transcripts first.** If a live audio capture's transcript is still `pending`, the job is
-   rescheduled 15 s later without spending an attempt, until #9's worker has filled it. A `failed`
-   transcript doesn't block: the prompt names it and the skill says to note it.
+   rescheduled 15 s later without spending an attempt; a transcript that finishes (or fails for
+   good) makes it due at once (`nudgeAnalysis`). A `failed` transcript doesn't block: the prompt
+   names it and the skill says to note it.
 2. **The run.** A `runs` row (`running`), `<data>/runs/<run id>/` (0700; the harness's cwd and its
    trace), meal → `analysing`, and a run token (`mintRun`, scoped to the meal).
 3. **The turn** (`runPrompt`, below): the configured harness and model, the skill as the appended
@@ -450,6 +471,85 @@ are written synchronously, so a crash keeps everything up to it. The run token i
 wherever it appears and image data is replaced by its size. `GET /api/runs/:id/trace` serves the
 file as `application/x-ndjson` (not cached; it grows while the run runs); the UI (#11) renders it.
 
+## Transcription (#9)
+
+Every audio capture gets a German transcript in the background; it unblocks the meal's analysis.
+Spike #4 (phase 1) picked the setup ([ADR 0002](adr/0002-speech-to-text-on-the-cpu.md)): **faster-whisper large-v3-turbo, int8, `de`, on this VM's
+CPU** (3.2 % WER on FLEURS German, real-time factor ~0.2, ~1.7 GB RAM, ~5 s model load); the GPU
+host stays a possible second backend.
+
+**The `transcribe` job** (`transcription/job.ts`, `TranscribeJob`), created with the capture and
+its `pending` transcript (#6). Due jobs run as one **batch**, one batch at a time (the analysis
+runs alongside):
+
+1. For each job: the capture must exist, be audio and not retracted (else failed at once).
+   **ffmpeg** reads the original (never written) and writes a 16 kHz mono 16-bit PCM WAV into a
+   fresh temp dir (`normaliseArgs`: first audio stream only, no video, cover art or metadata;
+   iOS `audio/mp4` and `.m4a`, WebM, Ogg, MP3, WAV all work). ffmpeg refusing the file fails the
+   job at once (a broken file stays broken).
+2. The WAVs go to the **STT backend** in one call (`SttBackend`, `transcription/backend.ts`);
+   results arrive one by one, and each is written right away: `done` with text, model
+   (`faster-whisper large-v3-turbo int8`), language, duration, segments, wall time and the
+   settings. Then `nudgeAnalysis` makes a waiting `analyse` job of the meal due and wakes the
+   worker. A result for a capture whose re-run is already queued is dropped (the re-run wins).
+3. Failures go through the queue: retried after 30 s and 2 min (3 attempts) while the transcript
+   stays `pending`; after the last one (or at once when retrying can't help: an unreadable file,
+   a missing ffmpeg or STT command) it is `failed` with the error, the analysis is nudged and
+   proceeds without it. A server stop kills the STT process group and requeues unfinished jobs
+   without spending an attempt; jobs an earlier process left running count an attempt
+   (`releaseInterrupted` → `settleTranscript`). The temp dir is removed whatever happens.
+
+**The STT process** (`services/stt`, `transcription/local.ts`, `LocalWhisperBackend`): a short-lived
+process per batch rather than a resident server, so the model's ~1.7 GB are only held while there
+is work. The server spawns `services/stt/run.sh transcribe` in its own process group, writes the
+request to its stdin (`{settings, items: [{id, path}]}`) and reads NDJSON events from stdout:
+`model` (cached or downloading), `download` (bytes so far, every 5 s), `loaded`, `progress`,
+`result` (per file, ok or an error), `fatal`, `end`. The server logs the download, the load and
+each file's timing (`… 71.8 s of audio in 15.4 s (RTF 0.21)`). The process lowers its priority
+(nice 10) and is capped at `threads` threads (default 4 of 6 vCPUs) so the VM stays responsive.
+It reads the WAV as int16 scaled to float32 (misread samples silently become zeros, and Whisper
+then hallucinates "Vielen Dank." on the silence), runs Silero VAD first (drops silence, where
+Whisper hallucinates), decodes greedily (beam 1) with `condition_on_previous_text` off and
+timestamps on: Whisper moves each 30 s window to the end of the last complete segment, so long
+memos need no chunking of ours and lose no words at window boundaries. The server kills it after
+10 min without a line (download progress counts). An exit before every file was answered fails
+the rest of the batch (retryable; the stderr tail is the error); exit 127 (no uv, no nix) is not
+retried.
+
+**Model download:** on first use faster-whisper downloads the model (large-v3-turbo ~1.6 GB) from
+Hugging Face into `<data>/models` (`transcription.modelsDir` to share a cache); the log shows the
+download's progress, so a first-run delay of several minutes isn't a mystery.
+
+**Tooling** (this VM is NixOS: neither ffmpeg nor uv is on PATH): `run.sh` takes uv from PATH,
+else links `nixpkgs#uv` as `services/stt/.uv` (vibe-center's `services/voice` does the same), and
+`uv sync --frozen` provides Python 3.12 and the pinned wheels on every start (fast when nothing
+changed; the first run says so and takes a minute). ffmpeg comes from `transcription.ffmpeg` /
+`YAMT_FFMPEG`, else PATH, else `nixpkgs#ffmpeg-headless` linked as `services/stt/.ffmpeg-bin`
+(built on first use when `nix` exists). `yamt start` looks for ffmpeg at startup and warns loudly
+if there is none: voice memos then fail to transcribe (and analyses go on without them) rather
+than block. CI installs ffmpeg with apt and uv with `setup-uv`.
+
+**Configuration** (`config.ts`, `<data>/config.json` `transcription`, env wins): `model`
+(`large-v3-turbo`), `computeType` (`int8`), `threads` (4), `beamSize` (1), `vad` (true),
+`language` (`de`), `initialPrompt` (a vocabulary hint, none by default), `ffmpeg`, `modelsDir`,
+`command`/`args` (the STT command line); env `YAMT_STT_MODEL`, `YAMT_STT_COMPUTE_TYPE`,
+`YAMT_STT_THREADS`, `YAMT_STT_BEAM_SIZE`, `YAMT_STT_VAD` (0/1), `YAMT_STT_LANGUAGE`,
+`YAMT_STT_INITIAL_PROMPT`, `YAMT_STT_MODELS_DIR`, `YAMT_STT_COMMAND`, `YAMT_FFMPEG`. Phase 2 of
+the spike (real memos) may still tune these; each transcript records what it ran with.
+
+**Re-running** (`POST /api/captures/:id/transcribe`): resets the transcript to `pending` (the old
+text goes; the audio is never touched) and queues a `transcribe` job (idempotent while queued; a
+request during a run queues one behind it). It doesn't analyse the meal again: a queued analysis
+waits for the new transcript, an analysed meal stays as it is until the user presses analyse.
+
+**Another backend** (e.g. the GPU host's OpenAI-style `/v1/audio/transcriptions` through the
+`gpu` CLI) implements `SttBackend.transcribe(items, {signal, onResult})` for the same WAVs; it
+would chunk to that server's ≤ 15 s inputs and own the wake/sleep lifecycle.
+
+**Measured on this VM** (6 vCPU, 4 threads, large-v3-turbo int8, beam 1, VAD; FLEURS `de_de`
+clips as AAC/M4A): 71.8 s in 15.4 s (RTF 0.21) and 203.5 s in 41.5 s (RTF 0.20), plus ~3 s model
+load per batch.
+
 ## API
 
 All behind the identity check, writes also same-origin; paths in `mealPaths` / `weightPaths`.
@@ -464,6 +564,8 @@ All behind the identity check, writes also same-origin; paths in `mealPaths` / `
   A `capturedAt` more than an hour ahead of the server is refused.
 - `POST /api/captures/:id/retract` (idempotent), `POST /api/meals/:id/analyse` (409 without a live
   capture; on a `failed` meal, the retry), `GET /api/media/:captureId[/jpeg]`.
+- `POST /api/captures/:id/transcribe`: re-run an audio capture's transcript (400 for other kinds,
+  409 when retracted); answers the `pending` transcript and the job id.
 - `GET /api/meals/:id` also lists the meal's analysis runs (`runs`, newest first); a revision's
   `runId` names its run. `GET /api/runs/:id` (the run), `GET /api/runs/:id/trace` (NDJSON).
 - `POST /api/weight` (`{kg, measuredAt?, note?}`), `GET /api/weight?from&to&limit`,
@@ -495,9 +597,9 @@ All behind the identity check, writes also same-origin; paths in `mealPaths` / `
 ## Planned (epic #2)
 
 Meals, captures, media storage, the job queue and weight entries (#6), the nutrition layer
-with the MCP server (#7), and the ACP runtime with the analysis job and worker loop (#8) are in.
-Still to come, in stack order: the transcription worker, a `transcribe` handler on the same
-worker (#9); the PWA shell and meal capture (#10); meal detail, questions and corrections (#11); the day
+with the MCP server (#7), the ACP runtime with the analysis job and worker loop (#8), and the
+transcription worker (#9) are in. Still to come, in stack order: the PWA shell and meal capture
+(#10); meal detail, questions and corrections (#11); the day
 view, goals and weight (#12); Web Push (#13). Spikes #4 (speech-to-text, CPU vs GPU) and #5
 (design directions; the result becomes `docs/design/design.md` and replaces the neutral theme
 tokens) run alongside. See the epic for the decisions each one builds on.
