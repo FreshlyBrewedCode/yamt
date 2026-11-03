@@ -8,7 +8,7 @@ import {
   type Transcript,
 } from "@yamt/shared";
 import { cn } from "cn";
-import { ArrowLeft, Mic, Pause, Pencil, Play, Plus, Square, X, Zap } from "lucide-react";
+import { Mic, Pause, Pencil, Play, Plus, Square, X, Zap } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { type Recording, useRecorder } from "@/hooks/use-recorder";
 import { formatDayTime, formatNumber, fromLocalInput, plural, toLocalInput } from "@/lib/format";
@@ -25,7 +25,7 @@ import { formatDuration, recordingName } from "@/lib/recorder";
 import { CaptureList, useCaptureRows } from "./capture-list";
 import { ItemsList } from "./items-list";
 import { RevisionHistory } from "./revision-history";
-import { Band, BottomSlab, Disclosure, iconButtonClass, Label, SlabButton, StatusLabel, Strip } from "./slab";
+import { BackButton, Band, BottomSlab, Disclosure, Label, SlabButton, StatusLabel, Strip } from "./slab";
 import { TotalsSlab } from "./totals-slab";
 import { runMeta, TraceView } from "./trace-view";
 
@@ -394,9 +394,7 @@ function DetailHeader({ detail }: { detail: MealDetailResponse }) {
     <>
       <header className="px-5 pt-5 pb-4">
         <div className="flex items-center justify-between">
-          <Link to="/" className={cn(iconButtonClass, "-ml-1")} aria-label="Back">
-            <ArrowLeft className="size-6" strokeWidth={2.5} />
-          </Link>
+          <BackButton />
           <StatusLabel
             status={status}
             className={cn(

@@ -104,3 +104,23 @@ export const fromLocalInput = (value: string): number | null => {
   const ms = new Date(value).getTime();
   return Number.isFinite(ms) ? ms : null;
 };
+
+/** Local midnight of a `YYYY-MM-DD` date (the browser's zone). */
+export function dateStart(date: string): number {
+  const [y, m, d] = date.split("-").map(Number);
+  return new Date(y!, m! - 1, d!).getTime();
+}
+
+const dayMonth = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short" });
+const dayMonthYear = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric" });
+
+/** "14 Oct" (this year) or "14 Oct 2025" for a `YYYY-MM-DD` date. */
+export function formatShortDate(date: string, now = Date.now()): string {
+  const ms = dateStart(date);
+  return new Date(ms).getFullYear() === new Date(now).getFullYear()
+    ? dayMonth.format(ms)
+    : dayMonthYear.format(ms);
+}
+
+/** Kilograms with one decimal: "81.2". */
+export const formatKg = (kg: number): string => kg.toFixed(1);
