@@ -2,7 +2,9 @@
 // micro-label, section strips, block buttons and the sticky bottom slab.
 import type { MealStatus } from "@yamt/shared";
 import { cn } from "cn";
+import { ChevronDown } from "lucide-react";
 import type * as React from "react";
+import { useState } from "react";
 
 /** The uppercase micro-label: what a number is, section meta, statuses. */
 export function Label({ className, ...props }: React.ComponentProps<"div">) {
@@ -54,7 +56,7 @@ export function SlabButton({
   tone = "lime",
   className,
   ...props
-}: React.ComponentProps<"button"> & { tone?: "lime" | "ink" | "ghost" }) {
+}: React.ComponentProps<"button"> & { tone?: "lime" | "ink" | "tint" | "ghost" }) {
   return (
     <button
       type="button"
@@ -65,6 +67,8 @@ export function SlabButton({
         tone === "lime" && "bg-lime text-lime-foreground",
         // "ink inside lime" stays true black in dark mode too: lime-foreground, not the charcoal ink
         tone === "ink" && "bg-ink text-ink-foreground",
+        // a quiet action that is available (not a disabled one: those have muted text)
+        tone === "tint" && "bg-tint text-foreground",
         tone === "ghost" && "bg-transparent text-current",
         className,
       )}
@@ -131,5 +135,49 @@ export function StatusLabel({ status, className }: { status: MealStatus; classNa
       )}
       {statusText[status]}
     </span>
+  );
+}
+
+/**
+ * A collapsible section on the plain page: a 56 px row with an uppercase title, muted meta and a
+ * chevron; the content mounts only when open (so whatever it fetches waits until then). Rows
+ * stack with dividers.
+ */
+export function Disclosure({
+  title,
+  meta,
+  defaultOpen = false,
+  children,
+  className,
+  ...props
+}: {
+  title: string;
+  meta?: React.ReactNode;
+  defaultOpen?: boolean;
+  children: React.ReactNode;
+  className?: string;
+} & Omit<React.ComponentProps<"section">, "title">) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <section className={cn("border-border border-b", className)} {...props}>
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        aria-expanded={open}
+        className="flex min-h-14 w-full items-center justify-between gap-3 px-5 text-left font-bold uppercase tracking-[0.08em] outline-none focus-visible:bg-tint"
+      >
+        <span className="min-w-0 truncate">
+          {title}
+          {meta !== undefined && meta !== null && meta !== "" && (
+            <span className="text-muted-foreground"> · {meta}</span>
+          )}
+        </span>
+        <ChevronDown
+          className={cn("size-5 shrink-0 transition-transform", open && "rotate-180")}
+          strokeWidth={2.5}
+        />
+      </button>
+      {open && children}
+    </section>
   );
 }

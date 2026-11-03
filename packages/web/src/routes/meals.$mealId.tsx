@@ -3,13 +3,8 @@ import type { MealDetailResponse, MealStatus } from "@yamt/shared";
 import { ArrowLeft, X, Zap } from "lucide-react";
 import { useMemo, useState } from "react";
 import { AddStrip } from "@/components/add-strip";
-import {
-  CaptureList,
-  type CaptureRow,
-  pendingRows,
-  serverRows,
-  useBlobUrls,
-} from "@/components/capture-list";
+import { CaptureList, useCaptureRows } from "@/components/capture-list";
+import { MealDetail } from "@/components/meal-detail";
 import { RecorderBand } from "@/components/recorder-band";
 import {
   Band,
@@ -21,38 +16,59 @@ import {
   StatusLabel,
   Strip,
 } from "@/components/slab";
-import { TotalsSlab } from "@/components/totals-slab";
 import { type Recording, useRecorder } from "@/hooks/use-recorder";
 import { formatDayTime, formatTime, plural } from "@/lib/format";
 import { type CaptureEntry, CaptureRejected, outbox, type PendingCapture, useMealOutbox } from "@/lib/outbox";
-import { useMeal, useRetract } from "@/lib/queries";
+import { useMeal } from "@/lib/queries";
 import { recordingName } from "@/lib/recorder";
 
+interface MealSearch {
+  /** The meal was just started with Log meal (it exists only here until its first capture is up). */
+  new?: true;
+  /** The capture view of a meal that has a detail: add more to it. */
+  add?: true;
+}
+
+const flag = (v: unknown) => v === true || v === "1" || v === "true" || v === 1;
+
 export const Route = createFileRoute("/meals/$mealId")({
-  /** `?new=1`: the meal was just started with Log meal (it exists only here until its first capture is up). */
-  validateSearch: (s: Record<string, unknown>): { new?: true } =>
-    s.new === true || s.new === "1" || s.new === "true" ? { new: true } : {},
-  component: MealScreen,
+  validateSearch: (s: Record<string, unknown>): MealSearch => ({
+    ...(flag(s.new) ? { new: true as const } : {}),
+    ...(flag(s.add) ? { add: true as const } : {}),
+  }),
+  component: MealRoute,
 });
 
 /**
- * A meal's capture screen: Log meal opens it for a new meal, the overview for an existing one.
- * Record, attach photos and audio files, add notes and links; everything goes through the upload
- * queue (kept on the phone until the server has it); Analyse / Re-analyse at the bottom.
- *
- * Seam for #11: an analysed meal's detail (items with provenance, questions to answer,
- * corrections, revisions, the trace) goes between the numbers slab and the recorder, or becomes
- * its own view that links here to add more.
+ * One route per meal. A meal with an analysis (or a failed one) opens on its detail: numbers,
+ * questions, items, corrections, revisions, trace, captures. A meal without one yet (draft,
+ * queued, analysing for the first time) opens on the capture view, and so does `?add=1`, the
+ * detail's way to add more.
  */
-function MealScreen() {
+function MealRoute() {
   const { mealId } = Route.useParams();
-  const isNew = Route.useSearch().new === true;
+  const search = Route.useSearch();
+  const query = useMeal(mealId);
+  const detail = query.data ?? null;
+  if (query.isPending && !search.new) return <Loading />;
+  if (detail && (detail.revision || detail.meal.status === "failed") && !search.add) {
+    return <MealDetail detail={detail} />;
+  }
+  return <MealCapture mealId={mealId} isNew={search.new === true} adding={search.add === true} />;
+}
+
+/**
+ * A meal's capture screen: Log meal opens it for a new meal, the overview for one without an
+ * analysis, the detail's "Add to this meal" for one with. Record, attach photos and audio files,
+ * add notes and links; everything goes through the upload queue (kept on the phone until the
+ * server has it); Analyse / Re-analyse at the bottom.
+ */
+function MealCapture({ mealId, isNew, adding }: { mealId: string; isNew: boolean; adding: boolean }) {
   const navigate = useNavigate();
   const query = useMeal(mealId);
   const detail = query.data ?? null;
   const { snapshot, entries } = useMealOutbox(mealId);
   const [problem, setProblem] = useState<string | null>(null);
-  const retract = useRetract(mealId);
   const [openedAt] = useState(() => Date.now());
 
   const save = async (capture: PendingCapture, capturedAt?: number) => {
@@ -81,26 +97,10 @@ function MealScreen() {
     () => entries.filter((e): e is CaptureEntry => e.type === "capture"),
     [entries],
   );
-  const urls = useBlobUrls(captureEntries);
-  const serverIds = new Set(detail?.captures.map((c) => c.id));
-  const rows: CaptureRow[] = [
-    ...serverRows(detail?.captures ?? [], detail?.transcripts ?? []).map((r) => ({
-      ...r,
-      onRemove: () =>
-        retract.mutate(r.key, { onError: (e) => setProblem(`Couldn't remove it: ${e.message}`) }),
-    })),
-    ...pendingRows(
-      captureEntries.filter((e) => !serverIds.has(e.id)),
-      snapshot,
-      urls,
-    ).map((r) => ({
-      ...r,
-      onRemove: () => void outbox.discard(r.key),
-      onRetry: r.upload === "refused" ? () => void outbox.retry(r.key) : undefined,
-    })),
-  ];
+  const rows = useCaptureRows(mealId, detail, captureEntries, snapshot, setProblem);
+  // back to the detail when adding to an analysed meal, else to the overview
+  const back = adding ? { to: "/meals/$mealId" as const, params: { mealId } } : { to: "/" as const };
 
-  if (query.isPending && !isNew) return <Loading />;
   if (query.isError && !detail && captureEntries.length === 0 && !isNew && snapshot.ready) {
     return <Missing text="Can't reach yamt right now, and nothing of this meal is on this phone." />;
   }
@@ -138,7 +138,7 @@ function MealScreen() {
               {title}
             </h1>
           </div>
-          <Link to="/" className={iconButtonClass} aria-label={meal ? "Back" : "Close"}>
+          <Link {...back} className={iconButtonClass} aria-label={meal ? "Back" : "Close"}>
             {meal ? (
               <ArrowLeft className="size-6" strokeWidth={2.5} />
             ) : (
@@ -149,16 +149,8 @@ function MealScreen() {
       </header>
 
       <main className="flex-1">
-        {/* An analysed meal's numbers are the one thing; the recorder steps back to tint. */}
-        {revision && (
-          <TotalsSlab
-            totals={revision.totals}
-            label={status === "needs_input" ? "kcal · preliminary" : "kcal"}
-            data-testid="meal-totals"
-          />
-        )}
-        <StatusBand detail={detail} />
-        <RecorderBand recorder={recorder} tone={revision ? "tint" : "ink"} />
+        {/* The recorder is the one thing here; an analysed meal's numbers live on its detail. */}
+        <RecorderBand recorder={recorder} />
         <AddStrip
           disabled={recorder.busy}
           onFiles={(kind, files) => {
@@ -210,38 +202,9 @@ function MealScreen() {
         queued={entries.some((e) => e.type === "analyse")}
         recording={recorder.busy}
         online={snapshot.online}
-        onQueued={() => navigate({ to: "/" })}
+        onQueued={() => (adding ? navigate(back) : navigate({ to: "/" }))}
       />
     </>
-  );
-}
-
-/** What the analysis wants or why it failed, right under the numbers. */
-function StatusBand({ detail }: { detail: MealDetailResponse | null }) {
-  if (!detail) return null;
-  const { meal, revision } = detail;
-  if (meal.status === "failed") {
-    return (
-      <Band tone="orange" className="px-5 pt-4 pb-5" role="alert">
-        <Label className="text-orange-muted">Analysis failed</Label>
-        <p className="mt-2 line-clamp-4 font-bold">{meal.analysisError ?? "The analysis didn't finish."}</p>
-        <p className="mt-2 font-medium text-sm">Add what might help, then retry below.</p>
-      </Band>
-    );
-  }
-  const open =
-    meal.status === "needs_input" ? (revision?.questions.filter((q) => !q.answeredByCaptureId) ?? []) : [];
-  if (open.length === 0) return null;
-  return (
-    <Band tone="lime" className="px-5 pt-4 pb-5" data-testid="questions">
-      <Label className="text-lime-muted">{plural(open.length, "question")}</Label>
-      {open.map((q) => (
-        <p key={q.id} className="display mt-2 text-[22px] leading-[1.1] tracking-[-0.02em]">
-          {q.question}
-        </p>
-      ))}
-      <p className="mt-3 font-medium text-sm">Answer with a memo or a note below, then re-analyse.</p>
-    </Band>
   );
 }
 

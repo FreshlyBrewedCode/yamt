@@ -1,20 +1,23 @@
-import { type Capture, mealPaths, type Transcript } from "@yamt/shared";
+import { type Capture, isVoice, type MealDetailResponse, mealPaths, type Transcript } from "@yamt/shared";
 import { cn } from "cn";
 import {
   FileAudio,
   File as FileIcon,
   Link2,
   type LucideIcon,
+  MessageCircleReply,
   Mic,
   NotebookPen,
   Pause,
+  PencilLine,
   Play,
   RotateCw,
   X,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { shortUrl } from "@/lib/format";
-import type { CaptureEntry } from "@/lib/outbox";
+import { type CaptureEntry, type OutboxSnapshot, outbox } from "@/lib/outbox";
+import { useRetract, useRetranscribe } from "@/lib/queries";
 import { formatDuration } from "@/lib/recorder";
 import { Label } from "./slab";
 
@@ -22,6 +25,8 @@ import { Label } from "./slab";
 export interface CaptureRow {
   key: string;
   kind: Capture["kind"];
+  /** Speech with playback: a voice memo, or a spoken answer or correction. */
+  voice: boolean;
   title: string;
   subtitle: string;
   /** Image thumbnail or audio source. */
@@ -32,6 +37,8 @@ export interface CaptureRow {
   progress: number;
   onRemove?: () => void;
   onRetry?: () => void;
+  /** What `onRetry` does, for its label: the upload (default) or the transcription. */
+  retry?: "upload" | "transcription";
 }
 
 const icons: Record<Capture["kind"], LucideIcon> = {
@@ -40,12 +47,17 @@ const icons: Record<Capture["kind"], LucideIcon> = {
   text: NotebookPen,
   link: Link2,
   file: FileIcon,
-  correction: NotebookPen,
-  answer: NotebookPen,
+  correction: PencilLine,
+  answer: MessageCircleReply,
 };
 
+const kindName: Record<"answer" | "correction", string> = { answer: "Answer", correction: "Correction" };
+
 /** Rows for the server's live captures, oldest first. */
-export function serverRows(captures: Capture[], transcripts: Transcript[]): Omit<CaptureRow, "onRemove">[] {
+export function serverRows(
+  captures: Capture[],
+  transcripts: Transcript[],
+): (Omit<CaptureRow, "onRemove"> & { transcriptFailed?: boolean })[] {
   const tOf = new Map(transcripts.map((t) => [t.captureId, t]));
   return captures
     .filter((c) => c.retractedAt === null)
@@ -54,29 +66,36 @@ export function serverRows(captures: Capture[], transcripts: Transcript[]): Omit
       const base = {
         key: c.id,
         kind: c.kind,
+        voice: false,
         upload: "done" as const,
         progress: 1,
         durationMs: null,
         src: null,
       };
+      if (isVoice(c)) {
+        const durationMs = t?.durationMs ?? null;
+        const spoken = c.kind === "answer" || c.kind === "correction" ? kindName[c.kind] : null;
+        const heard =
+          t?.status === "done"
+            ? t.text?.trim()
+              ? `“${t.text.trim()}”`
+              : "Transcribed: no speech"
+            : t?.status === "failed"
+              ? "Transcription failed"
+              : "Uploaded · transcribing…";
+        return {
+          ...base,
+          voice: true,
+          title: spoken
+            ? `Spoken ${spoken.toLowerCase()}${durationMs !== null ? ` ${formatDuration(durationMs)}` : ""}`
+            : audioTitle(c.fileName, durationMs),
+          subtitle: heard,
+          src: mealPaths.media(c.id),
+          durationMs,
+          transcriptFailed: t?.status === "failed",
+        };
+      }
       switch (c.kind) {
-        case "audio": {
-          const durationMs = t?.durationMs ?? null;
-          return {
-            ...base,
-            title: audioTitle(c.fileName, durationMs),
-            subtitle:
-              t?.status === "done"
-                ? t.text?.trim()
-                  ? `“${t.text.trim()}”`
-                  : "Transcribed: no speech"
-                : t?.status === "failed"
-                  ? "Transcription failed"
-                  : "Uploaded · transcribing…",
-            src: mealPaths.media(c.id),
-            durationMs,
-          };
-        }
         case "image":
           return {
             ...base,
@@ -125,25 +144,34 @@ export function pendingRows(
           : e.attempts > 0
             ? "Waiting to retry"
             : "Queued";
-    const base = { key: e.id, kind: c.kind, upload, progress, src: null, durationMs: null } as const;
-    switch (c.kind) {
-      case "audio":
-        return {
-          ...base,
-          title: audioTitle(c.fileName, c.durationMs ?? null),
-          subtitle: status,
-          src: urls.get(e.id) ?? null,
-          durationMs: c.durationMs ?? null,
-        };
-      case "image":
+    const base = {
+      key: e.id,
+      kind: c.kind,
+      voice: false,
+      upload,
+      progress,
+      src: null,
+      durationMs: null,
+    } as const;
+    if ("blob" in c) {
+      if (c.kind === "image")
         return { ...base, title: c.fileName, subtitle: status, src: urls.get(e.id) ?? null };
-      case "file":
-        return { ...base, title: c.fileName, subtitle: status };
-      case "text":
-        return { ...base, title: c.text, subtitle: status };
-      default:
-        return { ...base, title: c.text || shortUrl(c.url), subtitle: status };
+      if (c.kind === "file") return { ...base, title: c.fileName, subtitle: status };
+      const durationMs = c.durationMs ?? null;
+      return {
+        ...base,
+        voice: true,
+        title:
+          c.kind === "audio"
+            ? audioTitle(c.fileName, durationMs)
+            : `Spoken ${kindName[c.kind].toLowerCase()}${durationMs !== null ? ` ${formatDuration(durationMs)}` : ""}`,
+        subtitle: status,
+        src: urls.get(e.id) ?? null,
+        durationMs,
+      };
     }
+    if (c.kind === "link") return { ...base, title: c.text || shortUrl(c.url), subtitle: status };
+    return { ...base, title: c.text, subtitle: status };
   });
 }
 
@@ -153,6 +181,49 @@ const audioTitle = (fileName: string | null, durationMs: number | null) => {
   return durationMs !== null ? `${name} ${formatDuration(durationMs)}` : name;
 };
 
+/**
+ * The rows of a meal's captures: the server's live ones (remove = retract; a failed transcript
+ * can be run again) and those still in the upload queue (discard, retry a refused one), merged
+ * by id so nothing blinks while an upload lands.
+ */
+export function useCaptureRows(
+  mealId: string,
+  detail: MealDetailResponse | null,
+  captureEntries: CaptureEntry[],
+  snapshot: OutboxSnapshot,
+  onProblem: (message: string) => void,
+): CaptureRow[] {
+  const retract = useRetract(mealId);
+  const retranscribe = useRetranscribe(mealId);
+  const urls = useBlobUrls(captureEntries);
+  const serverIds = new Set(detail?.captures.map((c) => c.id));
+  return [
+    ...serverRows(detail?.captures ?? [], detail?.transcripts ?? []).map(({ transcriptFailed, ...r }) => ({
+      ...r,
+      onRemove: () =>
+        retract.mutate(r.key, { onError: (e) => onProblem(`Couldn't remove it: ${e.message}`) }),
+      ...(transcriptFailed
+        ? {
+            retry: "transcription" as const,
+            onRetry: () =>
+              retranscribe.mutate(r.key, {
+                onError: (e) => onProblem(`Couldn't transcribe it again: ${e.message}`),
+              }),
+          }
+        : {}),
+    })),
+    ...pendingRows(
+      captureEntries.filter((e) => !serverIds.has(e.id)),
+      snapshot,
+      urls,
+    ).map((r) => ({
+      ...r,
+      onRemove: () => void outbox.discard(r.key),
+      onRetry: r.upload === "refused" ? () => void outbox.retry(r.key) : undefined,
+    })),
+  ];
+}
+
 /** Object URLs for the blobs of pending image and audio captures, revoked when they go. */
 export function useBlobUrls(entries: CaptureEntry[]): Map<string, string> {
   const cache = useRef(new Map<string, string>());
@@ -160,7 +231,7 @@ export function useBlobUrls(entries: CaptureEntry[]): Map<string, string> {
     const next = new Map<string, string>();
     for (const e of entries) {
       const c = e.capture;
-      if (c.kind !== "image" && c.kind !== "audio") continue;
+      if (!("blob" in c) || c.kind === "file") continue;
       next.set(e.id, cache.current.get(e.id) ?? URL.createObjectURL(c.blob));
     }
     for (const [id, url] of cache.current) if (!next.has(id)) URL.revokeObjectURL(url);
@@ -220,6 +291,7 @@ function Row({ row, playing, onPlay }: { row: CaptureRow; playing: boolean; onPl
   const refused = row.upload === "refused";
   const Icon =
     row.kind === "audio" && row.upload === "done" ? Mic : row.kind === "audio" ? FileAudio : icons[row.kind];
+  const retryLabel = row.retry === "transcription" ? "Transcribe again" : "Retry upload";
 
   return (
     <li
@@ -240,7 +312,7 @@ function Row({ row, playing, onPlay }: { row: CaptureRow; playing: boolean; onPl
       <div className="relative shrink-0">
         {row.kind === "image" && row.src ? (
           <img src={row.src} alt="" className="size-12 object-cover" loading="lazy" />
-        ) : row.kind === "audio" && row.src ? (
+        ) : row.voice && row.src ? (
           <button
             type="button"
             onClick={onPlay}
@@ -280,7 +352,7 @@ function Row({ row, playing, onPlay }: { row: CaptureRow; playing: boolean; onPl
         <button
           type="button"
           onClick={row.onRetry}
-          aria-label="Retry upload"
+          aria-label={retryLabel}
           className="relative flex size-11 items-center justify-center active:opacity-70"
         >
           <RotateCw className="size-5" strokeWidth={2.5} />
