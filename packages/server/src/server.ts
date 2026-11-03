@@ -5,6 +5,7 @@ import { ensureDataDir } from "./config.ts";
 import { type Db, openDb } from "./db/index.ts";
 import { createApi } from "./http/api.ts";
 import { staticHandler, WEB_DIST } from "./http/static.ts";
+import { createMcpApp, MCP_PATH } from "./mcp/endpoint.ts";
 import type { Fetch } from "./nutrition/http.ts";
 import { createServices, type Services } from "./services.ts";
 
@@ -33,6 +34,8 @@ export interface AppServer {
   port: number;
   /** http://localhost:<port>/ */
   localUrl: string;
+  /** http://127.0.0.1:<port>/mcp, what `.mcp.json` and agent runs point at. */
+  mcpUrl: string;
   stop(): Promise<void>;
 }
 
@@ -50,9 +53,13 @@ export function createServer(opts: ServerOptions): AppServer {
   });
   // one process owns the queue: whatever an earlier one left running was interrupted
   services.repos.jobs.releaseInterrupted();
+  // the interactive MCP token exists from the first start on (`yamt mcp-token` prints it)
+  services.mcpTokens.interactiveToken();
 
   const app = new Hono();
   app.route("/api", createApi({ db, auth: opts.auth, services }));
+  // bearer tokens, never the tailnet identity: agent runs and interactive sessions on this machine
+  app.route(MCP_PATH, createMcpApp(services));
   const serveStatic = opts.webDist === null ? null : staticHandler(opts.webDist ?? WEB_DIST);
 
   const server = Bun.serve({
@@ -63,7 +70,7 @@ export function createServer(opts: ServerOptions): AppServer {
     fetch(req) {
       const { pathname } = new URL(req.url);
       if (pathname === "/api" || pathname.startsWith("/api/")) return app.fetch(req);
-      // /mcp (epic #2, #7) mounts here, behind requireBearer (auth/bearer.ts), not the identity check
+      if (pathname === MCP_PATH || pathname.startsWith(`${MCP_PATH}/`)) return app.fetch(req);
       if (serveStatic) return serveStatic(req);
       return new Response("not found", { status: 404 });
     },
@@ -75,6 +82,7 @@ export function createServer(opts: ServerOptions): AppServer {
     services,
     port,
     localUrl: `http://localhost:${port}/`,
+    mcpUrl: `http://127.0.0.1:${port}${MCP_PATH}`,
     async stop() {
       await server.stop(true);
       db.close();
