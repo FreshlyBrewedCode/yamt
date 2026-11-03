@@ -82,7 +82,7 @@ function errorMessage(status: number, body: string): string {
   if (status === 413) return `Larger than the server accepts (${MAX_UPLOAD_BYTES / 1024 / 1024} MB)`;
   try {
     const err = JSON.parse(body) as ApiError;
-    if (err.error) return err.error;
+    if (err.error) return err.hint ? `${err.error} (${err.hint})` : err.error;
   } catch {
     // not JSON
   }

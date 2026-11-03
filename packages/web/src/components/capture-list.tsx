@@ -1,0 +1,314 @@
+import { type Capture, mealPaths, type Transcript } from "@yamt/shared";
+import { cn } from "cn";
+import {
+  FileAudio,
+  File as FileIcon,
+  Link2,
+  type LucideIcon,
+  Mic,
+  NotebookPen,
+  Pause,
+  Play,
+  RotateCw,
+  X,
+} from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { shortUrl } from "@/lib/format";
+import type { CaptureEntry } from "@/lib/outbox";
+import { formatDuration } from "@/lib/recorder";
+import { Label } from "./slab";
+
+/** One line of the capture list: a capture the server has, or one still on this phone. */
+export interface CaptureRow {
+  key: string;
+  kind: Capture["kind"];
+  title: string;
+  subtitle: string;
+  /** Image thumbnail or audio source. */
+  src: string | null;
+  durationMs: number | null;
+  /** On this phone: `queued` (waiting its turn or the network), `sending`, `refused` by the server. */
+  upload: "done" | "queued" | "sending" | "refused";
+  progress: number;
+  onRemove?: () => void;
+  onRetry?: () => void;
+}
+
+const icons: Record<Capture["kind"], LucideIcon> = {
+  audio: Mic,
+  image: FileIcon,
+  text: NotebookPen,
+  link: Link2,
+  file: FileIcon,
+  correction: NotebookPen,
+  answer: NotebookPen,
+};
+
+/** Rows for the server's live captures, oldest first. */
+export function serverRows(captures: Capture[], transcripts: Transcript[]): Omit<CaptureRow, "onRemove">[] {
+  const tOf = new Map(transcripts.map((t) => [t.captureId, t]));
+  return captures
+    .filter((c) => c.retractedAt === null)
+    .map((c) => {
+      const t = tOf.get(c.id);
+      const base = {
+        key: c.id,
+        kind: c.kind,
+        upload: "done" as const,
+        progress: 1,
+        durationMs: null,
+        src: null,
+      };
+      switch (c.kind) {
+        case "audio": {
+          const durationMs = t?.durationMs ?? null;
+          return {
+            ...base,
+            title: audioTitle(c.fileName, durationMs),
+            subtitle:
+              t?.status === "done"
+                ? t.text?.trim()
+                  ? `“${t.text.trim()}”`
+                  : "Transcribed: no speech"
+                : t?.status === "failed"
+                  ? "Transcription failed"
+                  : "Uploaded · transcribing…",
+            src: mealPaths.media(c.id),
+            durationMs,
+          };
+        }
+        case "image":
+          return {
+            ...base,
+            title: c.fileName ?? "Photo",
+            subtitle: "Photo",
+            src:
+              c.jpegDerivative === "ok"
+                ? mealPaths.mediaJpeg(c.id)
+                : c.jpegDerivative === "missing"
+                  ? null
+                  : mealPaths.media(c.id),
+          };
+        case "link":
+          return { ...base, title: c.text ?? shortUrl(c.url ?? ""), subtitle: shortUrl(c.url ?? "") };
+        case "file":
+          return { ...base, title: c.fileName ?? "File", subtitle: "File" };
+        default:
+          return {
+            ...base,
+            title: c.text ?? "",
+            subtitle: c.kind === "text" ? "Note" : c.kind === "correction" ? "Correction" : "Answer",
+          };
+      }
+    });
+}
+
+/** Rows for captures still on this phone. `urls` holds object URLs for their blobs. */
+export function pendingRows(
+  entries: CaptureEntry[],
+  state: { progress: Readonly<Record<string, number>>; sending: string | null; online: boolean },
+  urls: Map<string, string>,
+): Omit<CaptureRow, "onRemove" | "onRetry">[] {
+  return entries.map((e) => {
+    const c = e.capture;
+    const sending = state.sending === e.id;
+    const progress = state.progress[e.id] ?? 0;
+    const upload = e.failed ? "refused" : sending ? "sending" : "queued";
+    const status = e.failed
+      ? `Refused: ${e.error ?? "unknown error"}`
+      : sending
+        ? "blob" in c
+          ? `Uploading ${Math.round(progress * 100)}%`
+          : "Sending…"
+        : !state.online
+          ? "Waiting for network"
+          : e.attempts > 0
+            ? "Waiting to retry"
+            : "Queued";
+    const base = { key: e.id, kind: c.kind, upload, progress, src: null, durationMs: null } as const;
+    switch (c.kind) {
+      case "audio":
+        return {
+          ...base,
+          title: audioTitle(c.fileName, c.durationMs ?? null),
+          subtitle: status,
+          src: urls.get(e.id) ?? null,
+          durationMs: c.durationMs ?? null,
+        };
+      case "image":
+        return { ...base, title: c.fileName, subtitle: status, src: urls.get(e.id) ?? null };
+      case "file":
+        return { ...base, title: c.fileName, subtitle: status };
+      case "text":
+        return { ...base, title: c.text, subtitle: status };
+      default:
+        return { ...base, title: c.text || shortUrl(c.url), subtitle: status };
+    }
+  });
+}
+
+const audioTitle = (fileName: string | null, durationMs: number | null) => {
+  const recorded = !fileName || fileName.startsWith("voice-memo-");
+  const name = recorded ? "Voice memo" : fileName;
+  return durationMs !== null ? `${name} ${formatDuration(durationMs)}` : name;
+};
+
+/** Object URLs for the blobs of pending image and audio captures, revoked when they go. */
+export function useBlobUrls(entries: CaptureEntry[]): Map<string, string> {
+  const cache = useRef(new Map<string, string>());
+  const urls = useMemo(() => {
+    const next = new Map<string, string>();
+    for (const e of entries) {
+      const c = e.capture;
+      if (c.kind !== "image" && c.kind !== "audio") continue;
+      next.set(e.id, cache.current.get(e.id) ?? URL.createObjectURL(c.blob));
+    }
+    for (const [id, url] of cache.current) if (!next.has(id)) URL.revokeObjectURL(url);
+    cache.current = next;
+    return next;
+  }, [entries]);
+  useEffect(
+    () => () => {
+      for (const url of cache.current.values()) URL.revokeObjectURL(url);
+      cache.current = new Map();
+    },
+    [],
+  );
+  return urls;
+}
+
+/** The capture list (plain, with dividers): thumbnail or icon, title, status, remove. */
+export function CaptureList({ rows }: { rows: CaptureRow[] }) {
+  const [playing, setPlaying] = useState<string | null>(null);
+  const audio = useRef<HTMLAudioElement>(null);
+
+  const toggle = (row: CaptureRow) => {
+    const el = audio.current;
+    if (!el || !row.src) return;
+    if (playing === row.key) {
+      el.pause();
+      setPlaying(null);
+      return;
+    }
+    el.src = row.src;
+    void el.play().then(
+      () => setPlaying(row.key),
+      () => setPlaying(null),
+    );
+  };
+
+  return (
+    <>
+      {/* biome-ignore lint/a11y/useMediaCaption: voice memos of meals; the transcript is the caption */}
+      <audio ref={audio} onEnded={() => setPlaying(null)} onPause={() => setPlaying(null)} hidden />
+      <ul className="divide-y divide-border" data-testid="capture-list">
+        {rows.map((row) => (
+          <Row key={row.key} row={row} playing={playing === row.key} onPlay={() => toggle(row)} />
+        ))}
+      </ul>
+    </>
+  );
+}
+
+function Row({ row, playing, onPlay }: { row: CaptureRow; playing: boolean; onPlay: () => void }) {
+  const [confirming, setConfirming] = useState(false);
+  useEffect(() => {
+    if (!confirming) return;
+    const t = setTimeout(() => setConfirming(false), 4000);
+    return () => clearTimeout(t);
+  }, [confirming]);
+  const refused = row.upload === "refused";
+  const Icon =
+    row.kind === "audio" && row.upload === "done" ? Mic : row.kind === "audio" ? FileAudio : icons[row.kind];
+
+  return (
+    <li
+      className={cn(
+        "relative flex min-h-[68px] items-center gap-4 overflow-hidden px-5 py-2.5",
+        refused && "bg-orange text-orange-foreground",
+      )}
+      data-testid="capture-row"
+      data-upload={row.upload}
+      data-kind={row.kind}
+    >
+      {row.upload === "sending" && (
+        <div
+          className="absolute inset-y-0 left-0 bg-lime-soft transition-[width]"
+          style={{ width: `${row.progress * 100}%` }}
+        />
+      )}
+      <div className="relative shrink-0">
+        {row.kind === "image" && row.src ? (
+          <img src={row.src} alt="" className="size-12 object-cover" loading="lazy" />
+        ) : row.kind === "audio" && row.src ? (
+          <button
+            type="button"
+            onClick={onPlay}
+            aria-label={playing ? "Pause" : "Play"}
+            className={cn(
+              "flex size-12 items-center justify-center active:opacity-70",
+              playing ? "bg-lime text-lime-foreground" : "bg-tint",
+            )}
+          >
+            {playing ? (
+              <Pause className="size-6 fill-current" />
+            ) : (
+              <Play className="size-6" strokeWidth={2.5} />
+            )}
+          </button>
+        ) : (
+          <div
+            className={cn(
+              "flex size-12 items-center justify-center",
+              refused ? "bg-orange-foreground/10" : "bg-tint",
+            )}
+          >
+            <Icon className="size-6" strokeWidth={2.5} />
+          </div>
+        )}
+      </div>
+      <div className="relative min-w-0 flex-1">
+        <div className="truncate font-bold">{row.title}</div>
+        <Label
+          className={cn("mt-0.5 truncate", refused ? "normal-case tracking-normal" : "text-muted-foreground")}
+          data-testid="capture-status"
+        >
+          {row.subtitle}
+        </Label>
+      </div>
+      {row.onRetry && (
+        <button
+          type="button"
+          onClick={row.onRetry}
+          aria-label="Retry upload"
+          className="relative flex size-11 items-center justify-center active:opacity-70"
+        >
+          <RotateCw className="size-5" strokeWidth={2.5} />
+        </button>
+      )}
+      {row.onRemove &&
+        (confirming ? (
+          <button
+            type="button"
+            onClick={row.onRemove}
+            className="relative -mr-2 h-11 bg-foreground px-3 font-bold text-background text-xs uppercase tracking-[0.08em]"
+          >
+            {row.upload === "done" ? "Remove" : "Discard"}
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setConfirming(true)}
+            disabled={row.upload === "sending"}
+            aria-label={row.upload === "done" ? "Remove capture" : "Discard upload"}
+            className={cn(
+              "relative -mr-2 flex size-11 items-center justify-center disabled:opacity-30",
+              !refused && "text-muted-foreground",
+            )}
+          >
+            <X className="size-5" strokeWidth={2.5} />
+          </button>
+        ))}
+    </li>
+  );
+}
