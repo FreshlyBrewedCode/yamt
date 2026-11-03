@@ -2,8 +2,10 @@
 
 Yet another macro tracker: capture meals freestyle on the phone (voice, photos, text, links), an
 agent analyses them afterwards and logs macros with their provenance. Single user, tailnet-only.
-Read before changing anything: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (how it's built) and
-the ADRs in [docs/adr/](docs/adr/) (why). The roadmap is tracker #1; wave 1 is epic #2.
+Read before changing anything: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (how it's built),
+the ADRs in [docs/adr/](docs/adr/) (why) and, for anything visible,
+[docs/design/design.md](docs/design/design.md) (the design, D · Slab). The roadmap is tracker #1;
+wave 1 is epic #2.
 
 ## Commands
 
@@ -82,7 +84,7 @@ the repo, an issue or a PR. `mcp-token --rotate` replaces it (the old one stops 
 
 `packages/shared` (zod schemas and types shared by server and web), `packages/server` (CLI, Hono
 API, auth, SQLite), `packages/web` (Vite + React + TanStack Router/Query + Tailwind + shadcn/ui),
-`services/stt` (the speech-to-text process, Python/uv), `e2e/` (Playwright), `docs/` (architecture, ADRs), `reports/` (background research).
+`services/stt` (the speech-to-text process, Python/uv), `e2e/` (Playwright), `docs/` (architecture, ADRs, design), `reports/` (background research).
 `.agents/skills/` holds project skills (`.claude/skills` links to it).
 
 ## Conventions
@@ -121,6 +123,12 @@ API, auth, SQLite), `packages/web` (Vite + React + TanStack Router/Query + Tailw
 - Web: server state only via TanStack Query (`lib/queries.ts`), colours only via the theme
   tokens in `index.css` (light and dark, following the OS). Add shadcn components with
   `bunx shadcn@4.23.0 add <name>` in `packages/web`. Mobile first: check every screen at 390×844.
+- Design: every screen follows [docs/design/design.md](docs/design/design.md) (filled bands, the
+  ink / lime / tint / plain hierarchy, orange only for failure, the sticky bottom slab) and builds
+  on the primitives in `components/slab.tsx`; light and dark both get a look before a PR.
+- Captures leave the phone only through the upload queue (`lib/outbox`, IndexedDB): never post a
+  capture directly, or it can be lost offline. The service worker caches the app shell only,
+  never `/api` or `/mcp`.
 - Tests: light and purposeful. Logic gets `bun test` next to its package (`packages/*/test`),
   each main flow one Playwright spec.
 - Generated `packages/web/src/routeTree.gen.ts` is committed. On merge conflicts, take either side

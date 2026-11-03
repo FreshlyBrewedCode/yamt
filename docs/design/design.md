@@ -145,7 +145,11 @@ Units sit next to numbers smaller and muted (`28g`, `72 /160`).
 - **`SlabButton`**: a full-width block button, 64 px default, 76 px as the bottom slab;
   tones `lime`, `ink`, `ghost`; disabled = tint with muted text (never a dimmed lime).
 - **`BottomSlab`**: the sticky footer: an optional tint hint line (why the action waits) above
-  one `SlabButton`, padded by the bottom safe area.
+  one `SlabButton`, padded by the bottom safe area. On the capture screen it is **Analyse**
+  (lime when it can be pressed; tint and disabled with nothing captured, while recording, or
+  while an upload is refused), "Analyse queued" / "Analysing…" (tint) while it waits or runs,
+  "Retry analysis" on a failed meal, and **Re-analyse** on an analysed meal only once something
+  new was captured (otherwise no slab).
 - **Totals slab** (ink): the hero kcal left with its label, a secondary figure right, then a
   4-column grid (Prot, Fat, Carb, Fibre). #12 adds targets: the right figure becomes "left of
   2,400" in lime, each macro gets "/160" and a 6 px bar (track `ink-line`, fill lime). Without
@@ -159,8 +163,9 @@ Units sit next to numbers smaller and muted (`28g`, `72 /160`).
   status, a 44 px remove action. Removing asks once inline ("Remove?") because captures can't be
   un-retracted.
 - **Icon buttons** in headers: 48 px tint squares (close ✕, back ←).
-- **Sheets** (note, link): bottom sheet on the page colour, square, display title, the input on
-  tint, a lime `SlabButton` to add.
+- **Sheets** (note, link): slide in from the **top** (on iOS the keyboard covers the bottom
+  half, a bottom sheet would sit behind it), on the page colour, square, display title, the input
+  on tint (lime-soft while focused), a lime `SlabButton` to add.
 - **Icons:** lucide, stroke width 2.5, 20–28 px.
 
 ## Do / don't
