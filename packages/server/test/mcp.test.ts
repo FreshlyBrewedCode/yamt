@@ -87,7 +87,11 @@ const fails = async (client: Client, name: string, args: Record<string, unknown>
 async function api<T>(method: string, path: string, body?: unknown) {
   const res = await fetch(new URL(path, app.localUrl), {
     method,
-    headers: { [IDENTITY_HEADER]: "alice@example.com", "content-type": "application/json" },
+    headers: {
+      [IDENTITY_HEADER]: "alice@example.com",
+      origin: new URL(app.localUrl).origin,
+      "content-type": "application/json",
+    },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   return { status: res.status, body: (await res.json()) as T };
@@ -347,7 +351,7 @@ describe("tools end to end (fixtures)", () => {
     );
     await fetch(new URL(mealPaths.captures(meal.id), app.localUrl), {
       method: "POST",
-      headers: { [IDENTITY_HEADER]: "alice@example.com" },
+      headers: { [IDENTITY_HEADER]: "alice@example.com", origin: new URL(app.localUrl).origin },
       body: form,
     });
     const audio = s.repos.captures.listForMeal(meal.id).find((c) => c.kind === "audio")!;
@@ -402,7 +406,7 @@ describe("tools end to end (fixtures)", () => {
     form.set("file", Bun.file(join(import.meta.dir, "fixtures", "gradient.jpg")), "plate.jpg");
     await fetch(new URL(mealPaths.captures(meal.id), app.localUrl), {
       method: "POST",
-      headers: { [IDENTITY_HEADER]: "alice@example.com" },
+      headers: { [IDENTITY_HEADER]: "alice@example.com", origin: new URL(app.localUrl).origin },
       body: form,
     });
     const got = await ok<{ captures: { media: { path: string; mimeType: string } }[] }>(client, "get_meal", {

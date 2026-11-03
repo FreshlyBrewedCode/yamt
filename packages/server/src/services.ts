@@ -5,6 +5,7 @@ import { FoodService } from "./domain/foods.ts";
 import { GoalService } from "./domain/goals.ts";
 import { MealService } from "./domain/meals.ts";
 import { RevisionService } from "./domain/revisions.ts";
+import { ShareService } from "./domain/share.ts";
 import { localTimeZone } from "./domain/time.ts";
 import { McpTokens } from "./mcp/tokens.ts";
 import { MediaStore } from "./media/store.ts";
@@ -22,6 +23,8 @@ export interface Services {
   meals: MealService;
   foods: FoodService;
   revisions: RevisionService;
+  /** The share target (#26): shared items into the current draft meal, or a new one. */
+  share: ShareService;
   /** Daily goals and the day view (#12). */
   goals: GoalService;
   /** Bearer tokens for /mcp: the interactive one and per-run ones (#8 mints and revokes). */
@@ -77,6 +80,7 @@ export function createServices(opts: ServicesOptions): Services {
     meals,
     foods: new FoodService(repos, new OffClient(fetchFn), new FdcClient(fetchFn, opts.fdcApiKey ?? null)),
     revisions,
+    share: new ShareService(repos, meals, timeZone),
     goals: new GoalService(repos, meals, timeZone),
     mcpTokens: new McpTokens(dataPaths(opts.dataDir).mcpToken),
     fetch: fetchFn,

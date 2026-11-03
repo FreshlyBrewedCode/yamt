@@ -1,4 +1,4 @@
-import type { CaptureKind } from "@yamt/shared";
+import { type CaptureKind, captureCounts } from "@yamt/shared";
 
 // UI copy is English; numbers use "1,198"; times are 24 h in the browser's zone.
 
@@ -39,26 +39,9 @@ export function dayLabel(dayStart: number, now = Date.now()): string {
 export const formatDayTime = (ms: number, now = Date.now()): string =>
   `${dayLabel(startOfDay(ms), now)}, ${formatTime(ms)}`;
 
-const kindWords: Record<CaptureKind, [string, string]> = {
-  audio: ["voice memo", "voice memos"],
-  image: ["photo", "photos"],
-  text: ["note", "notes"],
-  link: ["link", "links"],
-  file: ["file", "files"],
-  correction: ["correction", "corrections"],
-  answer: ["answer", "answers"],
-};
-const kindOrder: CaptureKind[] = ["image", "audio", "text", "link", "file", "correction", "answer"];
-
 /** "2 photos · 1 voice memo". */
 export function captureSummary(kinds: Partial<Record<CaptureKind, number>>): string {
-  return kindOrder
-    .filter((k) => (kinds[k] ?? 0) > 0)
-    .map((k) => {
-      const n = kinds[k]!;
-      return `${n} ${kindWords[k][n === 1 ? 0 : 1]}`;
-    })
-    .join(" · ");
+  return captureCounts(kinds).join(" · ");
 }
 
 export const plural = (n: number, one: string, many = `${one}s`): string => `${n} ${n === 1 ? one : many}`;

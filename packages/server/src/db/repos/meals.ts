@@ -100,6 +100,19 @@ export class MealRepo {
     });
   }
 
+  /**
+   * The most recently updated meal still in `draft` whose last change (or creation) is at or
+   * after `since`, or null. What the share route adds to (#26).
+   */
+  latestDraftSince(since: number): Meal | null {
+    const r = this.db
+      .query<Row, [number]>(
+        "SELECT * FROM meals WHERE status = 'draft' AND updated_at >= ? ORDER BY updated_at DESC, id DESC LIMIT 1",
+      )
+      .get(since);
+    return r ? toMeal(r) : null;
+  }
+
   /** Sets the status; `error` is kept only with `failed` (why the analysis failed), else cleared. */
   setStatus(id: string, status: MealStatus, now = Date.now(), error: string | null = null): Meal | null {
     this.db

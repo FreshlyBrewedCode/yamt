@@ -10,6 +10,7 @@ import { mealRoutes } from "./meals.ts";
 import { handleError, sameOrigin } from "./middleware.ts";
 import { pushRoutes } from "./push.ts";
 import { runRoutes } from "./runs.ts";
+import { shareRoutes } from "./share.ts";
 import { weightRoutes } from "./weight.ts";
 
 export interface ApiDeps {
@@ -20,7 +21,8 @@ export interface ApiDeps {
 
 /**
  * The browser-facing JSON API, mounted at /api. Health is public; every other route (including
- * unknown ones) needs the tailnet identity, and writes a same-origin request.
+ * unknown ones) needs the tailnet identity, and writes a same-origin request (`POST /api/share`,
+ * the iOS Shortcut's, may also come without an Origin: see `sameOrigin`).
  */
 export function createApi(deps: ApiDeps): Hono<IdentityEnv> {
   const api = new Hono<IdentityEnv>();
@@ -38,6 +40,7 @@ export function createApi(deps: ApiDeps): Hono<IdentityEnv> {
   api.route("/", weightRoutes(deps.services));
   api.route("/", goalRoutes(deps.services));
   api.route("/", pushRoutes(deps.services));
+  api.route("/", shareRoutes(deps.services));
 
   api.all("*", () => {
     throw new HttpError(404, "not found");
