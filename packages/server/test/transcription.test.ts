@@ -422,12 +422,13 @@ describe("transcription in the server", () => {
     expect(res.body.capture).toMatchObject({ kind: "answer", questionId: question.id });
     s.meals.analyse(mealId);
     await settled(res.body.capture.id, "done");
-    await waitFor(
-      "analysed again",
-      () =>
-        s.repos.runs.listForMeal(mealId).length === 2 && s.repos.meals.get(mealId)!.status === "needs_input",
-    );
-    const [run] = s.repos.runs.listForMeal(mealId);
+    // the agent writes its record after save_meal_revision returns: read it once the run has ended
+    const [run] = await waitFor("the re-analysis ended", () => {
+      const ended = s.repos.runs.listForMeal(mealId).filter((r) => r.status !== "running");
+      return ended.length === 2 && ended;
+    });
+    expect(run!.status).toBe("succeeded");
+    expect(s.repos.meals.get(mealId)!.status).toBe("needs_input");
     const agent = JSON.parse(readFileSync(join(dataPaths(dataDir).runs, run!.id, "fake-agent.json"), "utf8"));
     expect(agent.captureKinds).toEqual(["text", "answer"]);
     expect(agent.transcripts).toEqual([
