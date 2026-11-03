@@ -70,17 +70,21 @@ unchanged items, don't save only the difference.
    gesättigte Fettsäuren*, *Kohlenhydrate*, *davon Zucker*, *Ballaststoffe*, *Eiweiß*, *Salz*. Use
    the per-100 g column; if the label only gives values per serving, convert with the serving
    size. Packaging also gives the pack weight ("Inhalt 500 g"), which helps with amounts.
+   **Carbohydrate means available carbohydrate, excluding fiber**, as on EU labels:
+   *Kohlenhydrate* goes into `carbohydrate` as printed, *Ballaststoffe* into `fiber`. A US or
+   Canadian label's "Total Carbohydrate" includes fiber: enter it minus "Dietary Fiber". yamt maps
+   Open Food Facts and USDA to the same convention.
 3. **Open Food Facts** (via `search_foods`): branded and packaged products sold in Germany. Search
    with the German product name and the brand ("skyr natur arla", "haferflocken kölln").
 4. **USDA FoodData Central** (via `search_foods`, e.g. `sources: ["fdc"]`): generic foods and raw
    ingredients, in English ("oats, rolled", "rice, white, cooked", "chicken breast, raw",
    "olive oil"). Its portions (1 tbsp, 1 cup, 1 medium) help with household measures.
 5. **Estimate**, only when nothing fits: `estimatePer100g` with provenance `estimate`, low
-   confidence, and a note why.
+   confidence, and a note why. Same convention: `carbohydrate` without fiber, fiber separately.
 
 Check each pick: the right state (raw/cooked, dry/prepared, drained), the right product (whole vs
 skimmed milk, wholemeal vs white), plausible numbers (energy ≈ 4 × protein + 4 × carbohydrate +
-9 × fat, roughly; no 0 g fat for cheese). Prefer a candidate with complete macros. Use `get_food`
+9 × fat + 2 × fiber, roughly; no 0 g fat for cheese). Prefer a candidate with complete macros. Use `get_food`
 when you need its portions or full profile.
 
 ## 5. Amounts
