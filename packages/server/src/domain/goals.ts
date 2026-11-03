@@ -1,9 +1,15 @@
 import {
+  ALGORITHM_VERSION,
   type CreateGoalBody,
+  calculateGoal,
   type DayResponse,
   dayProgress,
   type FixGoalBody,
   type Goal,
+  type GoalDerivation,
+  type GoalInputs,
+  type GuidedGoalBody,
+  goalWeight,
   type Targets,
 } from "@yamt/shared";
 import type { Repos } from "../db/repos/index.ts";
@@ -53,6 +59,47 @@ export class GoalService {
       note: body.note,
       now: this.now(),
     });
+  }
+
+  /**
+   * A guided goal (#24): logs the weight given (if any), takes the weight from the log, runs
+   * `calculateGoal` on the server (never the client's numbers), saves the profile and adds a goal
+   * from today with its derivation. All or nothing: a refusal (422) logs and saves nothing.
+   */
+  guided(body: GuidedGoalBody): Goal {
+    const now = this.now();
+    const today = body.effectiveFrom ?? localDate(now, this.timeZone);
+    return this.repos.db.transaction(() => {
+      if (body.weightKg !== undefined) {
+        this.repos.weight.insert({ measuredAt: now, kg: body.weightKg, note: "", now });
+      }
+      // a week's entries are a few dozen at most; 200 is plenty for "the last 7 days"
+      const weight = goalWeight(this.repos.weight.list({ to: now + 1, limit: 200 }), now);
+      if (!weight) throw new HttpError(400, "weightKg: no weight logged yet", "send weightKg to log one");
+      const inputs: GoalInputs = {
+        ...body.profile,
+        weightKg: weight.kg,
+        today,
+        pregnantOrBreastfeeding: body.pregnantOrBreastfeeding,
+      };
+      const result = calculateGoal(inputs, body.choices);
+      if (!result.ok) throw new HttpError(422, result.message, result.reason);
+      this.repos.profile.put(body.profile, now);
+      const derivation: GoalDerivation = {
+        version: ALGORITHM_VERSION,
+        inputs,
+        choices: body.choices,
+        weight,
+        result,
+      };
+      return this.repos.goals.insert({
+        effectiveFrom: today,
+        targets: result.targets,
+        note: "",
+        derivation,
+        now,
+      });
+    })();
   }
 
   /** A typo fix of the latest goal, in place. Older goals are history (409). */

@@ -1,6 +1,7 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import {
+  ALGORITHM_VERSION,
   type ApiError,
   type CaptureResponse,
   type CurrentGoalResponse,
@@ -10,9 +11,13 @@ import {
   goalInForce,
   goalPaths,
   goalPeriods,
+  guidedLabel,
   type MealResponse,
   mealPaths,
+  type ProfileResponse,
+  profilePaths,
   type WeightEntryResponse,
+  type WeightResponse,
   weightPaths,
 } from "@yamt/shared";
 import { IDENTITY_HEADER } from "../src/auth/identity.ts";
@@ -234,5 +239,142 @@ describe("day endpoint", () => {
     expect(ny.meals.map((x) => x.id)).toContain(m.id);
     const berlin = (await call<DayResponse>("GET", goalPaths.day("2026-10-19"))).body;
     expect(berlin.meals.map((x) => x.id)).not.toContain(m.id);
+  });
+});
+
+describe("guided goals and the profile (#24)", () => {
+  // the research report's fixture: man, 30 y, 180 cm, 15 % body fat (weight from the log)
+  const today = localDate(Date.now(), TZ);
+  const profile = {
+    sex: "male",
+    birthYear: Number(today.slice(0, 4)) - 30,
+    heightCm: 180,
+    bodyFatPct: 15,
+    dailyLife: "some_walking",
+    training: { sessionsPerWeek: 3, minutes: 60, type: "strength", intensity: "moderate" },
+  };
+  const choices = { goal: "cut", pace: "standard", protein: "high", fatPercent: 30 } as const;
+  // a server of its own: the weight log must start empty
+  const guided = createServer({
+    dataDir: join(tempDir(), "data"),
+    port: 0,
+    webDist: null,
+    auth: { kind: "tailnet", login: "alice@example.com" },
+    timeZone: TZ,
+  });
+  afterAll(() => guided.stop());
+  async function req<T>(method: string, path: string, body?: unknown) {
+    const res = await fetch(new URL(path, guided.localUrl), {
+      method,
+      headers: { [IDENTITY_HEADER]: "alice@example.com", "content-type": "application/json" },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    return { status: res.status, body: (await res.json()) as T };
+  }
+
+  test("no profile at first; PUT saves one, GET reads it", async () => {
+    expect((await req<ProfileResponse>("GET", profilePaths.profile)).body).toEqual({ profile: null });
+    const put = await req<ProfileResponse>("PUT", profilePaths.profile, { ...profile, bodyFatPct: null });
+    expect(put.status).toBe(200);
+    expect(put.body.profile).toMatchObject({ ...profile, bodyFatPct: null });
+    expect(typeof put.body.profile?.updatedAt).toBe("number");
+    for (const bad of [
+      { ...profile, sex: "other" },
+      { ...profile, training: { ...profile.training, minutes: 50 } },
+      { ...profile, training: { ...profile.training, sessionsPerWeek: 8 } },
+      { ...profile, heightCm: 30 },
+      { ...profile, extra: 1 },
+    ]) {
+      expect((await req("PUT", profilePaths.profile, bad)).status).toBe(400);
+    }
+  });
+
+  test("without a weight in the log or the body: 400; a refusal saves nothing", async () => {
+    const none = await req<ApiError>("POST", profilePaths.guidedGoal, { profile, choices });
+    expect(none.status).toBe(400);
+    expect(none.body.error).toContain("no weight logged");
+    const young = await req<ApiError>("POST", profilePaths.guidedGoal, {
+      profile: { ...profile, birthYear: Number(today.slice(0, 4)) - 16 },
+      choices,
+      weightKg: 80,
+    });
+    expect(young.status).toBe(422);
+    expect(young.body).toMatchObject({ hint: "under_18" });
+    const pregnant = await req<ApiError>("POST", profilePaths.guidedGoal, {
+      profile: { ...profile, sex: "female" },
+      choices,
+      weightKg: 80,
+      pregnantOrBreastfeeding: true,
+    });
+    expect(pregnant.status).toBe(422);
+    // all or nothing: no weight logged, no goal, the profile as it was
+    expect((await req<WeightResponse>("GET", weightPaths.weight)).body.entries).toEqual([]);
+    expect((await req<GoalsResponse>("GET", goalPaths.goals)).body.goals).toEqual([]);
+    expect((await req<ProfileResponse>("GET", profilePaths.profile)).body.profile?.bodyFatPct).toBeNull();
+  });
+
+  test("calculated on the server: logs the weight, saves the profile, adds a goal from today with its derivation", async () => {
+    const res = await req<GoalResponse>("POST", profilePaths.guidedGoal, {
+      profile,
+      choices,
+      weightKg: 80,
+      effectiveFrom: today,
+    });
+    expect(res.status).toBe(201);
+    const goal = res.body.goal;
+    expect(goal).toMatchObject({ effectiveFrom: today, note: "" });
+    expect(goal.targets).toEqual({ energyKcal: 2660, protein: 160, fat: 90, carbohydrate: 285, fiber: 35 });
+    const d = goal.derivation!;
+    expect(d.version).toBe(ALGORITHM_VERSION);
+    expect(d.weight).toMatchObject({ kg: 80, basis: "latest", count: 1 });
+    expect(d.inputs).toMatchObject({ ...profile, weightKg: 80, today, pregnantOrBreastfeeding: false });
+    expect(d.choices).toEqual(choices);
+    expect(d.result).toMatchObject({
+      rmr: { kcal: 1996, equation: "cunningham" },
+      maintenance: { kcal: 3100 },
+    });
+    expect(d.result.lines.protein).toBe("160 g ≈ 2.0 g/kg, protects muscle while cutting");
+    expect(guidedLabel(d)).toBe("Guided · cut, standard pace");
+
+    expect((await req<WeightResponse>("GET", weightPaths.weight)).body.entries.map((e) => e.kg)).toEqual([
+      80,
+    ]);
+    expect((await req<ProfileResponse>("GET", profilePaths.profile)).body.profile).toMatchObject(profile);
+    const history = (await req<GoalsResponse>("GET", goalPaths.goals)).body.goals;
+    expect(history.map((g) => g.id)).toEqual([goal.id]);
+    expect(history[0]?.derivation?.result.targets).toEqual(goal.targets);
+  });
+
+  test("the weight comes from the log: the 7-day mean once there are four entries", async () => {
+    for (const kg of [81, 82, 83]) await req("POST", weightPaths.weight, { kg });
+    const res = await req<GoalResponse>("POST", profilePaths.guidedGoal, {
+      profile,
+      choices: { ...choices, goal: "maintain" },
+    });
+    expect(res.status).toBe(201);
+    expect(res.body.goal.derivation?.weight).toMatchObject({ kg: 81.5, basis: "average", count: 4 });
+  });
+
+  test("validates choices; a typo fix that changes targets drops the derivation, a note-only fix keeps it", async () => {
+    for (const bad of [
+      { ...choices, fatPercent: 33 },
+      { ...choices, fatPercent: 45 },
+      { ...choices, protein: "extreme" },
+      { ...choices, goal: "recomp" },
+    ]) {
+      expect((await req("POST", profilePaths.guidedGoal, { profile, choices: bad })).status).toBe(400);
+    }
+    const goal = (await req<GoalsResponse>("GET", goalPaths.goals)).body.goals[0]!;
+    const noteOnly = await req<GoalResponse>("PATCH", goalPaths.goal(goal.id), {
+      ...goal.targets,
+      note: "from the guide",
+    });
+    expect(noteOnly.body.goal.derivation).not.toBeNull();
+    const changed = await req<GoalResponse>("PATCH", goalPaths.goal(goal.id), {
+      ...goal.targets,
+      protein: 170,
+      note: "",
+    });
+    expect(changed.body.goal.derivation).toBeNull();
   });
 });
