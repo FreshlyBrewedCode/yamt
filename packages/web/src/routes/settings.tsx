@@ -151,7 +151,7 @@ function Settings() {
           </Band>
         )}
 
-        {(state === "off" || state === "not-installed" || state === "loading") && (
+        {(state === "off" || state === "loading") && (
           <>
             <Strip title="You'll hear when" />
             <ul className="divide-y divide-border">
