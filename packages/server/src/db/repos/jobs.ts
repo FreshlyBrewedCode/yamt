@@ -212,6 +212,21 @@ export class JobRepo {
     return this.queuedWithKey(dedupeKey) !== null;
   }
 
+  /**
+   * Makes the queued job with this key due now if it waits for later (e.g. an analysis waiting
+   * for a transcript that just finished). Returns whether one was moved.
+   */
+  expedite(dedupeKey: string, now = Date.now()): boolean {
+    return (
+      this.db
+        .query(
+          `UPDATE jobs SET run_after = ?, updated_at = ?
+           WHERE dedupe_key = ? AND status = 'queued' AND run_after > ?`,
+        )
+        .run(now, now, dedupeKey, now).changes > 0
+    );
+  }
+
   /** Cancels the queued job with this key, if any (e.g. the audio capture was retracted). */
   cancelQueued(dedupeKey: string, reason: string, now = Date.now()): number {
     return this.db

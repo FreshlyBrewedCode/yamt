@@ -9,6 +9,7 @@ import {
   MealsQuery,
   type MealsResponse,
   type RetractResponse,
+  type TranscribeResponse,
   UploadCaptureFields,
 } from "@yamt/shared";
 import { Hono } from "hono";
@@ -56,6 +57,10 @@ export function mealRoutes(s: Services): Hono<IdentityEnv> {
   });
 
   r.post("/captures/:id/retract", (c) => c.json<RetractResponse>(s.meals.retract(c.req.param("id"))));
+
+  r.post("/captures/:id/transcribe", (c) =>
+    c.json<TranscribeResponse>(s.meals.retranscribe(c.req.param("id"))),
+  );
 
   r.post("/meals/:id/analyse", (c) => c.json<AnalyseResponse>(s.meals.analyse(c.req.param("id"))));
 

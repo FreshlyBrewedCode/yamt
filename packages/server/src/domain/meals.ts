@@ -9,6 +9,7 @@ import {
   type MealSummary,
   type MealsQuery,
   type RetractResponse,
+  type TranscribeResponse,
   type UploadCaptureFields,
 } from "@yamt/shared";
 import { newId } from "../db/index.ts";
@@ -174,6 +175,30 @@ export class MealService {
       const meal = this.repos.meals.capturesChanged(capture.mealId, now)!;
       return { capture: toCapture(capture), meal };
     })();
+  }
+
+  /**
+   * Runs an audio capture's transcription again (e.g. after a model change): the transcript goes
+   * back to `pending` (the old text is dropped; the audio is never touched) and a `transcribe` job
+   * is queued, or the queued one reused. An analysis of the meal that is queued waits for it; an
+   * analysed meal is not analysed again by this (that's the user's call).
+   */
+  retranscribe(captureId: string, now = Date.now()): TranscribeResponse {
+    const capture = this.repos.captures.get(captureId);
+    if (!capture) throw new HttpError(404, "capture not found");
+    if (capture.kind !== "audio") throw new HttpError(400, "only audio captures have a transcript");
+    if (capture.retractedAt !== null) throw new HttpError(409, "the capture was retracted");
+    const res = this.repos.db.transaction(() => {
+      const transcript = this.repos.transcripts.upsertPending(captureId, now);
+      const { job } = this.repos.jobs.enqueue(
+        "transcribe",
+        { captureId },
+        { dedupeKey: dedupeKeys.transcribe(captureId), now },
+      );
+      return { capture: toCapture(capture), transcript, jobId: job.id };
+    })();
+    this.jobsChanged();
+    return res;
   }
 
   /**

@@ -3,7 +3,13 @@ import { Hono } from "hono";
 import type { RunTimeouts } from "./acp/run.ts";
 import { AnalysisJob, settleMeal } from "./analysis/job.ts";
 import type { AuthMode } from "./auth/identity.ts";
-import { type AnalysisConfig, analysisConfig, ensureDataDir } from "./config.ts";
+import {
+  type AnalysisConfig,
+  analysisConfig,
+  ensureDataDir,
+  type TranscriptionConfig,
+  transcriptionConfig,
+} from "./config.ts";
 import { type Db, openDb } from "./db/index.ts";
 import { createApi } from "./http/api.ts";
 import { staticHandler, WEB_DIST } from "./http/static.ts";
@@ -11,6 +17,10 @@ import { JobWorker } from "./jobs/worker.ts";
 import { createMcpApp, MCP_PATH } from "./mcp/endpoint.ts";
 import type { Fetch } from "./nutrition/http.ts";
 import { createServices, type Services } from "./services.ts";
+import type { SttBackend } from "./transcription/backend.ts";
+import { settleTranscript, TranscribeJob } from "./transcription/job.ts";
+import { LocalWhisperBackend } from "./transcription/local.ts";
+import { resolveFfmpeg } from "./transcription/tools.ts";
 
 export interface ServerOptions {
   dataDir: string;
@@ -30,8 +40,8 @@ export interface ServerOptions {
   /** Override for tests: the zone days are reckoned in (default: the server's). */
   timeZone?: string;
   /**
-   * Run the job worker (meal analysis; transcription with #9). Off unless asked for, so tests and
-   * tools that only need the API never spawn an agent; `yamt start` turns it on.
+   * Run the job worker (meal analysis, transcription). Off unless asked for, so tests and tools
+   * that only need the API never spawn an agent or an STT process; `yamt start` turns it on.
    */
   worker?: boolean | { pollMs?: number };
   /** The analysis agent; default: `analysisConfig({})` (Claude Code, the default model). */
@@ -40,6 +50,15 @@ export interface ServerOptions {
     timeouts?: Partial<RunTimeouts>;
     transcriptWaitMs?: number;
     skillPath?: string;
+  };
+  /** Speech-to-text; default: `transcriptionConfig({})` (faster-whisper via services/stt). */
+  transcription?: {
+    config?: TranscriptionConfig;
+    /** Override for tests: the STT backend (default: LocalWhisperBackend from the config). */
+    backend?: SttBackend;
+    /** Override for tests: where ffmpeg is (default: `resolveFfmpeg`). */
+    ffmpeg?: () => Promise<string>;
+    batchSize?: number;
   };
 }
 
@@ -51,8 +70,10 @@ export interface AppServer {
   localUrl: string;
   /** http://127.0.0.1:<port>/mcp, what `.mcp.json` and agent runs point at. */
   mcpUrl: string;
-  /** The job worker, when enabled (#9 registers its transcribe handler on it). */
+  /** The job worker, when enabled: analyse and transcribe handlers. */
   worker: JobWorker | null;
+  /** The STT backend's settings in one line (for the startup output), when the worker runs. */
+  transcription: string | null;
   stop(): Promise<void>;
 }
 
@@ -72,7 +93,10 @@ export function createServer(opts: ServerOptions): AppServer {
   // attempt), and so were its runs; their meals go back to queued, or failed after the last try
   const released = services.repos.jobs.releaseInterrupted();
   services.repos.runs.failInterrupted();
-  for (const job of released) settleMeal(services.repos, job);
+  for (const job of released) {
+    settleMeal(services.repos, job);
+    settleTranscript(services.repos, job);
+  }
   // the interactive MCP token exists from the first start on (`yamt mcp-token` prints it)
   services.mcpTokens.interactiveToken();
 
@@ -99,6 +123,7 @@ export function createServer(opts: ServerOptions): AppServer {
   const mcpUrl = `http://127.0.0.1:${port}${MCP_PATH}`;
 
   let worker: JobWorker | null = null;
+  let transcription: string | null = null;
   if (opts.worker) {
     const a = opts.analysis ?? {};
     worker = new JobWorker(services.repos.jobs, typeof opts.worker === "object" ? opts.worker : {});
@@ -111,6 +136,31 @@ export function createServer(opts: ServerOptions): AppServer {
         skillPath: a.skillPath,
       }),
     );
+    const t = opts.transcription ?? {};
+    const tc = t.config ?? transcriptionConfig({});
+    const backend =
+      t.backend ??
+      new LocalWhisperBackend({
+        command: tc.command,
+        settings: tc.settings,
+        modelsDir: tc.modelsDir ?? paths.models,
+      });
+    let ffmpeg: Promise<string> | null = null;
+    worker.register(
+      new TranscribeJob(services, {
+        backend,
+        // looked up once it's needed; a failed lookup is tried again by the next job
+        ffmpeg:
+          t.ffmpeg ??
+          (() =>
+            (ffmpeg ??= resolveFfmpeg({ configured: tc.ffmpeg }).catch((e) => {
+              ffmpeg = null;
+              throw e;
+            }))),
+        batchSize: t.batchSize,
+      }),
+    );
+    transcription = backend.describe();
     const w = worker;
     services.queue.wake = () => w.wake();
     w.start();
@@ -123,6 +173,7 @@ export function createServer(opts: ServerOptions): AppServer {
     localUrl: `http://localhost:${port}/`,
     mcpUrl,
     worker,
+    transcription,
     async stop() {
       // a running analysis is cancelled and queued again (no attempt spent) before the API goes
       await worker?.stop();

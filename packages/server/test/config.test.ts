@@ -5,10 +5,12 @@ import { join } from "node:path";
 import {
   analysisConfig,
   DEFAULT_ANALYSIS_MODEL,
+  DEFAULT_STT_SETTINGS,
   dataPaths,
   ensureDataDir,
   loadConfig,
   resolveDataDir,
+  STT_RUNNER,
 } from "../src/config.ts";
 import { tempDir } from "./helpers.ts";
 
@@ -31,10 +33,10 @@ describe("resolveDataDir", () => {
 });
 
 describe("ensureDataDir", () => {
-  test("creates the dir with media/ and runs/, all 0700", () => {
+  test("creates the dir with media/, runs/ and models/, all 0700", () => {
     const dir = join(tempDir(), "data");
     const paths = ensureDataDir(dir);
-    for (const p of [dir, paths.media, paths.runs]) {
+    for (const p of [dir, paths.media, paths.runs, paths.models]) {
       expect(existsSync(p)).toBe(true);
       expect(mode(p)).toBe(0o700);
     }
@@ -62,7 +64,64 @@ describe("loadConfig", () => {
         harness: { kind: "claude-code", command: "", args: [], env: {} },
         model: DEFAULT_ANALYSIS_MODEL,
       },
+      transcription: {
+        command: [STT_RUNNER, "transcribe"],
+        ffmpeg: null,
+        modelsDir: null,
+        settings: {
+          model: "large-v3-turbo",
+          computeType: "int8",
+          threads: 4,
+          beamSize: 1,
+          vad: true,
+          language: "de",
+          initialPrompt: null,
+        },
+      },
     });
+    expect(STT_RUNNER).toEndWith("/services/stt/run.sh");
+    expect(existsSync(STT_RUNNER)).toBe(true);
+  });
+
+  test("transcription settings from config.json; env overrides them", () => {
+    const dir = tempDir();
+    writeFileSync(
+      dataPaths(dir).config,
+      JSON.stringify({
+        transcription: {
+          model: "medium",
+          threads: 2,
+          vad: false,
+          initialPrompt: "Haferflocken, Skyr",
+          ffmpeg: "/opt/ffmpeg",
+          command: "python3",
+          args: ["-m", "yamt_stt"],
+        },
+      }),
+    );
+    const t = loadConfig(dir, {}).transcription;
+    expect(t.command).toEqual(["python3", "-m", "yamt_stt"]);
+    expect(t.ffmpeg).toBe("/opt/ffmpeg");
+    expect(t.settings).toEqual({
+      ...DEFAULT_STT_SETTINGS,
+      model: "medium",
+      threads: 2,
+      vad: false,
+      initialPrompt: "Haferflocken, Skyr",
+    });
+    const e = loadConfig(dir, {
+      YAMT_STT_COMMAND: "bun fake-stt.ts",
+      YAMT_STT_THREADS: "6",
+      YAMT_STT_VAD: "1",
+      YAMT_STT_COMPUTE_TYPE: "float32",
+      YAMT_STT_MODELS_DIR: "/tmp/models",
+      YAMT_FFMPEG: "/usr/bin/ffmpeg",
+    }).transcription;
+    expect(e.command).toEqual(["bun", "fake-stt.ts"]);
+    expect(e.settings).toMatchObject({ threads: 6, vad: true, computeType: "float32", model: "medium" });
+    expect([e.modelsDir, e.ffmpeg]).toEqual(["/tmp/models", "/usr/bin/ffmpeg"]);
+    expect(() => loadConfig(dir, { YAMT_STT_THREADS: "lots" })).toThrow("YAMT_STT_THREADS");
+    expect(() => loadConfig(dir, { YAMT_STT_VAD: "maybe" })).toThrow("YAMT_STT_VAD");
   });
 
   test("the analysis harness and model from config.json; env overrides them", () => {
