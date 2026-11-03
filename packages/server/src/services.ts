@@ -1,4 +1,4 @@
-import { dataPaths } from "./config.ts";
+import { DEFAULT_PUSH_SUBJECT, dataPaths } from "./config.ts";
 import type { Db } from "./db/index.ts";
 import { createRepos, type Repos } from "./db/repos/index.ts";
 import { FoodService } from "./domain/foods.ts";
@@ -11,6 +11,8 @@ import { MediaStore } from "./media/store.ts";
 import { FdcClient } from "./nutrition/fdc.ts";
 import type { Fetch } from "./nutrition/http.ts";
 import { OffClient } from "./nutrition/off.ts";
+import { PushSender } from "./push/sender.ts";
+import { loadVapidKeys, type VapidKeys } from "./push/vapid.ts";
 
 /** The app's domain services over one database and data dir. HTTP and MCP only talk to these. */
 export interface Services {
@@ -28,6 +30,8 @@ export interface Services {
   fetch: Fetch;
   /** Days and local times are reckoned in this zone (the server's). */
   timeZone: string;
+  /** Web Push (#13): the VAPID key and delivery to the registered subscriptions. */
+  push: PushSender;
   /** Pokes the job worker after an enqueue; the server wires it to its worker (a no-op without one). */
   queue: { wake: () => void };
 }
@@ -42,6 +46,13 @@ export interface ServicesOptions {
   /** Seam for tests: outbound HTTP. Defaults to the real fetch. */
   fetch?: Fetch;
   timeZone?: string;
+  /** Web Push: the VAPID subject (default: the project URL); seams for tests. */
+  push?: {
+    subject?: string;
+    /** Outbound HTTP to push services; defaults to the real fetch (not `fetch` above). */
+    fetch?: Fetch;
+    log?: (message: string) => void;
+  };
 }
 
 export function createServices(opts: ServicesOptions): Services {
@@ -52,6 +63,13 @@ export function createServices(opts: ServicesOptions): Services {
   const queue = { wake: () => {} };
   const meals = new MealService(repos, media, revisions, opts.heicToJpeg, () => queue.wake());
   const timeZone = opts.timeZone ?? localTimeZone();
+  let vapid: VapidKeys | null = null;
+  const push = new PushSender(repos.pushSubscriptions, {
+    keys: () => (vapid ??= loadVapidKeys(dataPaths(opts.dataDir).vapid)),
+    subject: opts.push?.subject ?? DEFAULT_PUSH_SUBJECT,
+    fetch: opts.push?.fetch ?? ((input, init) => fetch(input, init)),
+    log: opts.push?.log,
+  });
   return {
     dataDir: opts.dataDir,
     repos,
@@ -63,6 +81,7 @@ export function createServices(opts: ServicesOptions): Services {
     mcpTokens: new McpTokens(dataPaths(opts.dataDir).mcpToken),
     fetch: fetchFn,
     timeZone,
+    push,
     queue,
   };
 }

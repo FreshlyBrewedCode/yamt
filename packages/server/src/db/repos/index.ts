@@ -4,6 +4,7 @@ import { FoodRepo } from "./foods.ts";
 import { GoalRepo } from "./goals.ts";
 import { JobRepo } from "./jobs.ts";
 import { MealRepo } from "./meals.ts";
+import { PushSubscriptionRepo } from "./push.ts";
 import { RevisionRepo } from "./revisions.ts";
 import { RunRepo } from "./runs.ts";
 import { TranscriptRepo } from "./transcripts.ts";
@@ -24,5 +25,6 @@ export function createRepos(db: Db) {
     revisions: new RevisionRepo(db),
     runs: new RunRepo(db),
     goals: new GoalRepo(db),
+    pushSubscriptions: new PushSubscriptionRepo(db),
   };
 }

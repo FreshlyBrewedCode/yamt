@@ -32,6 +32,8 @@ export function dataPaths(dataDir: string) {
     mcpToken: join(dataDir, "mcp-token"),
     /** Speech-to-text models (the Hugging Face cache of the STT process), downloaded on first use. */
     models: join(dataDir, "models"),
+    /** The VAPID key pair Web Push messages are signed with (0600), made at the first start. */
+    vapid: join(dataDir, "vapid.json"),
   };
 }
 
@@ -56,6 +58,15 @@ export function expandHome(p: string): string {
 
 /** The model the analysis asks for unless configured otherwise. */
 export const DEFAULT_ANALYSIS_MODEL = "claude-opus-5-5";
+
+/** What push services accept as the VAPID subject. */
+const PushSubject = z
+  .string()
+  .trim()
+  .regex(/^(mailto:\S+@\S+|https:\/\/\S+)$/, "push.subject: a mailto: or https: URL");
+
+/** The VAPID subject unless configured: the project, no personal address. */
+export const DEFAULT_PUSH_SUBJECT = "https://github.com/FreshlyBrewedCode/yamt";
 
 const AnalysisConfigFile = z
   .object({
@@ -93,6 +104,13 @@ const TranscriptionConfigFile = z
   })
   .strict();
 
+const PushConfigFile = z
+  .object({
+    /** The VAPID `sub`: how a push service reaches the operator, a `mailto:` or `https:` URL. */
+    subject: PushSubject.optional(),
+  })
+  .strict();
+
 /** `<data>/config.json`. Every key is optional; env vars override the file. */
 export const AppConfigFile = z
   .object({
@@ -100,6 +118,8 @@ export const AppConfigFile = z
     analysis: AnalysisConfigFile.optional(),
     /** Speech-to-text of voice memos (#9); env YAMT_STT_* and YAMT_FFMPEG, see `transcriptionConfig`. */
     transcription: TranscriptionConfigFile.optional(),
+    /** Web Push (#13); env YAMT_PUSH_SUBJECT. */
+    push: PushConfigFile.optional(),
     /** The Tailscale login allowed in, as `tailscale serve` reports it (e.g. `alice@github`). */
     login: z.string().trim().min(1).optional(),
     /** USDA FoodData Central API key (https://fdc.nal.usda.gov/api-key-signup); env FDC_API_KEY wins. */
@@ -154,6 +174,24 @@ export interface AppConfig {
   transcription: TranscriptionConfig;
   /** Null: FDC is reported as unavailable, searches use history and Open Food Facts. */
   fdcApiKey: string | null;
+  push: PushConfig;
+}
+
+/** Web Push: the VAPID subject push services see (the keys live in `<data>/vapid.json`). */
+export interface PushConfig {
+  subject: string;
+}
+
+/** The push settings from config.json's `push` and the env (YAMT_PUSH_SUBJECT wins). */
+export function pushConfig(file: z.infer<typeof PushConfigFile>, env: Env = process.env): PushConfig {
+  const fromEnv = env.YAMT_PUSH_SUBJECT?.trim();
+  if (fromEnv) {
+    const parsed = PushSubject.safeParse(fromEnv);
+    if (!parsed.success)
+      throw new Error(`YAMT_PUSH_SUBJECT: expected a mailto: or https: URL, got ${fromEnv}`);
+    return { subject: parsed.data };
+  }
+  return { subject: file.subject ?? DEFAULT_PUSH_SUBJECT };
 }
 
 export function loadConfig(dataDir: string, env: Env = process.env): AppConfig {
@@ -171,6 +209,7 @@ export function loadConfig(dataDir: string, env: Env = process.env): AppConfig {
     fdcApiKey,
     analysis: analysisConfig(file.analysis ?? {}, env),
     transcription: transcriptionConfig(file.transcription ?? {}, env),
+    push: pushConfig(file.push ?? {}, env),
   };
 }
 

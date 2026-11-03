@@ -53,6 +53,10 @@ linked from nixpkgs) and uv (PATH, else nixpkgs). "transcription" in <data-dir>/
 ({"model", "computeType", "threads", "beamSize", "vad", "language", "initialPrompt", "ffmpeg",
 "modelsDir", "command", "args"}) or env YAMT_STT_* / YAMT_FFMPEG tune it.
 
+Notifications: Web Push to the home-screen app (Settings → Turn on notifications). The VAPID
+keys are made at the first start (<data-dir>/vapid.json); "push": {"subject": "mailto:…"} in
+<data-dir>/config.json or env YAMT_PUSH_SUBJECT names a contact for push services.
+
 Food data: USDA FoodData Central needs an API key (env FDC_API_KEY, or "fdcApiKey" in
 <data-dir>/config.json); without one, searches use history and Open Food Facts only.
 `;
@@ -158,6 +162,7 @@ async function main(): Promise<number> {
       worker: !values["no-worker"],
       analysis: { config: config.analysis },
       transcription: { config: config.transcription },
+      push: { subject: config.push.subject },
     });
     cleanups.push(() => app.stop());
 

@@ -5,6 +5,7 @@ import { join } from "node:path";
 import {
   analysisConfig,
   DEFAULT_ANALYSIS_MODEL,
+  DEFAULT_PUSH_SUBJECT,
   DEFAULT_STT_SETTINGS,
   dataPaths,
   ensureDataDir,
@@ -78,9 +79,22 @@ describe("loadConfig", () => {
           initialPrompt: null,
         },
       },
+      push: { subject: DEFAULT_PUSH_SUBJECT },
     });
     expect(STT_RUNNER).toEndWith("/services/stt/run.sh");
     expect(existsSync(STT_RUNNER)).toBe(true);
+  });
+
+  test("push subject from config.json, env wins; only mailto: or https:", () => {
+    const dir = tempDir();
+    writeFileSync(dataPaths(dir).config, JSON.stringify({ push: { subject: "mailto:alice@example.com" } }));
+    expect(loadConfig(dir, {}).push).toEqual({ subject: "mailto:alice@example.com" });
+    expect(loadConfig(dir, { YAMT_PUSH_SUBJECT: "https://example.com/yamt" }).push.subject).toBe(
+      "https://example.com/yamt",
+    );
+    expect(() => loadConfig(dir, { YAMT_PUSH_SUBJECT: "alice@example.com" })).toThrow("YAMT_PUSH_SUBJECT");
+    writeFileSync(dataPaths(dir).config, JSON.stringify({ push: { subject: "http://example.com" } }));
+    expect(() => loadConfig(dir, {})).toThrow("push.subject");
   });
 
   test("transcription settings from config.json; env overrides them", () => {
