@@ -2,7 +2,8 @@
 
 What exists today (the scaffold, #3, the meal backend, #6, the nutrition layer with the yamt
 MCP server, #7, the analysis job over ACP, #8, the transcription worker, #9, the PWA with
-meal capture, #10, and the meal detail with questions and corrections, #11), how it fits
+meal capture, #10, the meal detail with questions and corrections, #11, and the day view with
+goals and weight, #12), how it fits
 together, and where wave 1 goes next. Why it is built this way:
 [ADR 0001](adr/0001-wave-1-architecture.md). Commands and conventions: [AGENTS.md](../AGENTS.md).
 The design: [design/design.md](design/design.md).
@@ -16,7 +17,7 @@ iPhone (Safari / home-screen PWA), on the tailnet
   ▼
 yamt start   (one Bun process, binds 127.0.0.1:7890 only)
   ├─ Hono JSON API   /api/*   identity-header auth (except /api/health), same-origin writes,
-  │                           zod-validated bodies; meals, captures, media, weight
+  │                           zod-validated bodies; meals, captures, media, weight, goals, days
   ├─ MCP server      /mcp     bearer tokens (agent runs, interactive Claude Code sessions),
   │                           loopback callers only; the agent's only way to read and write
   ├─ SPA             /*       packages/web/dist   (dev: Vite on 7891 proxies /api); the PWA:
@@ -42,6 +43,8 @@ packages/shared/src/      contracts shared by server and web (no runtime deps bu
   api.ts                  API paths, request schemas, response types (health, me)
   api-meals.ts            meals, captures, transcripts, media: `mealPaths`, enums, bodies, types
   api-weight.ts           weight entries: `weightPaths`, body, types
+  api-goals.ts            goals and days: `goalPaths`, bodies, `DayResponse`, `goalInForce`, `goalPeriods`,
+                          `dayProgress`, `addDays` (shared by server and web)
   api-nutrition.ts        foods, revisions, items, questions, totals: enums and types
   api-runs.ts             analysis runs and trace lines: `runPaths`, `AnalysisRun`, `TraceEntry`
 packages/server/src/
@@ -65,13 +68,14 @@ packages/server/src/
   build-stamp.ts          rebuild packages/web/dist when its sources changed
   auth/identity.ts        requireTailnetIdentity: the Tailscale-User-Login check, dev bypass
   auth/bearer.ts          requireBearer: token auth for machine clients (/mcp)
-  http/                   api.ts (mounts), meals.ts, runs.ts and weight.ts (routes), file-response.ts
+  http/                   api.ts (mounts), meals.ts, runs.ts, weight.ts and goals.ts (routes), file-response.ts
                           (media, ranges), middleware.ts (sameOrigin, errors, readJson),
                           origin.ts, static.ts
   domain/                 errors.ts (HttpError), meals.ts (MealService: captures, retract, analyse,
                           eaten-at, revision history),
                           revisions.ts (RevisionService: save, views, day summary), foods.ts
-                          (FoodService: search, barcode, create), time.ts (days and local times)
+                          (FoodService: search, barcode, create), goals.ts (GoalService: goals and the
+                          day view), time.ts (days and local times)
   nutrition/              nutrients.ts (OFF/FDC → core set), totals.ts (the only totals), ranking.ts,
                           off.ts / fdc.ts (clients), http.ts (timeouts, size caps, rate limits,
                           User-Agent), recipe.ts (fetch + schema.org Recipe JSON-LD)
@@ -81,7 +85,7 @@ packages/server/src/
                           heic.ts (HEIC → JPEG), downscale.ts (JPEG → ≤ 1600 px, upright)
   db/                     index.ts (open, pragmas, migration runner, newId), migrations/*.sql,
                           repos/ (one per aggregate: meals, captures, transcripts, jobs, weight,
-                          foods, revisions, runs)
+                          foods, revisions, runs, goals)
 packages/server/test/     bun tests, temp dirs only; fixtures/ holds made-up images and, in
                           nutrition/, recorded OFF/FDC answers and a trimmed recipe page
                           (record.ts re-records them; the gate never hits the network);
@@ -92,19 +96,23 @@ packages/web/
   index.html              iOS/PWA metas, manifest and icon links, the dark-mode switch
   public/                 manifest.webmanifest, icons/ (rendered by scripts/icons.ts)
   sw.js                   the service worker template (vite.config.ts fills in the build's files)
-  test/                   bun tests: the upload queue, the recorder's logic, the trace parser
+  test/                   bun tests: the upload queue, the recorder's logic, the trace parser, the weight
+                          trend
 packages/web/src/
   main.tsx                router + query client, starts the upload queue, registers the worker
   routes/                 TanStack file routes: __root.tsx, index.tsx (the overview),
-                          meals.$mealId.tsx (a meal: its detail or its capture view); routeTree.gen.ts
+                          meals.$mealId.tsx (a meal: its detail or its capture view), days.$date.tsx
+                          (the day view), goals.tsx (goals and weight); routeTree.gen.ts
                           is generated
   lib/api.ts, queries.ts  the fetch client and every TanStack Query hook
   lib/outbox/             the upload queue: outbox.ts (Outbox), store.ts (IndexedDB), transport.ts
                           (fetch/XHR), index.ts (the app's queue and its hooks)
   lib/recorder.ts         the recorder's state machine and helpers; hooks/use-recorder.ts wires it
   lib/trace.ts            a run's NDJSON trace → run metadata and a readable list (parseTrace)
+  lib/weight.ts           the weight trend: raw points and the 7-day moving average (weightTrend), kgTicks
   lib/sw.ts, ids.ts, format.ts  worker registration, client UUIDv7s, number/date formatting
-  components/             slab.tsx (the design's primitives), totals-slab, recorder-band,
+  components/             slab.tsx (the design's primitives), totals-slab (+ TargetBar), meal-row (+ groupByDay),
+                          weight-entry, weight-trend, recorder-band,
                           add-strip (photo/note/link/audio), capture-list (+ useCaptureRows),
                           meal-detail (the detail screen), items-list (provenance, confidence,
                           source), revision-history, trace-view; ui/ (shadcn: button, input, sheet)
@@ -212,6 +220,14 @@ new value never needs a table rebuild.
   file. A revision's `run_id` points back.
 - **weight_entries**: `measured_at`, `kg`, `note`, `source` (`manual`). User data, not raw
   captures, so they can be deleted.
+- **goals** (#12): `effective_from` (a local calendar date, `YYYY-MM-DD` in the phone's zone),
+  daily targets `energy_kcal`, `protein_g`, `fat_g`, `carbohydrate_g`, `fiber_g` (each null = no
+  target), `note`. The goal in force on a day is the latest with `effective_from` ≤ that day
+  (ties: the larger id, i.e. created later); `GoalRepo.inForce` in SQL and `goalInForce` in
+  `@yamt/shared` (the web app's) decide alike, tested together. New targets always add a row, so
+  every past day keeps the targets it had; only the latest row can be changed in place (a typo
+  fix). Goals are never deleted. Dates rather than times because a goal is about calendar days:
+  the same reckoning as the overview's day totals.
 - **foods**: the food cache. `source` (`off`, `fdc`, `label`, `custom`) and `source_ref`
   (barcode or FDC id; unique per source, so a refetch updates the row), `name`, `brand`, the core
   set per 100 g as columns (`energy_kcal`, `protein_g`, `fat_g`, `saturated_fat_g`,
@@ -374,7 +390,10 @@ sessions' only way to read and write yamt data.
   answers, totals; earlier revisions), `search_foods`, `get_food`, `lookup_barcode`,
   `create_food`, `fetch_recipe`, `save_meal_revision` (returns the computed totals and the meal's
   status), `get_day_summary` (the meals of a date in the server's zone or a given one, with their
-  totals and the day's). Times go out as ISO 8601 with the zone's offset.
+  totals and the day's, the goal in force with `progress` per target — eaten, target, left, over
+  — and the weight measured that day), `get_goals` (every goal newest first with the last day it
+  held, `until`, and whether a same-day goal replaced it; and the one in force on a date). Times
+  go out as ISO 8601 with the zone's offset.
 - **Tokens** (`mcp/tokens.ts`, `services.mcpTokens`): `yamt_` + 256 random bits, compared as
   SHA-256 hashes.
   - *Interactive:* one long-lived token in `<data>/mcp-token` (0600), created at the first start
@@ -384,7 +403,7 @@ sessions' only way to read and write yamt data.
   - *Per run:* `mintRun({runId, mealId, ttlMs})` → a token scoped to one meal, in memory only
     (runs don't outlive the server), revoked by `revokeRun(runId)` and expiring after 2 h
     regardless. A run token sees `get_meal`/`save_meal_revision` for its meal only, the food tools,
-    and not `get_day_summary`; the revision it saves records its `run_id`, and a second
+    and not `get_day_summary` or `get_goals`; the revision it saves records its `run_id`, and a second
     `save_meal_revision` with the same run token is refused (a run saves exactly one).
 
 ## Analysis (#8)
@@ -605,6 +624,17 @@ All behind the identity check, writes also same-origin; paths in `mealPaths` / `
   transcript (null while pending).
 - `POST /api/weight` (`{kg, measuredAt?, note?}`), `GET /api/weight?from&to&limit`,
   `DELETE /api/weight/:id`.
+- **Goals** (#12, `goalPaths`): `GET /api/goals` (every goal, newest first), `POST /api/goals`
+  (`{energyKcal, protein, fat, carbohydrate, fiber, note, effectiveFrom?}`; an omitted target is
+  "none", `effectiveFrom` defaults to today in the server's zone, the web app sends the phone's
+  today), `GET /api/goals/current?date&tz` (the goal in force; `date` defaults to today in `tz`),
+  `PATCH /api/goals/:id` (same body without the date: a typo fix in place, only for the latest
+  goal, else 409).
+- `GET /api/days/:date?tz` (#12): a calendar day in `tz` (the server's zone by default): its
+  meals as `GET /api/meals` lists them, the day's totals (over the current revisions; meals
+  without an analysis are counted in `unanalysed`, not in the totals), the goal in force,
+  `progress` per target (`dayProgress`: eaten, target, left, over) and the weight entries
+  measured that day.
 
 ## Request flow
 
@@ -641,15 +671,36 @@ square corners. The tokens are in `index.css` (shadcn's names mapped onto the pa
 `ink`, `lime`, `lime-soft`, `tint`, `orange` and their foregrounds); the primitives (`Band`,
 `Strip`, `Label`, `SlabButton`, `BottomSlab`, `StatusLabel`) in `components/slab.tsx`.
 
-### Screens (#10, #11)
+### Screens (#10, #11, #12)
 
-- **Overview** (`/`): today's totals as the ink slab (kcal, protein, fat, carbs, fibre; how many
-  of today's meals aren't analysed yet; `TotalsSlab` takes `targets` once #12 has them), then the
-  last 14 days by day (a tint strip with the day's kcal from `days`), each meal a row with time,
-  status, title ("Untitled meal" until analysed), what it holds and its kcal; needs input is a
-  lime row, failed an orange one. Meals that exist only on this phone so far (started offline)
-  are listed from the upload queue; drafts with nothing captured are left out. **Log meal** is the
-  sticky lime slab.
+- **Overview** (`/`): today's totals as the ink slab against the goal in force today (kcal,
+  protein, fat, carbs, fibre with what's left; "N meals not counted yet" for those without an
+  analysis); a tap opens today's day view. Then the last 14 days by day (a tint strip with the
+  day's kcal from `days` against that day's own goal, "2,505 / 2,400 kcal", opening the day), each
+  meal a row with time, status, title ("Untitled meal" until analysed), what it holds and its
+  kcal ("— not counted" without an analysis); needs input is a lime row, failed an orange one.
+  Meals that exist only on this phone so far (started offline) are listed from the upload queue;
+  drafts with nothing captured are left out. "Earlier days" opens the day before the 14, from
+  where the day view steps back as far as needed. The header's scale opens goals and weight.
+  **Log meal** is the sticky lime slab. Goals come from `GET /api/goals` (`useGoals`), resolved
+  per day with `goalInForce`.
+- **Day view** (`/days/:date`, `useDay` → `GET /api/days/:date?tz=<the phone's zone>`): the
+  totals slab with the day's goal and per-target "left" / "over", the meals not counted yet, a
+  goal row (since when, its note; to the goals screen), the meals (the server's plus the upload
+  queue's for that day), the weight entries of the day; the bottom slab steps to the previous and
+  next day (replacing the history entry; not past today). Its query key sits under `meals`, so
+  everything that refreshes the meals refreshes it, and it polls while a meal is in motion. A
+  malformed date redirects to today.
+- **Goals** (`/goals`): the weight entry (lime: kg with a dot or comma, now or a chosen time, Undo
+  right after), the trend (`lib/weight.ts`: per calendar day the mean of its entries, the 7-day
+  moving average over the days with entries; six weeks shown, a week more fetched so the average
+  is whole from the start; a small SVG, no chart library), the weight entries of the window with
+  delete (inline confirm), the daily targets (blank = no target) and the goal history (each
+  goal's period, "replaced the same day", the one in force). Changing a target brings the bottom
+  slab: **Save · from today** (a new goal from the phone's today) or, with the toggle "Fix a typo
+  in the current goal", **Fix current goal** (PATCH in place).
+- Back buttons (`BackButton`) go back in the app's history, or to the overview when the screen
+  was opened directly, so a meal opened from a day view returns there.
 - **Meal** (`/meals/:id`): one route per meal. A meal with an analysis, or a failed one, opens
   on its **detail** (below); one without (draft, queued or analysing for the first time) on the
   **capture view**, and so does `?add=1`, the detail's "Add to this meal". The route owns the
@@ -753,7 +804,7 @@ The screens merge the queue's entries (`useMealOutbox`) with the server's captur
 
 Meals, captures, media storage, the job queue and weight entries (#6), the nutrition layer
 with the MCP server (#7), the ACP runtime with the analysis job and worker loop (#8), and the
-transcription worker (#9), the PWA with meal capture (#10) and the meal detail with questions and
-corrections (#11) are in. Still to come, in stack order: the day view, goals and weight (#12); Web
-Push (#13). Spike #4 (speech-to-text) decided ADR 0002; spike #5's chosen design is
+transcription worker (#9), the PWA with meal capture (#10), the meal detail with questions and
+corrections (#11) and the day view with goals and weight (#12) are in. Still to come: Web Push
+(#13). Spike #4 (speech-to-text) decided ADR 0002; spike #5's chosen design is
 [design/design.md](design/design.md). See the epic for the decisions each one builds on.
