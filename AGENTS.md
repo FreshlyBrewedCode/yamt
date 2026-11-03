@@ -32,7 +32,7 @@ bun packages/server/src/cli.ts mcp-token [--rotate] [--data-dir …]   # print t
 - `start` rebuilds the web app when its sources are newer than the last build (`--no-build`
   skips the check); `--dev` uses Vite and never needs it.
 - Data lives in `~/.yamt/` (`--data-dir` / `YAMT_DATA_DIR`): `yamt.db`, `media/`, `runs/`,
-  `models/`, `config.json`, `mcp-token`. Tests use temp dirs. Never point a test or a scratch run at the
+  `models/`, `config.json`, `mcp-token`, `vapid.json`. Tests use temp dirs. Never point a test or a scratch run at the
   real one.
 - Meal analysis: `start` runs the job worker, which analyses queued meals with Claude Code
   (claude-agent-acp, model `claude-opus-5-5`, logged in with the `claude` CLI). Pick another
@@ -54,6 +54,13 @@ bun packages/server/src/cli.ts mcp-token [--rotate] [--data-dir …]   # print t
   `<data>/config.json` or `YAMT_STT_*`. Tests and the e2e never load a model: they run
   `packages/server/test/fake-stt.ts` (`YAMT_STT_COMMAND="bun $PWD/packages/server/test/fake-stt.ts"`,
   see its header); `services/stt/run.sh smoke` does one real run with Whisper tiny, outside the gate.
+- Notifications: Web Push to the home-screen app (iOS 16.4+), turned on per device in Settings.
+  The VAPID key pair is made at the first start in `<data>/vapid.json` (keep it: a new one
+  silences every phone until it subscribes again); `"push": {"subject": "mailto:…"}` in
+  `<data>/config.json` or `YAMT_PUSH_SUBJECT` names a contact (default: the project URL). Push
+  works with `start` and `dev` alike (dev serves a push-only service worker), but only over the
+  tailnet HTTPS URL on the phone. Tests and the e2e never reach a push service: the server takes
+  an injectable `fetch` (`push.fetch`), the e2e fakes `PushManager`.
 - Food data: Open Food Facts needs nothing; USDA FoodData Central needs a key (`FDC_API_KEY`, or
   `{"fdcApiKey": "…"}` in `<data>/config.json`; free at https://fdc.nal.usda.gov/api-key-signup).
   Without one, searches skip FDC and say so. Never commit a key; tests use recorded fixtures
@@ -129,6 +136,9 @@ API, auth, SQLite), `packages/web` (Vite + React + TanStack Router/Query + Tailw
 - Captures leave the phone only through the upload queue (`lib/outbox`, IndexedDB): never post a
   capture directly, or it can be lost offline. The service worker caches the app shell only,
   never `/api` or `/mcp`.
+- Notifications: personal data (titles, questions, errors) only inside the encrypted push
+  payload, never in logs; meal notifications go through `notifyMeal` (`push/messages.ts`), which
+  sends only for a meal's final state (never while another analysis of it is queued).
 - Tests: light and purposeful. Logic gets `bun test` next to its package (`packages/*/test`),
   each main flow one Playwright spec.
 - Generated `packages/web/src/routeTree.gen.ts` is committed. On merge conflicts, take either side

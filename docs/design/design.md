@@ -218,8 +218,20 @@ Units sit next to numbers smaller and muted (`28g`, `72 /160`).
   status, a 44 px remove action. Removing asks once inline ("Remove?") because captures can't be
   un-retracted.
 - **Icon buttons** in headers: 48 px tint squares (close ✕, back ←, the scale for goals and
-  weight on the overview and the day view). Back goes back in the app's history, or to the
+  weight on the overview and the day view, the cog for settings on the overview). Back goes back in the app's history, or to the
   overview when the screen was opened directly.
+- **Settings** (#13): back and the page title, then the notification state as the ink slab (the
+  bell, "Notifications", the state in display 40 px: On / Off / Blocked / Not installed / Not
+  available, one muted line on what it means). Off: a "You'll hear when" strip with the three
+  events as plain rows and the lime bottom slab **Turn on notifications**. On: "Notify me when"
+  with a switch row per event, a muted "Turn off on this device" row, and a tint bottom slab
+  **Send test notification** (its hint says how it went). Not installed: the numbered Add to Home
+  Screen steps on tint (number tiles on the page colour, the Share / add / bell icons), and the
+  bottom slab disabled with the hint "Add yamt to your Home Screen first." Blocked: where to
+  allow it, on tint, no slab. A failed turn on/off is an orange line under the slab.
+- **Switch** (#13): a square 56×32 track with a 24 px square knob, 64 px rows; on = foreground
+  track with a page-colour knob on the right, off = tint track with a muted knob on the left.
+  Never lime: a toggle's state doesn't want the user.
 - **Sheets** (note, link): slide in from the **top** (on iOS the keyboard covers the bottom
   half, a bottom sheet would sit behind it), on the page colour, square, display title, the input
   on tint (lime-soft while focused), a lime `SlabButton` to add.
