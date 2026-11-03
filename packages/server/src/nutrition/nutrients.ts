@@ -23,6 +23,16 @@ const num = (v: unknown): number | null => {
 
 const round = (n: number, digits = 3) => Math.round(n * 10 ** digits) / 10 ** digits;
 
+/**
+ * yamt's `carbohydrate` is *available* carbohydrate, excluding fiber, as on EU labels (Regulation
+ * 1169/2011: "Kohlenhydrate", fiber listed separately). Sources that report a total including
+ * fiber (USDA, US/Canadian labels) get the fiber taken off, never below 0. Without a fiber value
+ * the total is kept as it is: fiber stays null, so totals report fiber as missing, and such foods
+ * (meat, dairy, oils, drinks) mostly have little or none.
+ */
+const availableCarbohydrate = (total: number | null, fiber: number | null): number | null =>
+  total === null || fiber === null ? total : round(Math.max(0, total - fiber));
+
 // ---- Open Food Facts --------------------------------------------------------------------------
 
 /** OFF `nutriments` keys (per 100 g) for the core set. */
@@ -59,6 +69,12 @@ export function mapOffProduct(p: Record<string, unknown>): FoodData {
   if (per100g.salt === null) {
     const sodium = num(n.sodium_100g);
     if (sodium !== null) per100g.salt = round(sodium * SALT_PER_SODIUM);
+  }
+  // `carbohydrates` is the EU field (available, fiber excluded); since 2025 US/Canadian labels'
+  // "Total carbohydrate" goes into `carbohydrates-total` (fiber included). Older non-EU entries
+  // may still hold a total in `carbohydrates`; nothing marks those, so they pass through as is.
+  if (per100g.carbohydrate === null) {
+    per100g.carbohydrate = availableCarbohydrate(num(n["carbohydrates-total_100g"]), per100g.fiber);
   }
 
   const nutrients: Record<string, NutrientValue> = {};
@@ -103,7 +119,9 @@ function offBrand(brands: unknown): string | null {
  * FDC nutrient ids for the core set, in order of preference. Foundation foods often lack 1008
  * (Energy) and 1004 (Total lipid), reporting Atwater energy (2048 specific, 2047 general) and
  * "Total fat (NLEA)" (1085) instead. Nutrient numbers (the older "208"-style codes, used by the
- * abridged format) are the fallback key.
+ * abridged format) are the fallback key. Both carbohydrate values include fiber: 1005 "by
+ * difference" (100 − water, protein, fat, ash, alcohol) and 1050 "by summation" (sugars + starch +
+ * fiber); `mapFdcFood` subtracts fiber (1079) to get available carbohydrate.
  */
 const FDC_IDS: Record<CoreNutrient, { id: number; number: string }[]> = {
   energyKcal: [
@@ -196,6 +214,7 @@ export function mapFdcFood(food: Record<string, unknown>): FoodData {
     const kj = findFdc(list, FDC_ENERGY_KJ);
     if (kj) per100g.energyKcal = round(kj.value / KJ_PER_KCAL, 1);
   }
+  per100g.carbohydrate = availableCarbohydrate(per100g.carbohydrate, per100g.fiber);
 
   const nutrients: Record<string, NutrientValue> = {};
   for (const n of list) {

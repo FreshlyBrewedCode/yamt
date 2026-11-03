@@ -55,9 +55,12 @@ const NutrientsInput = z
     protein: grams.nullable().optional(),
     fat: grams.nullable().optional(),
     saturatedFat: grams.nullable().optional(),
-    carbohydrate: grams.nullable().optional(),
+    carbohydrate: grams
+      .nullable()
+      .optional()
+      .describe("Available carbohydrate, excluding fiber (EU labels' Kohlenhydrate; US total minus fiber)."),
     sugars: grams.nullable().optional(),
-    fiber: grams.nullable().optional(),
+    fiber: grams.nullable().optional().describe("Fiber (Ballaststoffe), separate from carbohydrate."),
     salt: grams.nullable().optional(),
   })
   .strict()

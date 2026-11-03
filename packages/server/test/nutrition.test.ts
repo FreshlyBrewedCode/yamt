@@ -129,6 +129,16 @@ describe("Open Food Facts mapping", () => {
     expect(p.brand).toBe("Brand");
     expect(p.portions).toEqual([{ label: "2 Scheiben (30 g)", grams: 30 }]);
   });
+
+  test("EU carbohydrates are taken as they are; a US total (carbohydrates-total) loses its fiber", () => {
+    const eu = mapOffProduct({ code: "2", nutriments: { carbohydrates_100g: 59.5, fiber_100g: 9.7 } });
+    expect(eu.per100g).toMatchObject({ carbohydrate: 59.5, fiber: 9.7 });
+    const us = mapOffProduct({ code: "3", nutriments: { "carbohydrates-total_100g": 70, fiber_100g: 10 } });
+    expect(us.per100g).toMatchObject({ carbohydrate: 60, fiber: 10 });
+    expect(us.nutrients["carbohydrates-total"]).toEqual({ value: 70, unit: "g" });
+    const noFiber = mapOffProduct({ code: "4", nutriments: { "carbohydrates-total_100g": 12 } });
+    expect(noFiber.per100g).toMatchObject({ carbohydrate: 12, fiber: null });
+  });
 });
 
 describe("FoodData Central mapping", () => {
@@ -150,6 +160,46 @@ describe("FoodData Central mapping", () => {
     const raw = foods.find((f) => f.name === "Oats, raw")!;
     expect(raw.per100g).toMatchObject({ energyKcal: 379, fiber: 10.1, salt: 0.015 });
     expect(raw.portions.length).toBeGreaterThan(0);
+  });
+
+  test("carbohydrate is available carbohydrate: fiber comes off FDC's total, the profile keeps it", () => {
+    const foods = (json("fdc-search-oats.json").foods as Record<string, unknown>[]).map(mapFdcFood);
+    // by difference (1005) 67.7 includes fiber (1079) 10.1
+    const raw = foods.find((f) => f.name === "Oats, raw")!;
+    expect(raw.per100g).toMatchObject({ carbohydrate: 57.6, fiber: 10.1 });
+    expect(raw.nutrients["Carbohydrate, by difference"]).toEqual({ value: 67.7, unit: "g" });
+    const puffed = foods.find((f) => f.name === "Oats, puffed")!;
+    expect(puffed.per100g).toMatchObject({ carbohydrate: 61.81, fiber: 8.79 });
+    // by summation (1050) is sugars + starch + fiber, so the same applies; never below 0
+    const summed = mapFdcFood({
+      fdcId: 2,
+      description: "Summed",
+      foodNutrients: [
+        { nutrientId: 1050, nutrientName: "Carbohydrate, by summation", value: 3.8, unitName: "G" },
+        { nutrientId: 1079, nutrientName: "Fiber, total dietary", value: 2.4, unitName: "G" },
+      ],
+    });
+    expect(summed.per100g).toMatchObject({ carbohydrate: 1.4, fiber: 2.4 });
+    const over = mapFdcFood({
+      fdcId: 3,
+      description: "Over",
+      foodNutrients: [
+        { nutrientId: 1005, nutrientName: "Carbohydrate, by difference", value: 1, unitName: "G" },
+        { nutrientId: 1079, nutrientName: "Fiber, total dietary", value: 1.5, unitName: "G" },
+      ],
+    });
+    expect(over.per100g.carbohydrate).toBe(0);
+  });
+
+  test("without a fiber value FDC's carbohydrate stays as reported and fiber null", () => {
+    const f = mapFdcFood({
+      fdcId: 4,
+      description: "Milk, no fiber analysed",
+      foodNutrients: [
+        { nutrientId: 1005, nutrientName: "Carbohydrate, by difference", value: 4.8, unitName: "G" },
+      ],
+    });
+    expect(f.per100g).toMatchObject({ carbohydrate: 4.8, fiber: null });
   });
 
   test("abridged details are keyed by nutrient number; Total fat (NLEA) and kJ as fallbacks", () => {

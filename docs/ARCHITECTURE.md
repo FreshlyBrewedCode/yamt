@@ -222,6 +222,19 @@ tools), and a day's totals are computed over all items of the day's current revi
 
 - **Core set** (`CORE_NUTRIENTS`): energy (kcal), protein, fat, saturated fat, carbohydrate,
   sugars, fiber, salt. Everything else stays in the full profile.
+- **Carbohydrate convention (EU):** `carbohydrate` is *available* carbohydrate, excluding fiber,
+  as on EU labels (Regulation 1169/2011, "Kohlenhydrate"); fiber is its own value. Every source is
+  mapped to it, so totals never mix definitions: USDA's carbohydrate includes fiber (1005 "by
+  difference" = 100 − water, protein, fat, ash, alcohol; 1050 "by summation" = sugars + starch +
+  fiber), so the mapping subtracts fiber (1079), never below 0; Open Food Facts' `carbohydrates`
+  is the EU value and is taken as is, its `carbohydrates-total` (US/Canadian labels since 2025,
+  fiber included) is used minus fiber only when `carbohydrates` is missing. Without a fiber value
+  the reported total is kept and fiber stays null (totals list it as missing); such foods are
+  mostly meat, dairy, oils or drinks with little or none. Known gap: older non-EU OFF entries
+  may hold a US total in `carbohydrates`, and nothing marks them. The full profile and `raw`
+  keep the source's own numbers. Labels read by the agent (`create_food`) and its estimates
+  follow the same convention (the `log-meal` skill and the tool schema say so). Energy is the
+  source's kcal, not recomputed.
 - **Open Food Facts** (`nutrition/off.ts`): product by barcode (`/api/v2/product/<code>`, a fixed
   `fields` list) and text search via search-a-licious (`search.openfoodfacts.org`, filtered to
   products sold in Germany, German names first), falling back to the classic `/cgi/search.pl`
@@ -233,7 +246,8 @@ tools), and a day's totals are computed over all items of the day's current revi
   `foodPortions`, e.g. 1 tbsp olive oil = 13.5 g). Key from `FDC_API_KEY` or `fdcApiKey` in
   `config.json`; without one FDC is reported unavailable and never called. Mapping by nutrient id
   with fallbacks for Foundation foods (energy 1008 → Atwater 2048/2047 → kJ; fat 1004 → 1085;
-  sugars 2000 → 1063), the older nutrient numbers for the abridged format, sodium mg → salt g.
+  sugars 2000 → 1063; carbohydrate 1005 → 1050, minus fiber), the older nutrient numbers for
+  the abridged format, sodium mg → salt g.
 - **Outbound HTTP** (`nutrition/http.ts`): timeouts (8–10 s), size caps, token-bucket rate limits
   below each API's (OFF: 10 searches / 100 products a minute; FDC: 1000 an hour), manual
   redirects, API keys scrubbed from error messages. A failing source makes a search report it as
