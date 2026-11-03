@@ -167,7 +167,13 @@ const app = acp
     };
 
     try {
-      await update({ sessionUpdate: "usage_update", used: 1000, size: 200_000 });
+      // like claude-agent-acp: the model that answered, which may differ from the config option
+      await update({
+        sessionUpdate: "usage_update",
+        used: 1000,
+        size: 200_000,
+        _meta: { "_claude/model": `${s.model}-answered` },
+      });
       const mealId = /meal ([0-9a-f-]{36})/.exec(
         params.prompt.map((b) => (b.type === "text" ? b.text : "")).join("\n"),
       )?.[1];

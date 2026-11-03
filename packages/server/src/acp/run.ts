@@ -100,7 +100,10 @@ export interface PromptRunResult {
   /** The last `usage_update`: context used and size, cumulative cost. */
   context: { used: number; size: number; cost: acp.Cost | null } | null;
   agentInfo: acp.Implementation | null;
-  /** The model the session reported (its model config option), else the one asked for. */
+  /**
+   * The model that answered as the harness reports it (Claude Code: `_claude/model` on usage
+   * updates; custom harnesses: their model config option), else the one asked for.
+   */
   model: string | null;
 }
 
@@ -165,6 +168,9 @@ export async function runPrompt(opts: PromptRunOptions): Promise<PromptRunResult
         else if (u.status === "in_progress" || u.status === "pending") openTools.add(u.toolCallId);
       } else if (u.sessionUpdate === "usage_update") {
         context = { used: u.used, size: u.size, cost: u.cost ?? null };
+        // claude-agent-acp names the model that answered; its model config option can be stale
+        const answered = (u._meta as Record<string, unknown> | null | undefined)?.["_claude/model"];
+        if (typeof answered === "string") model = answered;
       }
       emit({ type: "update", update: u });
     },

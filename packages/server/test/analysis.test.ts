@@ -97,7 +97,7 @@ describe("analysis run lifecycle", () => {
     expect(run).toMatchObject({
       status: "succeeded",
       harness: "custom",
-      model: "fake-smart",
+      model: "fake-smart-answered", // as reported by the harness, after set_config_option
       attempt: 1,
       stopReason: "end_turn",
       error: null,
