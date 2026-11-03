@@ -5,7 +5,7 @@ import { openStore } from "./store";
 import { httpTransport } from "./transport";
 import type { OutboxEntry, OutboxStore } from "./types";
 
-export { CaptureRejected } from "./outbox";
+export { CaptureRejected, type OutboxSnapshot } from "./outbox";
 export type { AnalyseEntry, CaptureEntry, OutboxEntry, PendingCapture } from "./types";
 
 const opened = openStore();

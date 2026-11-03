@@ -166,7 +166,7 @@ const app = acp
         sessionUpdate: "tool_call_update",
         toolCallId,
         status: r.isError ? "failed" : "completed",
-        content: [{ type: "content", content: { type: "text", text: text(r).slice(0, 2000) } }],
+        content: [{ type: "content", content: { type: "text", text: text(r).slice(0, 20_000) } }],
       });
       return { isError: r.isError === true, text: text(r) };
     };

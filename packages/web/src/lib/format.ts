@@ -72,3 +72,35 @@ export function shortUrl(url: string): string {
     return url;
   }
 }
+
+/** Grams and per-100 g values: whole above 100, one decimal below ("1.6", "18", "220"). */
+export function formatGrams(n: number): string {
+  if (n >= 100) return formatNumber(n);
+  if (n > 0 && n < 0.1) return n.toFixed(2).replace(/0$/, "");
+  return String(Math.round(n * 10) / 10);
+}
+
+/** A signed difference: "+120", "−54", "±0". */
+export const formatDelta = (n: number): string => {
+  const r = Math.round(n);
+  return r === 0 ? "±0" : r > 0 ? `+${formatNumber(r)}` : `−${formatNumber(-r)}`;
+};
+
+/** A run's length: "850 ms", "7.7 s", "2 min 05 s". */
+export function formatElapsed(ms: number): string {
+  if (ms < 1000) return `${Math.round(ms)} ms`;
+  if (ms < 60_000) return `${(ms / 1000).toFixed(1)} s`;
+  const s = Math.round(ms / 1000);
+  return `${Math.floor(s / 60)} min ${String(s % 60).padStart(2, "0")} s`;
+}
+
+/** `datetime-local` value (local time, minutes) for an epoch ms, and back. */
+export function toLocalInput(ms: number): string {
+  const d = new Date(ms);
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+export const fromLocalInput = (value: string): number | null => {
+  const ms = new Date(value).getTime();
+  return Number.isFinite(ms) ? ms : null;
+};
