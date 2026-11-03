@@ -13,7 +13,7 @@ import { type TailscaleServe, tailscaleServe } from "./tailscale.ts";
 const HELP = `Usage: yamt <command> [options]
 
 Commands:
-  start     Start the server and publish it on the tailnet
+  start       Start the server and publish it on the tailnet
 
 Options:
   --data-dir <dir>     Data directory (default ~/.yamt, env YAMT_DATA_DIR)
@@ -26,6 +26,9 @@ Options:
 
 Auth: requests must come through \`tailscale serve\` from the configured Tailscale login
 (env YAMT_LOGIN, or "login" in <data-dir>/config.json).
+
+Food data: USDA FoodData Central needs an API key (env FDC_API_KEY, or "fdcApiKey" in
+<data-dir>/config.json); without one, searches use history and Open Food Facts only.
 `;
 
 const WEB_DIR = join(import.meta.dir, "../../web");
@@ -111,7 +114,13 @@ async function main(): Promise<number> {
       writeStamp(WEB_DIST, WEB_BUILD_SOURCES);
     }
 
-    const app = createServer({ dataDir, port, webDist: values.dev ? null : WEB_DIST, auth });
+    const app = createServer({
+      dataDir,
+      port,
+      webDist: values.dev ? null : WEB_DIST,
+      auth,
+      fdcApiKey: config.fdcApiKey,
+    });
     cleanups.push(() => app.stop());
 
     // In dev mode Vite serves the SPA (with HMR) and proxies /api to the app port.
@@ -135,6 +144,7 @@ async function main(): Promise<number> {
     console.log(`\nyamt is running${values.dev ? " (dev)" : ""}. Data: ${dataDir}`);
     if (ts) console.log(`  Tailnet:  ${ts.url}`);
     console.log(`  Local:    http://localhost:${webPort}/${auth.kind === "off" ? "  (auth off)" : ""}`);
+    if (!config.fdcApiKey) console.log("  Food data: no FDC_API_KEY, USDA FoodData Central is off");
     console.log("Ctrl+C to stop.\n");
   } catch (e) {
     await cleanup();

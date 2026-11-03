@@ -47,15 +47,22 @@ describe("ensureDataDir", () => {
 });
 
 describe("loadConfig", () => {
-  test("no file, no env: no login", () => {
-    expect(loadConfig(tempDir(), {})).toEqual({ login: null });
+  test("no file, no env: no login, no FDC key", () => {
+    expect(loadConfig(tempDir(), {})).toEqual({ login: null, fdcApiKey: null });
   });
 
   test("reads the login from config.json; YAMT_LOGIN overrides it", () => {
     const dir = tempDir();
     writeFileSync(dataPaths(dir).config, JSON.stringify({ login: " alice@example.com " }));
-    expect(loadConfig(dir, {})).toEqual({ login: "alice@example.com" });
-    expect(loadConfig(dir, { YAMT_LOGIN: "bob@example.com" })).toEqual({ login: "bob@example.com" });
+    expect(loadConfig(dir, {}).login).toBe("alice@example.com");
+    expect(loadConfig(dir, { YAMT_LOGIN: "bob@example.com" }).login).toBe("bob@example.com");
+  });
+
+  test("reads the FDC key from config.json; FDC_API_KEY overrides it", () => {
+    const dir = tempDir();
+    writeFileSync(dataPaths(dir).config, JSON.stringify({ fdcApiKey: "file-key" }));
+    expect(loadConfig(dir, {}).fdcApiKey).toBe("file-key");
+    expect(loadConfig(dir, { FDC_API_KEY: "env-key" }).fdcApiKey).toBe("env-key");
   });
 
   test("rejects unknown keys", () => {

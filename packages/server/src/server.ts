@@ -5,6 +5,7 @@ import { ensureDataDir } from "./config.ts";
 import { type Db, openDb } from "./db/index.ts";
 import { createApi } from "./http/api.ts";
 import { staticHandler, WEB_DIST } from "./http/static.ts";
+import type { Fetch } from "./nutrition/http.ts";
 import { createServices, type Services } from "./services.ts";
 
 export interface ServerOptions {
@@ -18,6 +19,12 @@ export interface ServerOptions {
   auth: AuthMode;
   /** Override for tests: the HEIC → JPEG conversion. */
   heicToJpeg?: (heic: Uint8Array) => Promise<Uint8Array>;
+  /** USDA FoodData Central key; null or absent: FDC is reported unavailable. */
+  fdcApiKey?: string | null;
+  /** Override for tests: outbound HTTP (food databases, recipe pages). */
+  fetch?: Fetch;
+  /** Override for tests: the zone days are reckoned in (default: the server's). */
+  timeZone?: string;
 }
 
 export interface AppServer {
@@ -33,7 +40,14 @@ export interface AppServer {
 export function createServer(opts: ServerOptions): AppServer {
   const paths = ensureDataDir(opts.dataDir);
   const db = openDb(paths.db);
-  const services = createServices({ dataDir: opts.dataDir, db, heicToJpeg: opts.heicToJpeg });
+  const services = createServices({
+    dataDir: opts.dataDir,
+    db,
+    heicToJpeg: opts.heicToJpeg,
+    fdcApiKey: opts.fdcApiKey,
+    fetch: opts.fetch,
+    timeZone: opts.timeZone,
+  });
   // one process owns the queue: whatever an earlier one left running was interrupted
   services.repos.jobs.releaseInterrupted();
 
