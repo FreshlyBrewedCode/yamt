@@ -5,6 +5,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import {
   type ApiError,
+  addDays,
   type CaptureResponse,
   type MealDetailResponse,
   type MealResponse,
@@ -175,7 +176,7 @@ describe("/mcp", () => {
     expect(res.headers.get("content-type")).toContain("application/json");
     expect(res.headers.get("mcp-session-id")).toBeNull();
     const body = (await res.json()) as { result: { tools: unknown[] } };
-    expect(body.result.tools).toHaveLength(8);
+    expect(body.result.tools).toHaveLength(9);
     const get = await fetch(app.mcpUrl, { headers: { Authorization: `Bearer ${interactive}` } });
     expect(get.status).toBe(405);
     expect(get.headers.get("allow")).toBe("POST");
@@ -195,6 +196,7 @@ describe("/mcp", () => {
       "fetch_recipe",
       "save_meal_revision",
       "get_day_summary",
+      "get_goals",
     ]);
     const save = tools.find((t) => t.name === "save_meal_revision")!;
     expect(save.inputSchema.required).toEqual(["mealId", "title", "items"]);
@@ -658,8 +660,62 @@ describe("tools end to end (fixtures)", () => {
     expect(await fails(client, "get_day_summary", { timeZone: "Mars/Olympus" })).toContain(
       "unknown time zone",
     );
-    const empty = await ok<{ meals: unknown[] }>(client, "get_day_summary", { date: "2001-01-01" });
-    expect(empty.meals).toEqual([]);
+    const empty = await ok<{ meals: unknown[]; goal: unknown; progress: unknown; weight: unknown[] }>(
+      client,
+      "get_day_summary",
+      { date: "2001-01-01" },
+    );
+    expect(empty).toMatchObject({ meals: [], goal: null, progress: null, weight: [] });
+  });
+
+  test("get_goals and get_day_summary: the goal in force, the progress against it, the day's weight", async () => {
+    const client = await connect(interactive);
+    const today = localDate(Date.now(), TZ);
+    expect(await ok(client, "get_goals", {})).toEqual({ date: today, inForce: null, goals: [] });
+
+    const post = (body: unknown) => api<{ goal: { id: string } }>("POST", "/api/goals", body);
+    const old = (await post({ energyKcal: 2600, protein: 140, effectiveFrom: "2026-01-01" })).body.goal;
+    const now = (await post({ energyKcal: 2400, protein: 160, fiber: 35, note: "Cut", effectiveFrom: today }))
+      .body.goal;
+    await api("POST", "/api/weight", { kg: 81.2 });
+
+    const goals = await ok<{
+      inForce: { goalId: string };
+      goals: {
+        goalId: string;
+        effectiveFrom: string;
+        until: string | null;
+        targets: Record<string, unknown>;
+      }[];
+    }>(client, "get_goals", {});
+    expect(goals.inForce.goalId).toBe(now.id);
+    expect(goals.goals.map((g) => [g.goalId, g.until])).toEqual([
+      [now.id, null],
+      [old.id, addDays(today, -1)],
+    ]);
+    expect(goals.goals[0]).toMatchObject({
+      note: "Cut",
+      targets: { energyKcal: 2400, protein: 160, fat: null, carbohydrate: null, fiber: 35 },
+    });
+    const then = await ok<{ inForce: { goalId: string } }>(client, "get_goals", { date: "2026-02-01" });
+    expect(then.inForce.goalId).toBe(old.id);
+    expect(await fails(client, "get_goals", { timeZone: "Mars/Olympus" })).toContain("unknown time zone");
+
+    const day = await ok<{
+      totals: Record<string, number>;
+      goal: { goalId: string; targets: Record<string, number | null> };
+      progress: Record<string, { eaten: number; target: number | null; left: number | null; over: boolean }>;
+      weight: { kg: number; measuredAt: string }[];
+    }>(client, "get_day_summary", {});
+    expect(day.goal.goalId).toBe(now.id);
+    expect(day.progress.energyKcal).toMatchObject({
+      eaten: day.totals.energyKcal,
+      target: 2400,
+      left: 2400 - day.totals.energyKcal!,
+    });
+    expect(day.progress.fat).toMatchObject({ target: null, left: null, over: false });
+    expect(day.weight.map((w) => w.kg)).toEqual([81.2]);
+    expect(day.weight[0]!.measuredAt).toMatch(/[+-]\d\d:\d\d$/);
   });
 });
 
@@ -672,6 +728,7 @@ describe("run tokens", () => {
     const client = await connect(token);
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name)).not.toContain("get_day_summary");
+    expect(tools.map((t) => t.name)).not.toContain("get_goals");
     expect(await fails(client, "get_day_summary", {})).toContain("no tool");
     expect(await fails(client, "get_meal", { mealId: other.id })).toContain(`only use meal ${meal.id}`);
     await ok(client, "get_meal", { mealId: meal.id });

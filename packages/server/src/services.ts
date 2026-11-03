@@ -2,6 +2,7 @@ import { dataPaths } from "./config.ts";
 import type { Db } from "./db/index.ts";
 import { createRepos, type Repos } from "./db/repos/index.ts";
 import { FoodService } from "./domain/foods.ts";
+import { GoalService } from "./domain/goals.ts";
 import { MealService } from "./domain/meals.ts";
 import { RevisionService } from "./domain/revisions.ts";
 import { localTimeZone } from "./domain/time.ts";
@@ -19,6 +20,8 @@ export interface Services {
   meals: MealService;
   foods: FoodService;
   revisions: RevisionService;
+  /** Daily goals and the day view (#12). */
+  goals: GoalService;
   /** Bearer tokens for /mcp: the interactive one and per-run ones (#8 mints and revokes). */
   mcpTokens: McpTokens;
   /** Outbound fetch (food databases, recipe pages); a fixture-backed fake in tests. */
@@ -47,16 +50,19 @@ export function createServices(opts: ServicesOptions): Services {
   const fetchFn: Fetch = opts.fetch ?? ((input, init) => fetch(input, init));
   const revisions = new RevisionService(repos);
   const queue = { wake: () => {} };
+  const meals = new MealService(repos, media, revisions, opts.heicToJpeg, () => queue.wake());
+  const timeZone = opts.timeZone ?? localTimeZone();
   return {
     dataDir: opts.dataDir,
     repos,
     media,
-    meals: new MealService(repos, media, revisions, opts.heicToJpeg, () => queue.wake()),
+    meals,
     foods: new FoodService(repos, new OffClient(fetchFn), new FdcClient(fetchFn, opts.fdcApiKey ?? null)),
     revisions,
+    goals: new GoalService(repos, meals, timeZone),
     mcpTokens: new McpTokens(dataPaths(opts.dataDir).mcpToken),
     fetch: fetchFn,
-    timeZone: opts.timeZone ?? localTimeZone(),
+    timeZone,
     queue,
   };
 }

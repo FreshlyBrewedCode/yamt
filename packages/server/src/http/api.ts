@@ -5,6 +5,7 @@ import { VERSION } from "../config.ts";
 import { appliedMigrations, type Db } from "../db/index.ts";
 import { HttpError } from "../domain/errors.ts";
 import type { Services } from "../services.ts";
+import { goalRoutes } from "./goals.ts";
 import { mealRoutes } from "./meals.ts";
 import { handleError, sameOrigin } from "./middleware.ts";
 import { runRoutes } from "./runs.ts";
@@ -34,6 +35,7 @@ export function createApi(deps: ApiDeps): Hono<IdentityEnv> {
   api.route("/", mealRoutes(deps.services));
   api.route("/", runRoutes(deps.services));
   api.route("/", weightRoutes(deps.services));
+  api.route("/", goalRoutes(deps.services));
 
   api.all("*", () => {
     throw new HttpError(404, "not found");
