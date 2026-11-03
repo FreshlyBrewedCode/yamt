@@ -2,6 +2,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { z } from "zod";
+import type { HarnessConfig } from "./acp/adapters/index.ts";
 
 export const VERSION = "0.1.0";
 
@@ -51,9 +52,26 @@ export function expandHome(p: string): string {
   return p;
 }
 
+/** The model the analysis asks for unless configured otherwise. */
+export const DEFAULT_ANALYSIS_MODEL = "claude-opus-5-5";
+
+const AnalysisConfigFile = z
+  .object({
+    /** `claude-code` (claude-agent-acp, the default) or `custom` (any ACP agent: give `command`). */
+    harness: z.enum(["claude-code", "custom"]).optional(),
+    /** Overrides the preset's command line (custom: required). */
+    command: z.string().trim().min(1).optional(),
+    args: z.array(z.string()).optional(),
+    env: z.record(z.string(), z.string()).optional(),
+    model: z.string().trim().min(1).optional(),
+  })
+  .strict();
+
 /** `<data>/config.json`. Every key is optional; env vars override the file. */
 export const AppConfigFile = z
   .object({
+    /** The analysis agent (#8); env YAMT_ANALYSIS_HARNESS, YAMT_ANALYSIS_COMMAND, YAMT_ANALYSIS_MODEL. */
+    analysis: AnalysisConfigFile.optional(),
     /** The Tailscale login allowed in, as `tailscale serve` reports it (e.g. `alice@github`). */
     login: z.string().trim().min(1).optional(),
     /** USDA FoodData Central API key (https://fdc.nal.usda.gov/api-key-signup); env FDC_API_KEY wins. */
@@ -61,8 +79,15 @@ export const AppConfigFile = z
   })
   .strict();
 
+/** Which agent analyses meals, and with which model. */
+export interface AnalysisConfig {
+  harness: HarnessConfig;
+  model: string;
+}
+
 export interface AppConfig {
   login: string | null;
+  analysis: AnalysisConfig;
   /** Null: FDC is reported as unavailable, searches use history and Open Food Facts. */
   fdcApiKey: string | null;
 }
@@ -77,5 +102,33 @@ export function loadConfig(dataDir: string, env: Env = process.env): AppConfig {
   }
   const login = env.YAMT_LOGIN?.trim() || file.login || null;
   const fdcApiKey = env.FDC_API_KEY?.trim() || file.fdcApiKey || null;
-  return { login, fdcApiKey };
+  return { login, fdcApiKey, analysis: analysisConfig(file.analysis ?? {}, env) };
+}
+
+/**
+ * The analysis harness from config.json's `analysis` and the env: YAMT_ANALYSIS_HARNESS
+ * (`claude-code` | `custom`), YAMT_ANALYSIS_COMMAND (a command line, split on spaces; replaces
+ * `command` and `args`), YAMT_ANALYSIS_MODEL.
+ */
+export function analysisConfig(
+  file: z.infer<typeof AnalysisConfigFile>,
+  env: Env = process.env,
+): AnalysisConfig {
+  const kindEnv = env.YAMT_ANALYSIS_HARNESS?.trim();
+  if (kindEnv && kindEnv !== "claude-code" && kindEnv !== "custom") {
+    throw new Error(`YAMT_ANALYSIS_HARNESS: expected claude-code or custom, got ${kindEnv}`);
+  }
+  const kind = (kindEnv as HarnessConfig["kind"] | undefined) || file.harness || "claude-code";
+  const commandLine = env.YAMT_ANALYSIS_COMMAND?.trim().split(/\s+/).filter(Boolean);
+  const command = commandLine?.[0] ?? file.command ?? "";
+  const args = commandLine ? commandLine.slice(1) : (file.args ?? []);
+  if (kind === "custom" && !command) {
+    throw new Error(
+      'analysis: the custom harness needs a command (config.json "analysis.command" or YAMT_ANALYSIS_COMMAND)',
+    );
+  }
+  return {
+    harness: { kind, command, args, env: file.env ?? {} },
+    model: env.YAMT_ANALYSIS_MODEL?.trim() || file.model || DEFAULT_ANALYSIS_MODEL,
+  };
 }

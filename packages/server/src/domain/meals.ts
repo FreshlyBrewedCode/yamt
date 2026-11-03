@@ -46,6 +46,8 @@ export class MealService {
     private readonly revisions: RevisionService,
     /** Seam for tests: the HEIC → JPEG conversion. */
     private readonly toJpeg: (heic: Uint8Array) => Promise<Uint8Array> = heicToJpeg,
+    /** Called after a job was enqueued, so the worker picks it up without waiting for its tick. */
+    private readonly jobsChanged: () => void = () => {},
   ) {}
 
   create(body: CreateMealBody): Meal {
@@ -63,6 +65,7 @@ export class MealService {
       captures: this.repos.captures.listForMeal(id).map(toCapture),
       transcripts: this.repos.transcripts.listForMeal(id),
       revision: this.revisions.current(meal),
+      runs: this.repos.runs.listForMeal(id),
     };
   }
 
@@ -175,14 +178,15 @@ export class MealService {
 
   /**
    * Queues the meal for analysis. Idempotent while a job is queued; while one runs, a new one
-   * is queued behind it (it may have missed the latest captures).
+   * is queued behind it (it may have missed the latest captures). On a `failed` meal this is the
+   * retry: a fresh job with fresh attempts, and the error is cleared.
    */
   analyse(mealId: string, now = Date.now()): AnalyseResponse {
     this.meal(mealId);
     if (this.repos.captures.countLive(mealId) === 0) {
       throw new HttpError(409, "nothing to analyse yet", "add a capture first");
     }
-    return this.repos.db.transaction(() => {
+    const result = this.repos.db.transaction(() => {
       const { job } = this.repos.jobs.enqueue(
         "analyse",
         { mealId },
@@ -191,6 +195,8 @@ export class MealService {
       const meal = this.repos.meals.setStatus(mealId, "queued", now)!;
       return { meal, jobId: job.id };
     })();
+    this.jobsChanged();
+    return result;
   }
 
   /** The stored file of a media capture: the original, or the JPEG derivative of a HEIC photo. */
@@ -220,7 +226,7 @@ export class MealService {
 
   /** One transaction: the capture, for audio its transcript and job, and the meal's times. */
   private record(c: NewCapture): CaptureResponse {
-    return this.repos.db.transaction(() => {
+    const res = this.repos.db.transaction(() => {
       const capture = this.repos.captures.insert(c);
       if (capture.questionId) this.repos.revisions.refreshAnswer(capture.questionId);
       let transcript = null;
@@ -235,6 +241,8 @@ export class MealService {
       const meal = this.repos.meals.capturesChanged(capture.mealId, c.now)!;
       return { capture: toCapture(capture), transcript, meal };
     })();
+    if (res.transcript) this.jobsChanged();
+    return res;
   }
 }
 

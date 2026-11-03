@@ -7,6 +7,7 @@ import { HttpError } from "../domain/errors.ts";
 import type { Services } from "../services.ts";
 import { mealRoutes } from "./meals.ts";
 import { handleError, sameOrigin } from "./middleware.ts";
+import { runRoutes } from "./runs.ts";
 import { weightRoutes } from "./weight.ts";
 
 export interface ApiDeps {
@@ -31,6 +32,7 @@ export function createApi(deps: ApiDeps): Hono<IdentityEnv> {
 
   api.get(apiPaths.me.slice("/api".length), (c) => c.json<MeResponse>({ login: c.get("login") }));
   api.route("/", mealRoutes(deps.services));
+  api.route("/", runRoutes(deps.services));
   api.route("/", weightRoutes(deps.services));
 
   api.all("*", () => {

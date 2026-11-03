@@ -1,10 +1,13 @@
 import { MAX_UPLOAD_BYTES } from "@yamt/shared";
 import { Hono } from "hono";
+import type { RunTimeouts } from "./acp/run.ts";
+import { AnalysisJob, settleMeal } from "./analysis/job.ts";
 import type { AuthMode } from "./auth/identity.ts";
-import { ensureDataDir } from "./config.ts";
+import { type AnalysisConfig, analysisConfig, ensureDataDir } from "./config.ts";
 import { type Db, openDb } from "./db/index.ts";
 import { createApi } from "./http/api.ts";
 import { staticHandler, WEB_DIST } from "./http/static.ts";
+import { JobWorker } from "./jobs/worker.ts";
 import { createMcpApp, MCP_PATH } from "./mcp/endpoint.ts";
 import type { Fetch } from "./nutrition/http.ts";
 import { createServices, type Services } from "./services.ts";
@@ -26,6 +29,18 @@ export interface ServerOptions {
   fetch?: Fetch;
   /** Override for tests: the zone days are reckoned in (default: the server's). */
   timeZone?: string;
+  /**
+   * Run the job worker (meal analysis; transcription with #9). Off unless asked for, so tests and
+   * tools that only need the API never spawn an agent; `yamt start` turns it on.
+   */
+  worker?: boolean | { pollMs?: number };
+  /** The analysis agent; default: `analysisConfig({})` (Claude Code, the default model). */
+  analysis?: {
+    config?: AnalysisConfig;
+    timeouts?: Partial<RunTimeouts>;
+    transcriptWaitMs?: number;
+    skillPath?: string;
+  };
 }
 
 export interface AppServer {
@@ -36,6 +51,8 @@ export interface AppServer {
   localUrl: string;
   /** http://127.0.0.1:<port>/mcp, what `.mcp.json` and agent runs point at. */
   mcpUrl: string;
+  /** The job worker, when enabled (#9 registers its transcribe handler on it). */
+  worker: JobWorker | null;
   stop(): Promise<void>;
 }
 
@@ -51,8 +68,11 @@ export function createServer(opts: ServerOptions): AppServer {
     fetch: opts.fetch,
     timeZone: opts.timeZone,
   });
-  // one process owns the queue: whatever an earlier one left running was interrupted
-  services.repos.jobs.releaseInterrupted();
+  // one process owns the queue: whatever an earlier one left running was interrupted (a failed
+  // attempt), and so were its runs; their meals go back to queued, or failed after the last try
+  const released = services.repos.jobs.releaseInterrupted();
+  services.repos.runs.failInterrupted();
+  for (const job of released) settleMeal(services.repos, job);
   // the interactive MCP token exists from the first start on (`yamt mcp-token` prints it)
   services.mcpTokens.interactiveToken();
 
@@ -76,14 +96,36 @@ export function createServer(opts: ServerOptions): AppServer {
     },
   });
   const port = server.port!;
+  const mcpUrl = `http://127.0.0.1:${port}${MCP_PATH}`;
+
+  let worker: JobWorker | null = null;
+  if (opts.worker) {
+    const a = opts.analysis ?? {};
+    worker = new JobWorker(services.repos.jobs, typeof opts.worker === "object" ? opts.worker : {});
+    worker.register(
+      new AnalysisJob(services, {
+        config: a.config ?? analysisConfig({}),
+        mcpUrl,
+        timeouts: a.timeouts,
+        transcriptWaitMs: a.transcriptWaitMs,
+        skillPath: a.skillPath,
+      }),
+    );
+    const w = worker;
+    services.queue.wake = () => w.wake();
+    w.start();
+  }
 
   return {
     db,
     services,
     port,
     localUrl: `http://localhost:${port}/`,
-    mcpUrl: `http://127.0.0.1:${port}${MCP_PATH}`,
+    mcpUrl,
+    worker,
     async stop() {
+      // a running analysis is cancelled and queued again (no attempt spent) before the API goes
+      await worker?.stop();
       await server.stop(true);
       db.close();
     },
