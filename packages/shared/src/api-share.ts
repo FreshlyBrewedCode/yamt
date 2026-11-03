@@ -58,15 +58,11 @@ export interface ShareResponse {
 
 /**
  * The URL when a pasted or shared text is nothing but one http(s) link (surrounding whitespace
- * aside), else null. Text with words around a link stays a note.
+ * aside), else null. Text with words around a link stays a note. (A pattern, not `URL`: this
+ * package has no DOM or Node types; the server's zod schema still validates what is sent.)
  */
 export function singleUrl(text: string): string | null {
   const s = text.trim();
-  if (!/^https?:\/\/\S+$/i.test(s) || s.length > 4_000) return null;
-  try {
-    const u = new URL(s);
-    return u.protocol === "http:" || u.protocol === "https:" ? u.toString() : null;
-  } catch {
-    return null;
-  }
+  if (s.length > 4_000) return null;
+  return /^https?:\/\/[^\s/?#@]*[a-z0-9][^\s/?#@]*(?:[/?#]\S*)?$/i.test(s) ? s : null;
 }

@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { PUSH_EVENTS, type PushEvent, type PushSubscriptionView } from "@yamt/shared";
 import { cn } from "cn";
-import { Bell, BellOff, Check, ClipboardPaste, Copy, Share, SquarePlus } from "lucide-react";
+import { Bell, BellOff, Check, ClipboardPaste, Copy, Info, Share, SquarePlus } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import {
   BackButton,
@@ -327,8 +327,9 @@ function ShareSetup() {
       In the <b>Shortcuts</b> app, tap <b>+</b> for a new shortcut and name it <b>Send to yamt</b>.
     </>,
     <>
-      Tap <b>ⓘ</b> (Details) and turn on <b>Show in Share Sheet</b>. In the first block (“Receive … input”),
-      pick Images, Media, Files, URLs and Text.
+      Tap <Info className="inline size-4 align-[-2px]" strokeWidth={2.5} aria-label="the info button" />{" "}
+      (Details) and turn on <b>Show in Share Sheet</b>. In the first block (“Receive … input”), pick Images,
+      Media, Files, URLs and Text.
     </>,
     <>
       Add the action <b>Get Contents of URL</b> and paste the address above into it. Under <b>Show More</b>:

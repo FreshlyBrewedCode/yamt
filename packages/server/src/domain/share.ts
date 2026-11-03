@@ -135,13 +135,19 @@ function fromText(raw: string, webShortcut = false): Planned[] {
   if (webShortcut) {
     const url =
       text.match(/<key>URL<\/key>\s*<string>([^<]+)<\/string>/)?.[1] ?? text.match(/^URL=(.+)$/m)?.[1];
-    const link = url ? singleUrl(url.replaceAll("&amp;", "&")) : null;
-    return link ? [{ kind: "link", url: link }] : [];
+    return linkTo(url?.replaceAll("&amp;", "&"));
   }
-  const url = singleUrl(text);
-  if (url) return [{ kind: "link", url }];
+  const link = linkTo(text);
+  if (link.length) return link;
   const note = JsonCaptureBody.safeParse({ kind: "text", text });
   return note.success ? [note.data] : [];
+}
+
+/** A link capture when the text is one URL alone that the capture schema takes, else nothing. */
+function linkTo(text: string | undefined): Planned[] {
+  const url = text ? singleUrl(text) : null;
+  const link = url ? JsonCaptureBody.safeParse({ kind: "link", url }) : null;
+  return link?.success ? [link.data] : [];
 }
 
 /** A web page (Safari's share as a file): its canonical or og:url address as a link, if it names one. */
@@ -155,8 +161,8 @@ function fromHtml(html: string): Planned[] {
     const rel = attr("rel")?.toLowerCase();
     const property = attr("property")?.toLowerCase();
     const href = rel === "canonical" ? attr("href") : property === "og:url" ? attr("content") : undefined;
-    const url = href ? singleUrl(href.replaceAll("&amp;", "&")) : null;
-    if (url) return [{ kind: "link", url }];
+    const link = linkTo(href?.replaceAll("&amp;", "&"));
+    if (link.length) return link;
   }
   return [];
 }

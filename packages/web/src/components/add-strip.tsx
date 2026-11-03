@@ -340,7 +340,7 @@ function PasteSheet({
           e.currentTarget.textContent = "";
         }}
         onDrop={(e) => e.preventDefault()}
-        className="relative flex min-h-36 w-full items-center justify-center bg-lime px-5 py-6 text-lime-foreground caret-transparent outline-none focus-visible:ring-4 focus-visible:ring-foreground/40 focus-visible:ring-inset"
+        className="relative flex min-h-36 w-full items-center justify-center bg-lime px-5 py-6 text-lime-foreground caret-transparent outline-none"
         data-testid="paste-target"
       >
         <span
