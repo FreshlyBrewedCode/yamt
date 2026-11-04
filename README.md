@@ -8,4 +8,5 @@ photos, grounds every ingredient in a nutrition database (Open Food Facts, USDA 
 and logs macros with their provenance. Raw captures are kept forever so any meal can be
 reprocessed.
 
-Status: early development. Background research: [reports/](reports/).
+Status: early development. Background research: [reports/](reports/). How to run and work on it:
+[AGENTS.md](AGENTS.md), [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).

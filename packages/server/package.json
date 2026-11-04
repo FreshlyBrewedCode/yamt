@@ -1,0 +1,16 @@
+{
+  "name": "@yamt/server",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "yamt": "./src/cli.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p ."
+  },
+  "dependencies": {
+    "@yamt/shared": "workspace:*",
+    "hono": "4.13.14",
+    "zod": "4.6.7"
+  }
+}

@@ -1,0 +1,20 @@
+name: pr-title
+
+# PRs are squash-merged, so a PR's title becomes the commit on main: it must be a
+# Conventional Commit (`feat(web): …`, `fix(server): …`, `docs: …`). This is the one place that
+# is enforced.
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  pull-requests: read
+
+jobs:
+  lint-title:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: amannn/action-semantic-pull-request@v5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
