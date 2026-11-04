@@ -25,7 +25,7 @@ export const Route = createFileRoute("/calendar")({
  * selected day in it (the given one if it lies in the month and isn't in the future; else today
  * in the current month, a past month's last day).
  */
-export function resolveCalendar(search: CalendarSearch, today: string): { month: string; day: string } {
+function resolveCalendar(search: CalendarSearch, today: string): { month: string; day: string } {
   const current = monthOf(today);
   let month = search.month ?? (search.day ? monthOf(search.day) : current);
   if (month > current) month = current;
