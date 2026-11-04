@@ -3,7 +3,8 @@
 What exists today (the scaffold, #3, the meal backend, #6, the nutrition layer with the yamt
 MCP server, #7, the analysis job over ACP, #8, the transcription worker, #9, the PWA with
 meal capture, #10, the meal detail with questions and corrections, #11, the day view with
-goals and weight, #12, Web Push notifications, #13, and the guided goal setup, #24), how it
+goals and weight, #12, Web Push notifications, #13, the guided goal setup, #24, and paste and
+the iOS Shortcut share target, #26), how it
 fits together, and what comes after wave 1. Why it is built this way:
 [ADR 0001](adr/0001-wave-1-architecture.md). Commands and conventions: [AGENTS.md](../AGENTS.md).
 The design: [design/design.md](design/design.md).
@@ -18,7 +19,7 @@ iPhone (Safari / home-screen PWA), on the tailnet
 yamt start   (one Bun process, binds 127.0.0.1:7890 only)
   ├─ Hono JSON API   /api/*   identity-header auth (except /api/health), same-origin writes,
   │                           zod-validated bodies; meals, captures, media, weight, goals, days,
-  │                           push subscriptions
+  │                           push subscriptions, the share target (/api/share: an iOS Shortcut)
   ├─ MCP server      /mcp     bearer tokens (agent runs, interactive Claude Code sessions),
   │                           loopback callers only; the agent's only way to read and write
   ├─ SPA             /*       packages/web/dist   (dev: Vite on 7891 proxies /api); the PWA:
@@ -56,6 +57,8 @@ packages/shared/src/      contracts shared by server and web (no runtime deps bu
   api-runs.ts             analysis runs and trace lines: `runPaths`, `AnalysisRun`, `TraceEntry`
   api-push.ts             Web Push: `pushPaths`, `PUSH_EVENTS`, `SubscribeBody`, `PushEventsBody`,
                           `PushPayload` (what the service worker receives)
+  api-share.ts            the share target: `sharePaths`, `ShareFields`, `ShareResponse`,
+                          `SHARE_DRAFT_WINDOW_MS`, `singleUrl` (one URL alone → a link; paste uses it too)
 packages/server/src/
   cli.ts                  `yamt start` (flags: --data-dir --port --https-port --local --no-auth --dev --no-build
                           --no-worker), `yamt mcp-token [--rotate]`
@@ -77,14 +80,15 @@ packages/server/src/
   build-stamp.ts          rebuild packages/web/dist when its sources changed
   auth/identity.ts        requireTailnetIdentity: the Tailscale-User-Login check, dev bypass
   auth/bearer.ts          requireBearer: token auth for machine clients (/mcp)
-  http/                   api.ts (mounts), meals.ts, runs.ts, weight.ts, goals.ts and push.ts (routes), file-response.ts
+  http/                   api.ts (mounts), meals.ts, runs.ts, weight.ts, goals.ts, push.ts and share.ts (routes), file-response.ts
                           (media, ranges), middleware.ts (sameOrigin, errors, readJson),
-                          origin.ts, static.ts
+                          origin.ts (originAllowed, publicOrigin), static.ts
   domain/                 errors.ts (HttpError), meals.ts (MealService: captures, retract, analyse,
                           eaten-at, revision history),
                           revisions.ts (RevisionService: save, views, day summary), foods.ts
                           (FoodService: search, barcode, create), goals.ts (GoalService: goals and the
-                          day view), time.ts (days and local times)
+                          day view), share.ts (ShareService: the share target), time.ts (days and local
+                          times)
   nutrition/              nutrients.ts (OFF/FDC → core set), totals.ts (the only totals), ranking.ts,
                           off.ts / fdc.ts (clients), http.ts (timeouts, size caps, rate limits,
                           User-Agent), recipe.ts (fetch + schema.org Recipe JSON-LD)
@@ -110,7 +114,7 @@ packages/web/
   public/                 manifest.webmanifest, icons/ (rendered by scripts/icons.ts)
   sw.js                   the service worker template (vite.config.ts fills in the build's files)
   test/                   bun tests: the upload queue, the recorder's logic, the trace parser, the weight
-                          trend
+                          trend, the clipboard mapping
 packages/web/src/
   main.tsx                router + query client, starts the upload queue, registers the worker
   routes/                 TanStack file routes: __root.tsx, index.tsx (the overview),
@@ -127,10 +131,12 @@ packages/web/src/
   lib/weight.ts           the weight trend: raw points and the 7-day moving average (weightTrend), kgTicks
   lib/sw.ts, ids.ts, format.ts  worker registration and its messages, client UUIDv7s, number/date formatting
   lib/push.ts             this browser's push support, permission and subscription (subscribeDevice)
+  lib/clipboard.ts        Paste: clipboard items and paste events → captures (pasteFromClipboard,
+                          capturesFromItems, capturesFromPaste), and what was offered
   components/             slab.tsx (the design's primitives), totals-slab (+ TargetBar), meal-row (+ groupByDay),
                           weight-entry, weight-trend, recorder-band, choice (choice rows, chips, the
                           stepper, the slider, the split bar), goal-explanation,
-                          add-strip (photo/note/link/audio), capture-list (+ useCaptureRows),
+                          add-strip (photo/note/link/audio/paste, the paste sheet), capture-list (+ useCaptureRows),
                           meal-detail (the detail screen), items-list (provenance, confidence,
                           source), revision-history, trace-view; ui/ (shadcn: button, input, sheet)
   index.css               Tailwind 4 + the D · Slab theme tokens (light/dark)
@@ -165,7 +171,18 @@ services/stt/             the speech-to-text process, a uv project (Python 3.12,
   no login configured means everything is refused. `c.get("login")` carries it to the routes.
 - Because the identity rides on every request from the user's devices, including ones a foreign
   page triggers, non-GET requests also need a same-origin `Origin` (`http/origin.ts` understands
-  `tailscale serve`'s Host / X-Forwarded-Host and the Vite proxy). No cookies are used.
+  `tailscale serve`'s Host / X-Forwarded-Host and the Vite proxy). A write without an Origin, or
+  with `null`, is refused: browsers send Origin on every fetch/XHR write, same-origin ones
+  included (the app's `no-referrer` policy doesn't change that for CORS-mode requests). Until #26
+  a missing Origin passed. No cookies are used.
+- **The one exception: `POST /api/share`** (the iOS Shortcut, #26) also accepts a request
+  *without* an Origin (`ORIGINLESS_WRITES` in `http/middleware.ts`, that method and exact path
+  only). Shortcuts is not a browser and sends none; the request still comes from the user's
+  iPhone through `tailscale serve`, so it carries the identity and passes
+  `requireTailnetIdentity` unchanged. CSRF stays covered because the attack is a foreign web
+  page making the user's browser post, and browsers always send Origin on cross-site POSTs
+  (fetch, XHR, forms; `null` where they hide it): a present Origin that isn't ours is refused on
+  this route too.
 - **Public:** `/api/health` (status, version, applied migrations) and the SPA's static files,
   which are public code and carry no data.
 - **Dev bypass:** `--no-auth`, only together with `--local` (no tailnet URL); every request is
@@ -679,6 +696,14 @@ All behind the identity check, writes also same-origin; paths in `mealPaths` / `
   `derivation`; 201 with the goal. A refusal is a 422 (`hint`: `under_18`, `pregnancy`,
   `underweight_cut`) and changes nothing.
 
+- **Share** (#26, `sharePaths`): `POST /api/share`, `multipart/form-data` with one or more `file`
+  parts and/or `text` / `url` fields, optional `capturedAt` (epoch ms or ISO 8601; more than an
+  hour ahead is 400). Adds the items to the current draft meal (see [Sharing and
+  paste](#sharing-and-paste-26)): 201 when it started a new draft, 200 when it added to one. JSON
+  (`ShareResponse`: meal, `newMeal`, captures, `summary`, the meal's `url` on the request's
+  origin) when `Accept` names `application/json`, else the summary as `text/plain` ("Added 1
+  voice memo to Untitled meal, 19:10"), refusals as "Not added: …". No Origin needed (see Auth).
+
 - **Push** (#13, `pushPaths`): `GET /api/push` (the VAPID public key and every subscription,
   without keys), `POST /api/push/subscriptions` (a `PushSubscription.toJSON()` plus optional
   `events`; https endpoints on public hosts only; the same endpoint again updates its keys and
@@ -731,6 +756,37 @@ percentages rather than raw kcal and grams. The research behind every number:
   under 18.5 (`refusalFor`, `REFUSALS`: neutral wording); floors and caps are named in notes.
 - Simple first: no MCP tool, no nudge to recalculate, no adaptive expenditure (that is the
   later retro's job; the report's section 6 is its start).
+
+## Sharing and paste (#26)
+
+On iOS a home-screen app can't be a share-sheet target, so screenshots, Voice Memos recordings
+and links from other apps come in two ways, both straight into a meal (no inbox):
+
+- **Paste** on a meal's capture screen (the add strip's fifth target): `navigator.clipboard.read()`
+  first thing in the tap (iOS allows it only from a gesture and shows its "Paste" callout),
+  `lib/clipboard.ts` maps each clipboard item to at most one capture, the richest it offers: an
+  image, else audio (MIME types, Apple type identifiers like `com.apple.m4a-audio`, a file's name
+  or first bytes), else a link (`text/uri-list`, or plain text that is one http(s) URL alone),
+  else a note (plain text, else HTML's text). The captures go through the upload queue like all
+  others. When `read()` is missing, refused or finds nothing usable, a sheet from the top offers a
+  target to touch and hold (a `contenteditable`: iOS offers Paste on editable things, and only
+  rich editing takes files); its `paste` event's `clipboardData` (files first, strings only
+  without a usable file) can carry types the API doesn't. Nothing usable says so and lists every
+  type the clipboard offered, so what Safari exposes for a copied voice memo shows on the device.
+- **The share target**: an iOS Shortcut ("Send to yamt", built once from the guide in Settings)
+  posts what it receives to `POST /api/share`. `ShareService` (`domain/share.ts`) picks the
+  **current draft meal**: the most recently updated meal in `draft` whose `updated_at` is within
+  `SHARE_DRAFT_WINDOW_MS` (3 h; `MealRepo.latestDraftSince`), else a new draft. The new draft is
+  not pinned: its `eatenAt` follows its captures (a photo's EXIF time, `capturedAt`, arrival),
+  so it lands at the items' time. Every item is checked first (sizes as for uploads, the clock,
+  something usable at all), so a refused share changes nothing; then each becomes an ordinary
+  capture through `MealService.addUpload` / `addJson` (sniffing, HEIC → JPEG, EXIF, a pending
+  transcript and `transcribe` job for audio). Nothing is analysed: the user opens the meal and
+  presses Analyse. A Shortcut turns some shared things into small files: a text-like `file`
+  (≤ 64 KB: `text/*`, `.txt`, `.url`, `.webloc`, untyped UTF-8) becomes a link (one URL alone, a
+  web shortcut's URL, a page's canonical or `og:url`) or a note; anything else stays a file. The
+  Shortcut shows the plain-text answer in a notification (opening a URL from a Shortcut would land
+  in Safari, not the home-screen app).
 
 ## Notifications (#13)
 
@@ -786,8 +842,8 @@ failed, and a tap opens the meal.
 2. `server.ts` routes `/api/*` and `/mcp` to the Hono app and everything else to the static
    handler (files from `packages/web/dist`, falling back to `index.html` for client routes).
    `/mcp` itself is reached from this machine only (see [MCP server](#mcp-server)).
-3. In the API: `/api/health` answers directly; any other path goes through `sameOrigin` and
-   `requireTailnetIdentity`, then its route (unknown paths: 404 after auth). Errors become
+3. In the API: `/api/health` answers directly; any other path goes through `sameOrigin` (writes:
+   our Origin; `POST /api/share` also none) and `requireTailnetIdentity`, then its route (unknown paths: 404 after auth). Errors become
    `{ error, hint? }` JSON (`HttpError`, zod errors → 400).
 4. The web app reads server state only through TanStack Query hooks in `lib/queries.ts`.
 
@@ -870,7 +926,8 @@ square corners. The tokens are in `index.css` (shadcn's names mapped onto the pa
   the server learns of the meal with its first capture, so an abandoned "Log meal" leaves nothing
   behind. Header (time, status, title; back goes to the detail when adding), the recorder (the
   ink slab here), the add strip (Photo: `accept="image/*" multiple`, iOS offers camera or library;
-  Audio: `accept="audio/*"` for Voice Memos via Files; Note and Link: sheets), the capture list
+  Audio: `accept="audio/*"` for Voice Memos via Files; Note and Link: sheets; Paste, #26: the
+  clipboard, or the paste sheet, see [Sharing and paste](#sharing-and-paste-26)), the capture list
   (thumbnail or playback, transcript snippet, upload state, retract with an inline confirm), and
   the bottom slab: Analyse / Analyse queued / Analysing… / Retry analysis / Re-analyse (only with
   something new since the current revision). Analysing returns to the overview (to the detail
@@ -904,7 +961,9 @@ square corners. The tokens are in `index.css` (shadcn's names mapped onto the pa
   permission decisions, notes (a config option the harness lacks, the harness being stopped) and
   errors (orange: a failed run, a crashed harness).
 - **Settings** (`/settings`, the cog in the overview's header): notifications for this device
-  (see [Notifications](#notifications-13)).
+  (see [Notifications](#notifications-13)), then "Share from other apps" (#26): what the Shortcut
+  does, its URL (`location.origin` + `/api/share`) with a copy button, the five steps to build it
+  in the Shortcuts app, and the paste route.
 - **Live status:** the overview polls `GET /api/meals` every 3 s while a meal is
   queued, analysing or has a pending transcript, the meal screen polls its meal likewise. A push
   arriving while the app is open refreshes the meals at once.
@@ -971,5 +1030,6 @@ Meals, captures, media storage, the job queue and weight entries (#6), the nutri
 with the MCP server (#7), the ACP runtime with the analysis job and worker loop (#8), and the
 transcription worker (#9), the PWA with meal capture (#10), the meal detail with questions and
 corrections (#11), the day view with goals and weight (#12) and Web Push notifications (#13)
-are in: wave 1 is complete. On top of it, the guided goal setup (#24). Spike #4 (speech-to-text) decided ADR 0002; spike #5's chosen design is
+are in: wave 1 is complete. On top of it, the guided goal setup (#24) and paste with the iOS
+Shortcut share target (#26). Spike #4 (speech-to-text) decided ADR 0002; spike #5's chosen design is
 [design/design.md](design/design.md). See the epic for the decisions each one builds on.

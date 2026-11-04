@@ -2,6 +2,7 @@ import { type APIRequestContext, expect, type Page, test } from "@playwright/tes
 import type { MealDetailResponse, MealResponse } from "../packages/shared/src/api-meals.ts";
 import { mealPaths } from "../packages/shared/src/api-meals.ts";
 import { type PushResponse, pushPaths } from "../packages/shared/src/api-push.ts";
+import { OWN_ORIGIN } from "./api.ts";
 
 // Notifications (#13) on the phone: the settings screen in every state Chromium can show. Real
 // push delivery is out of scope: Chromium has no push service here, so the browser's
@@ -126,11 +127,13 @@ test("not installed: iOS Safari in a tab gets the Add to Home Screen steps", asy
 });
 
 test("a needs-input notification's link opens the meal at its question", async ({ page, request }) => {
-  const { meal } = (await (await request.post(mealPaths.meals, { data: {} })).json()) as MealResponse;
+  const { meal } = (await (
+    await request.post(mealPaths.meals, { headers: OWN_ORIGIN, data: {} })
+  ).json()) as MealResponse;
   for (const text of ["Kürbis-Linsen-Curry mit Reis", "fake:meal:question"]) {
-    await request.post(mealPaths.captures(meal.id), { data: { kind: "text", text } });
+    await request.post(mealPaths.captures(meal.id), { headers: OWN_ORIGIN, data: { kind: "text", text } });
   }
-  await request.post(mealPaths.analyse(meal.id), { data: {} });
+  await request.post(mealPaths.analyse(meal.id), { headers: OWN_ORIGIN, data: {} });
   await expect
     .poll(
       async () =>

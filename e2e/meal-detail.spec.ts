@@ -1,6 +1,7 @@
 import { type APIRequestContext, expect, type Page, test } from "@playwright/test";
 import type { MealDetailResponse, MealResponse, MealStatus } from "../packages/shared/src/api-meals.ts";
 import { mealPaths } from "../packages/shared/src/api-meals.ts";
+import { OWN_ORIGIN } from "./api.ts";
 
 // The meal detail (#11) on the phone, against meals the fake agent analyses (see the header of
 // packages/server/test/fake-agent.ts): `fake:meal` is a made-up curry with five items, every
@@ -9,13 +10,17 @@ import { mealPaths } from "../packages/shared/src/api-meals.ts";
 
 /** A meal with these text captures, analysed by the fake agent until it reaches `status`. */
 async function seedMeal(request: APIRequestContext, texts: string[], status: MealStatus): Promise<string> {
-  const { meal } = (await (await request.post(mealPaths.meals, { data: {} })).json()) as MealResponse;
+  const { meal } = (await (
+    await request.post(mealPaths.meals, { headers: OWN_ORIGIN, data: {} })
+  ).json()) as MealResponse;
   for (const text of texts) {
-    expect((await request.post(mealPaths.captures(meal.id), { data: { kind: "text", text } })).ok()).toBe(
-      true,
-    );
+    expect(
+      (
+        await request.post(mealPaths.captures(meal.id), { headers: OWN_ORIGIN, data: { kind: "text", text } })
+      ).ok(),
+    ).toBe(true);
   }
-  expect((await request.post(mealPaths.analyse(meal.id), { data: {} })).ok()).toBe(true);
+  expect((await request.post(mealPaths.analyse(meal.id), { headers: OWN_ORIGIN, data: {} })).ok()).toBe(true);
   await expect
     .poll(
       async () =>

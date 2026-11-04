@@ -60,6 +60,27 @@ export type VoiceCaptureKind = z.infer<typeof VoiceCaptureKind>;
 export const isVoice = (c: { kind: CaptureKind; mimeType: string | null }): boolean =>
   c.kind === "audio" || ((c.kind === "answer" || c.kind === "correction") && c.mimeType !== null);
 
+const kindWords: Record<CaptureKind, [string, string]> = {
+  audio: ["voice memo", "voice memos"],
+  image: ["photo", "photos"],
+  text: ["note", "notes"],
+  link: ["link", "links"],
+  file: ["file", "files"],
+  correction: ["correction", "corrections"],
+  answer: ["answer", "answers"],
+};
+const kindOrder: CaptureKind[] = ["image", "audio", "text", "link", "file", "correction", "answer"];
+
+/** "2 photos", "1 voice memo" for each kind present, in a fixed order. */
+export function captureCounts(kinds: Partial<Record<CaptureKind, number>>): string[] {
+  return kindOrder
+    .filter((k) => (kinds[k] ?? 0) > 0)
+    .map((k) => {
+      const n = kinds[k]!;
+      return `${n} ${kindWords[k][n === 1 ? 0 : 1]}`;
+    });
+}
+
 export const TranscriptStatus = z.enum(["pending", "done", "failed"]);
 export type TranscriptStatus = z.infer<typeof TranscriptStatus>;
 

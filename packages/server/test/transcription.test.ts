@@ -350,7 +350,10 @@ describe("transcription in the server", () => {
     const res = await fetch(new URL(path, app.localUrl), {
       method,
       body: body instanceof FormData ? body : body ? JSON.stringify(body) : undefined,
-      headers: body && !(body instanceof FormData) ? { "content-type": "application/json" } : {},
+      headers: {
+        origin: new URL(app.localUrl).origin,
+        ...(body && !(body instanceof FormData) ? { "content-type": "application/json" } : {}),
+      },
     });
     return { status: res.status, body: (await res.json()) as T };
   };

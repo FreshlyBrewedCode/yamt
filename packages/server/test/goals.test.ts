@@ -40,7 +40,12 @@ afterAll(() => app.stop());
 async function call<T>(method: string, path: string, body?: unknown, headers: Record<string, string> = {}) {
   const res = await fetch(new URL(path, app.localUrl), {
     method,
-    headers: { [IDENTITY_HEADER]: "alice@example.com", "content-type": "application/json", ...headers },
+    headers: {
+      [IDENTITY_HEADER]: "alice@example.com",
+      origin: new URL(app.localUrl).origin,
+      "content-type": "application/json",
+      ...headers,
+    },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const text = await res.text();
@@ -266,7 +271,11 @@ describe("guided goals and the profile (#24)", () => {
   async function req<T>(method: string, path: string, body?: unknown) {
     const res = await fetch(new URL(path, guided.localUrl), {
       method,
-      headers: { [IDENTITY_HEADER]: "alice@example.com", "content-type": "application/json" },
+      headers: {
+        [IDENTITY_HEADER]: "alice@example.com",
+        origin: new URL(guided.localUrl).origin,
+        "content-type": "application/json",
+      },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
     return { status: res.status, body: (await res.json()) as T };

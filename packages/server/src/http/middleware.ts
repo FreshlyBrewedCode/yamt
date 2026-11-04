@@ -1,17 +1,30 @@
-import type { ApiError } from "@yamt/shared";
+import { type ApiError, sharePaths } from "@yamt/shared";
 import type { Context, MiddlewareHandler } from "hono";
 import { z } from "zod";
 import { HttpError } from "../domain/errors.ts";
 import { originAllowed } from "./origin.ts";
 
 /**
+ * Writes that may come without an Origin header: `POST /api/share` only, the iOS Shortcut's
+ * upload (#26). Shortcuts is not a browser and sends no Origin, but the request comes from the
+ * user's iPhone through `tailscale serve`, so it carries the identity like any other. That is
+ * safe because the attack this guard stops is a foreign *web page* making the user's browser
+ * post to yamt, and browsers always send Origin on cross-site POSTs (fetch, XHR and form
+ * submissions alike; `null` where they hide it): a present Origin that isn't ours is refused
+ * here too. Every other write still needs our own Origin.
+ */
+const ORIGINLESS_WRITES = new Set([`POST ${sharePaths.share}`]);
+
+/**
  * CSRF guard for state-changing requests. `tailscale serve` attaches the user's identity to every
  * request from their devices, including ones a foreign page triggers, so a write must also come
- * from our own origin.
+ * from our own origin (except the one path above, when it has no Origin at all).
  */
 export const sameOrigin: MiddlewareHandler = async (c, next) => {
-  if (c.req.method !== "GET" && c.req.method !== "HEAD" && !originAllowed(c.req.raw)) {
-    throw new HttpError(403, "cross-origin request refused");
+  if (c.req.method !== "GET" && c.req.method !== "HEAD") {
+    const originless =
+      c.req.header("origin") === undefined && ORIGINLESS_WRITES.has(`${c.req.method} ${c.req.path}`);
+    if (!originless && !originAllowed(c.req.raw)) throw new HttpError(403, "cross-origin request refused");
   }
   await next();
 };

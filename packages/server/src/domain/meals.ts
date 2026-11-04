@@ -389,7 +389,7 @@ export const nutrientTotals = ({ grams, items, nutrients }: NutrientTotals): Nut
   nutrients,
 });
 
-function checkCapturedAt(capturedAt: number | undefined, now: number): void {
+export function checkCapturedAt(capturedAt: number | undefined, now: number): void {
   if (capturedAt !== undefined && capturedAt > now + CLOCK_SKEW_MS) {
     throw new HttpError(400, "capturedAt lies in the future", "check the device clock");
   }

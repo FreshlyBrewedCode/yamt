@@ -254,8 +254,8 @@ Units sit next to numbers smaller and muted (`28g`, `72 /160`).
 - **Recorder** (ink): the 96 px lime circle (mic / stop square), the timer in display 60 px,
   a level meter of thin vertical bars (lime for the live part, `ink-line` for the rest), and the
   lock note under a thin `ink-line` divider, always visible.
-- **Add-more strip**: four equal 68 px targets (Photo, Note, Link, Audio) with an icon over a
-  micro-label, separated by vertical dividers; pressed = lime.
+- **Add-more strip**: five equal 68 px targets (Photo, Note, Link, Audio, Paste; 78 px wide at
+  390) with an icon over a micro-label, separated by vertical dividers; pressed = lime.
 - **Capture row**: 48 px tile (photo thumbnail, or an icon on tint), bold title, micro-label
   status, a 44 px remove action. Removing asks once inline ("Remove?") because captures can't be
   un-retracted.
@@ -277,6 +277,18 @@ Units sit next to numbers smaller and muted (`28g`, `72 /160`).
 - **Sheets** (note, link): slide in from the **top** (on iOS the keyboard covers the bottom
   half, a bottom sheet would sit behind it), on the page colour, square, display title, the input
   on tint (lime-soft while focused), a lime `SlabButton` to add.
+- **Paste sheet** (#26): the same top sheet ("From the clipboard", "Paste"), but the action *is*
+  the input: a lime paste target (≥ 144 px, the clipboard icon over "Touch and hold here, then
+  Paste", no caret, no ring) that takes no typing, only a paste, which adds at once and closes the
+  sheet. Under it one quiet tint line says why the sheet opened (the Paste button wasn't allowed,
+  isn't available, or found nothing usable, with what it saw). A paste of nothing usable turns
+  that line into an orange one: "Nothing usable on the clipboard." and "It had: <the types>".
+- **Share setup** (#26, Settings, after notifications): a strip "Share from other apps" (meta "iOS
+  Shortcut"), one plain paragraph on what happens, a plain row with the URL (micro-label, bold
+  15 px, breaking anywhere) and a 48 px tint copy square (a check once copied), the five steps on
+  tint (number tiles on the page colour, like the Add to Home Screen steps; the Shortcuts app's
+  labels in bold, its ⓘ as the lucide info icon), then the paste route as a plain line with the
+  clipboard icon.
 - **Icons:** lucide, stroke width 2.5, 20–28 px.
 
 ## Do / don't

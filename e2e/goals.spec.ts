@@ -3,6 +3,7 @@ import { addDays, goalPaths } from "../packages/shared/src/api-goals.ts";
 import type { MealDetailResponse, MealResponse } from "../packages/shared/src/api-meals.ts";
 import { mealPaths } from "../packages/shared/src/api-meals.ts";
 import { weightPaths } from "../packages/shared/src/api-weight.ts";
+import { OWN_ORIGIN } from "./api.ts";
 
 // Goals, weight and the day view (#12) on the phone. Made-up numbers throughout. The fake agent's
 // default revision (see packages/server/test/fake-agent.ts) is 250 g at 200 kcal, 10 g protein,
@@ -19,11 +20,15 @@ const at = (date: string, hour: number) => {
 
 async function mealOn(request: APIRequestContext, eatenAt: number, text: string, analyse: boolean) {
   const { meal } = (await (
-    await request.post(mealPaths.meals, { data: { eatenAt } })
+    await request.post(mealPaths.meals, { headers: OWN_ORIGIN, data: { eatenAt } })
   ).json()) as MealResponse;
-  expect((await request.post(mealPaths.captures(meal.id), { data: { kind: "text", text } })).ok()).toBe(true);
+  expect(
+    (
+      await request.post(mealPaths.captures(meal.id), { headers: OWN_ORIGIN, data: { kind: "text", text } })
+    ).ok(),
+  ).toBe(true);
   if (!analyse) return meal.id;
-  expect((await request.post(mealPaths.analyse(meal.id), { data: {} })).ok()).toBe(true);
+  expect((await request.post(mealPaths.analyse(meal.id), { headers: OWN_ORIGIN, data: {} })).ok()).toBe(true);
   await expect
     .poll(
       async () =>
@@ -126,13 +131,23 @@ test("the day view: progress against the goal in force that day, a meal not coun
   const day = ymd(Date.now() - 40 * 86_400_000);
   const goal = { energyKcal: 800, protein: 20, fat: 30, carbohydrate: null, fiber: null, note: "Test" };
   expect(
-    (await request.post(goalPaths.goals, { data: { ...goal, effectiveFrom: addDays(day, -1) } })).ok(),
+    (
+      await request.post(goalPaths.goals, {
+        headers: OWN_ORIGIN,
+        data: { ...goal, effectiveFrom: addDays(day, -1) },
+      })
+    ).ok(),
   ).toBe(true);
   await mealOn(request, at(day, 12), "Mittagessen", true);
   await mealOn(request, at(day, 18), "Abendessen, noch nicht analysiert", false);
-  expect((await request.post(weightPaths.weight, { data: { kg: 80.2, measuredAt: at(day, 7) } })).ok()).toBe(
-    true,
-  );
+  expect(
+    (
+      await request.post(weightPaths.weight, {
+        headers: OWN_ORIGIN,
+        data: { kg: 80.2, measuredAt: at(day, 7) },
+      })
+    ).ok(),
+  ).toBe(true);
 
   await page.goto(`/days/${day}`);
   const totals = page.getByTestId("day-totals");

@@ -178,6 +178,9 @@ function MealCapture({
           }}
           onNote={(text) => void save({ kind: "text", text })}
           onLink={(url, text) => void save({ kind: "link", url, ...(text ? { text } : {}) })}
+          onCaptures={(captures) => {
+            for (const c of captures) void save(c);
+          }}
         />
         {problem && (
           <Band tone="orange" className="flex items-center gap-3 px-5 py-3" role="alert">
@@ -202,7 +205,7 @@ function MealCapture({
           <CaptureList rows={rows} />
         ) : (
           <p className="px-5 py-6 font-medium text-muted-foreground">
-            Nothing yet. Record what you're eating, or add a photo, note, link or audio file.
+            Nothing yet. Record what you're eating, or add a photo, note, link or audio file, or paste one.
           </p>
         )}
       </main>

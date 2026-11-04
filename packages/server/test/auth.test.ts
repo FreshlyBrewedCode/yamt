@@ -92,15 +92,18 @@ describe("sameOrigin", () => {
   app.onError(handleError);
   app.use("*", sameOrigin);
   app.all("/x", (c) => c.text("ok"));
-  const req = (method: string, headers: Record<string, string>) =>
-    app.request("http://127.0.0.1:7890/x", { method, headers });
+  app.all("/api/share", (c) => c.text("ok"));
+  app.all("/api/share/x", (c) => c.text("ok"));
+  const req = (method: string, headers: Record<string, string>, path = "/x") =>
+    app.request(`http://127.0.0.1:7890${path}`, { method, headers });
 
   test("reads are always allowed", async () => {
     expect((await req("GET", { origin: "https://evil.example" })).status).toBe(200);
+    expect((await req("GET", {})).status).toBe(200);
   });
 
   test("writes need our own origin, also behind tailscale serve's forwarded host", async () => {
-    expect((await req("POST", {})).status).toBe(200);
+    expect((await req("POST", { host: "127.0.0.1:7890", origin: "http://127.0.0.1:7890" })).status).toBe(200);
     expect(
       (await req("POST", { host: "yamt.example.ts.net:7444", origin: "https://yamt.example.ts.net:7444" }))
         .status,
@@ -116,5 +119,27 @@ describe("sameOrigin", () => {
     expect(
       (await req("POST", { host: "yamt.example.ts.net:7444", origin: "https://evil.example" })).status,
     ).toBe(403);
+  });
+
+  test("a write without an Origin, or with `null`, is refused", async () => {
+    expect((await req("POST", {})).status).toBe(403);
+    expect((await req("PATCH", {})).status).toBe(403);
+    expect((await req("DELETE", { host: "yamt.example.ts.net:7444" })).status).toBe(403);
+    expect((await req("POST", { origin: "null" })).status).toBe(403);
+  });
+
+  test("POST /api/share alone may come without an Origin (the iOS Shortcut); a foreign one is still refused", async () => {
+    const tailnet = { host: "yamt.example.ts.net:7444" };
+    expect((await req("POST", tailnet, "/api/share")).status).toBe(200);
+    expect(
+      (await req("POST", { ...tailnet, origin: "https://yamt.example.ts.net:7444" }, "/api/share")).status,
+    ).toBe(200);
+    expect((await req("POST", { ...tailnet, origin: "https://evil.example" }, "/api/share")).status).toBe(
+      403,
+    );
+    expect((await req("POST", { ...tailnet, origin: "null" }, "/api/share")).status).toBe(403);
+    // only that method and that exact path
+    expect((await req("PUT", tailnet, "/api/share")).status).toBe(403);
+    expect((await req("POST", tailnet, "/api/share/x")).status).toBe(403);
   });
 });

@@ -1,9 +1,18 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { PUSH_EVENTS, type PushEvent, type PushSubscriptionView } from "@yamt/shared";
 import { cn } from "cn";
-import { Bell, BellOff, Share, SquarePlus } from "lucide-react";
+import { Bell, BellOff, Check, ClipboardPaste, Copy, Info, Share, SquarePlus } from "lucide-react";
 import { type ReactNode, useState } from "react";
-import { BackButton, Band, BottomSlab, Label, SafeBottom, SlabButton, Strip } from "@/components/slab";
+import {
+  BackButton,
+  Band,
+  BottomSlab,
+  iconButtonClass,
+  Label,
+  SafeBottom,
+  SlabButton,
+  Strip,
+} from "@/components/slab";
 import { type PushDevice, requestPermission } from "@/lib/push";
 import {
   usePush,
@@ -58,7 +67,8 @@ function pushState(
 }
 
 /**
- * Settings: notifications for this device (Web Push, #13). Turning them on asks for permission
+ * Settings: notifications for this device (Web Push, #13), and how to share from other apps
+ * into yamt (#26). Turning them on asks for permission
  * from the tap itself (iOS asks only from a gesture) and only works in the home-screen app on
  * iOS, so outside it the screen explains how to add yamt to the Home Screen. Once on: a toggle
  * per event and a test notification.
@@ -180,6 +190,8 @@ function Settings() {
             </button>
           </>
         )}
+
+        <ShareSetup />
       </main>
 
       {state === "off" || state === "not-installed" ? (
@@ -291,5 +303,103 @@ function InstallSteps() {
         ))}
       </ol>
     </Band>
+  );
+}
+
+/**
+ * Share from other apps (#26): a home-screen app can't be in iOS's share sheet, so an iOS
+ * Shortcut is ("Send to yamt"), posting what it gets to `/api/share` on this origin. The steps
+ * name the Shortcuts app's labels as they read on iOS 17/18.
+ */
+function ShareSetup() {
+  const url = `${location.origin}/api/share`;
+  const [copied, setCopied] = useState<boolean | null>(null);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+    } catch {
+      setCopied(false);
+    }
+  };
+  const steps: ReactNode[] = [
+    <>
+      In the <b>Shortcuts</b> app, tap <b>+</b> for a new shortcut and name it <b>Send to yamt</b>.
+    </>,
+    <>
+      Tap <Info className="inline size-4 align-[-2px]" strokeWidth={2.5} aria-label="the info button" />{" "}
+      (Details) and turn on <b>Show in Share Sheet</b>. In the first block (“Receive … input”), pick Images,
+      Media, Files, URLs and Text.
+    </>,
+    <>
+      Add the action <b>Get Contents of URL</b> and paste the address above into it. Under <b>Show More</b>:
+      Method <b>POST</b>, Request Body <b>Form</b>, then add a <b>File</b> field with the key{" "}
+      <code>file</code> and the value <b>Shortcut Input</b>.
+    </>,
+    <>
+      Add <b>Show Notification</b> and make its text <b>Contents of URL</b>: it says what was added.
+    </>,
+    <>
+      Share a voice memo, a screenshot or a page and pick <b>Send to yamt</b>. Allow it to connect the first
+      time; Tailscale has to be on.
+    </>,
+  ];
+  return (
+    <section data-testid="share-setup">
+      <Strip title="Share from other apps" meta="iOS Shortcut" />
+      <p className="px-5 pt-4 pb-4 font-medium">
+        Voice memos, screenshots and links go straight into the meal you're logging (a draft changed in the
+        last 3 hours) or start a new one. Open it here afterwards and press Analyse.
+      </p>
+      <div className="flex items-center gap-3 border-border border-t px-5 py-3">
+        <div className="min-w-0 flex-1">
+          <Label className="text-muted-foreground">Shortcut URL</Label>
+          <p className="mt-0.5 break-all font-bold text-[15px]" data-testid="share-url">
+            {url}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => void copy()}
+          aria-label={copied ? "Copied" : "Copy the URL"}
+          className={iconButtonClass}
+        >
+          {copied ? (
+            <Check className="size-6" strokeWidth={2.5} />
+          ) : (
+            <Copy className="size-6" strokeWidth={2.5} />
+          )}
+        </button>
+      </div>
+      {copied === false && (
+        <p className="px-5 pb-3 font-medium text-muted-foreground text-sm" role="status">
+          Couldn't copy it here: touch and hold the address to copy it.
+        </p>
+      )}
+      <Band tone="tint" className="px-5 pt-4 pb-5">
+        <Label className="text-muted-foreground">Build the Shortcut once</Label>
+        <ol className="mt-3 space-y-3">
+          {steps.map((text, i) => (
+            // biome-ignore lint/suspicious/noArrayIndexKey: a fixed list
+            <li key={i} className="flex items-start gap-3">
+              <span className="display flex size-10 shrink-0 items-center justify-center bg-background text-[20px]">
+                {i + 1}
+              </span>
+              <span className="pt-2 font-medium text-[15px] leading-snug [&_b]:font-bold [&_code]:font-bold">
+                {text}
+              </span>
+            </li>
+          ))}
+        </ol>
+      </Band>
+      <div className="flex items-start gap-3 px-5 pt-4 pb-5">
+        <ClipboardPaste className="mt-0.5 size-5 shrink-0 text-muted-foreground" strokeWidth={2.5} />
+        <p className="font-medium text-[15px] leading-snug">
+          <b className="font-bold">Or paste:</b> copy in the other app (Share → Copy), then tap <b>Paste</b>{" "}
+          on the meal's capture screen. Screenshots and links paste fine; for voice memos the Shortcut is the
+          sure way.
+        </p>
+      </div>
+    </section>
   );
 }

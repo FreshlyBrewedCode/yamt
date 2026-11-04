@@ -105,7 +105,9 @@ API, auth, SQLite), `packages/web` (Vite + React + TanStack Router/Query + Tailw
 - Shared contracts first: request schemas and response types in `shared/src/api.ts` (or a new
   `api-<area>.ts`). The server parses every request body with the zod schema.
 - Auth: every `/api` route except `/api/health` sits behind `requireTailnetIdentity`, writes also
-  behind `sameOrigin` (`http/api.ts`). Machine clients (`/mcp`) use `requireBearer`
+  behind `sameOrigin` (`http/api.ts`), which needs our own `Origin`; only `POST /api/share` (the
+  iOS Shortcut) may come without one (`ORIGINLESS_WRITES`). Test and e2e writes send the Origin a
+  browser would (`e2e/api.ts`). Machine clients (`/mcp`) use `requireBearer`
   (`auth/bearer.ts`) with `McpTokens`, never the identity header, and only from this machine.
 - Nutrition: the model reads, code computes. Totals only ever come from `computeTotals`
   (`nutrition/totals.ts`); never store or accept a total from the model. `carbohydrate` is

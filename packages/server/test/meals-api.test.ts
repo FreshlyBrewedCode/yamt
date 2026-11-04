@@ -35,7 +35,8 @@ const app = createServer({
 afterAll(() => app.stop());
 
 const url = (path: string) => new URL(path, app.localUrl).toString();
-const AUTH = { [IDENTITY_HEADER]: "alice@example.com" };
+// writes need our own Origin, as a browser sends it (`sameOrigin`)
+const AUTH = { [IDENTITY_HEADER]: "alice@example.com", origin: new URL(app.localUrl).origin };
 
 async function call<T>(method: string, path: string, body?: unknown, headers: Record<string, string> = {}) {
   const init: RequestInit = { method, headers: { ...AUTH, ...headers } };
