@@ -1,0 +1,6 @@
+__pycache__/
+*.py[oc]
+.venv
+# nix-provided tools (run.sh, the server's ffmpeg lookup)
+.uv
+.ffmpeg-bin

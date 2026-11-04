@@ -18,6 +18,7 @@ import { WEB_DIST } from "./http/static.ts";
 import { McpTokens } from "./mcp/tokens.ts";
 import { createServer } from "./server.ts";
 import { type TailscaleServe, tailscaleServe } from "./tailscale.ts";
+import { resolveFfmpeg } from "./transcription/tools.ts";
 
 const HELP = `Usage: yamt <command> [options]
 
@@ -35,7 +36,7 @@ Options:
   --no-auth            Skip the Tailscale identity check (only with --local; for development)
   --dev                Serve the web app from Vite with HMR (on port+1)
   --no-build           Don't check for or rebuild a stale web build
-  --no-worker          Don't run queued jobs (meal analysis); they wait for the next start
+  --no-worker          Don't run queued jobs (analysis, transcription); they wait for the next start
 
 Auth: requests must come through \`tailscale serve\` from the configured Tailscale login
 (env YAMT_LOGIN, or "login" in <data-dir>/config.json). /mcp takes bearer tokens instead.
@@ -44,6 +45,13 @@ Analysis: Claude Code via claude-agent-acp with ${DEFAULT_ANALYSIS_MODEL}, logge
 \`claude\` CLI. "analysis" in <data-dir>/config.json ({"harness": "custom", "command": …, "args": […],
 "env": {…}, "model": …}) or env YAMT_ANALYSIS_HARNESS / YAMT_ANALYSIS_COMMAND / YAMT_ANALYSIS_MODEL
 pick another ACP agent or model.
+
+Transcription: voice memos are transcribed on this machine's CPU with faster-whisper
+large-v3-turbo (int8, German) by services/stt/run.sh, one short-lived process per batch; the
+model (~1.6 GB) is downloaded into <data-dir>/models on first use. Needs ffmpeg (PATH, else
+linked from nixpkgs) and uv (PATH, else nixpkgs). "transcription" in <data-dir>/config.json
+({"model", "computeType", "threads", "beamSize", "vad", "language", "initialPrompt", "ffmpeg",
+"modelsDir", "command", "args"}) or env YAMT_STT_* / YAMT_FFMPEG tune it.
 
 Food data: USDA FoodData Central needs an API key (env FDC_API_KEY, or "fdcApiKey" in
 <data-dir>/config.json); without one, searches use history and Open Food Facts only.
@@ -148,6 +156,7 @@ async function main(): Promise<number> {
       fdcApiKey: config.fdcApiKey,
       worker: !values["no-worker"],
       analysis: { config: config.analysis },
+      transcription: { config: config.transcription },
     });
     cleanups.push(() => app.stop());
 
@@ -179,6 +188,16 @@ async function main(): Promise<number> {
         ? "  Analysis: off (--no-worker)"
         : `  Analysis: ${a.harness.kind}${a.harness.command ? ` (${a.harness.command})` : ""}, model ${a.model}`,
     );
+    if (app.transcription) {
+      // found now rather than at the first memo: a missing ffmpeg fails transcripts (not analyses)
+      const ffmpeg = await resolveFfmpeg({ configured: config.transcription.ffmpeg }).then(
+        (path) => ({ ok: true as const, path }),
+        (e: Error) => ({ ok: false as const, error: e.message }),
+      );
+      console.log(`  Speech:   ${app.transcription}`);
+      if (!ffmpeg.ok)
+        console.warn(`  Speech:   NOT AVAILABLE, voice memos will fail to transcribe: ${ffmpeg.error}`);
+    }
     if (!config.fdcApiKey) console.log("  Food data: no FDC_API_KEY, USDA FoodData Central is off");
     console.log("Ctrl+C to stop.\n");
   } catch (e) {

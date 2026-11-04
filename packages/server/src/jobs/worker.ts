@@ -19,9 +19,16 @@ export interface JobContext {
 
 export interface JobHandler<T extends JobType> {
   type: T;
-  /** How many jobs of this type may run at once (jobs of other types don't count). */
+  /** How many jobs (or batches, with `runBatch`) of this type may run at once; other types don't count. */
   concurrency: number;
   run(job: JobOf<T>, ctx: JobContext): Promise<JobOutcome>;
+  /**
+   * With `batchSize` > 1: a free slot claims up to that many due jobs at once and runs them
+   * together (transcription: one STT process loads the model once for all of them). Returns one
+   * outcome per job, in order; a throw fails them all (retryable).
+   */
+  runBatch?(jobs: JobOf<T>[], ctx: JobContext): Promise<JobOutcome[]>;
+  batchSize?: number;
   /**
    * After the queue transition, with the job as it now is: `done`, `queued` (retry or
    * reschedule), `failed` (final) or `cancelled` (a newer job with its key took over).
@@ -38,14 +45,16 @@ export interface WorkerOptions {
 interface Lane {
   // biome-ignore lint/suspicious/noExplicitAny: handlers of every job type share the lanes map
   handler: JobHandler<any>;
-  running: Map<string, Promise<void>>;
+  /** One entry per running job or batch, keyed by its first job's id. */
+  running: Map<string, { jobs: number; done: Promise<void> }>;
 }
 
 /**
  * The single in-process worker loop over the `jobs` table. Handlers register by job type, each
- * with its own concurrency (analyse: one run at a time; transcribe, #9, alongside it). Every
- * poll fills each lane up to its limit with `claim({types: [type]})`; the queue itself keeps two
- * jobs with the same dedupe key from running at once. A handler's outcome becomes `complete`,
+ * with its own concurrency (analyse: one run at a time; transcribe: one batch at a time,
+ * alongside). Every poll fills each lane up to its limit with `claim({types: [type]})` (a batch
+ * handler claims up to `batchSize` jobs per slot); the queue itself keeps two jobs with the same
+ * dedupe key from running at once. A handler's outcome becomes `complete`,
  * `fail` (with the queue's backoff) or `reschedule`; a handler that throws counts as a retryable
  * failure. `stop()` aborts what runs and waits for it.
  */
@@ -84,9 +93,11 @@ export class JobWorker {
     this.schedule(0);
   }
 
-  /** Jobs running now, by type. */
+  /** Jobs running now, by type (every job of a batch counts). */
   runningCount(type: JobType): number {
-    return this.lanes.get(type)?.running.size ?? 0;
+    let n = 0;
+    for (const r of this.lanes.get(type)?.running.values() ?? []) n += r.jobs;
+    return n;
   }
 
   /** Stop polling, abort running jobs and wait until their handlers have returned. */
@@ -95,7 +106,7 @@ export class JobWorker {
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
     this.abort.abort();
-    await Promise.all([...this.lanes.values()].flatMap((l) => [...l.running.values()]));
+    await Promise.all([...this.lanes.values()].flatMap((l) => [...l.running.values()].map((r) => r.done)));
   }
 
   private schedule(ms: number): void {
@@ -107,34 +118,48 @@ export class JobWorker {
 
   private poll(): void {
     for (const [type, lane] of this.lanes) {
+      const max = lane.handler.runBatch ? Math.max(1, lane.handler.batchSize ?? 1) : 1;
       while (!this.stopped && lane.running.size < lane.handler.concurrency) {
-        let job: Job | null;
+        const batch: Job[] = [];
         try {
-          job = this.jobs.claim({ types: [type], now: this.now() });
+          while (batch.length < max) {
+            const job = this.jobs.claim({ types: [type], now: this.now() });
+            if (!job) break;
+            batch.push(job);
+          }
         } catch (e) {
           console.error(`job worker: claiming ${type} failed`, e);
-          break;
         }
-        if (!job) break;
-        const id = job.id;
-        const done = this.execute(lane, job).finally(() => {
+        if (batch.length === 0) break;
+        const id = batch[0]!.id;
+        const done = this.execute(lane, batch).finally(() => {
           lane.running.delete(id);
           // a slot is free: the next job need not wait for the tick
           if (!this.stopped) this.wake();
         });
-        lane.running.set(id, done);
+        lane.running.set(id, { jobs: batch.length, done });
       }
     }
   }
 
-  private async execute(lane: Lane, job: Job): Promise<void> {
-    let outcome: JobOutcome;
+  private async execute(lane: Lane, batch: Job[]): Promise<void> {
+    const ctx = { signal: this.abort.signal };
+    let outcomes: JobOutcome[];
     try {
-      outcome = await lane.handler.run(job, { signal: this.abort.signal });
+      outcomes = lane.handler.runBatch
+        ? await lane.handler.runBatch(batch, ctx)
+        : [await lane.handler.run(batch[0]!, ctx)];
     } catch (e) {
-      console.error(`job ${job.type} ${job.id} failed`, e);
-      outcome = { status: "failed", error: e instanceof Error ? e.message : String(e) };
+      console.error(`job ${batch[0]!.type} ${batch.map((j) => j.id).join(", ")} failed`, e);
+      const error = e instanceof Error ? e.message : String(e);
+      outcomes = batch.map(() => ({ status: "failed", error }));
     }
+    for (const [i, job] of batch.entries()) {
+      this.record(lane, job, outcomes[i] ?? { status: "failed", error: "the handler returned no outcome" });
+    }
+  }
+
+  private record(lane: Lane, job: Job, outcome: JobOutcome): void {
     try {
       const now = this.now();
       const after =

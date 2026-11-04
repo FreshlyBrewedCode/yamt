@@ -9,6 +9,8 @@ interface Row {
   language: string | null;
   duration_ms: number | null;
   segments: string | null;
+  elapsed_ms: number | null;
+  settings: string | null;
   error: string | null;
   created_at: number;
   updated_at: number;
@@ -22,6 +24,8 @@ const toTranscript = (r: Row): Transcript => ({
   language: r.language,
   durationMs: r.duration_ms,
   segments: r.segments === null ? null : (JSON.parse(r.segments) as TranscriptSegment[]),
+  elapsedMs: r.elapsed_ms,
+  settings: r.settings === null ? null : (JSON.parse(r.settings) as Transcript["settings"]),
   error: r.error,
   createdAt: r.created_at,
   updatedAt: r.updated_at,
@@ -37,7 +41,8 @@ export class TranscriptRepo {
       .query(
         `INSERT INTO transcripts (capture_id, status, created_at, updated_at) VALUES (?, 'pending', ?, ?)
          ON CONFLICT (capture_id) DO UPDATE SET status = 'pending', text = NULL, model = NULL,
-           language = NULL, duration_ms = NULL, segments = NULL, error = NULL, updated_at = excluded.updated_at`,
+           language = NULL, duration_ms = NULL, segments = NULL, elapsed_ms = NULL, settings = NULL, error = NULL,
+           updated_at = excluded.updated_at`,
       )
       .run(captureId, now, now);
     return this.get(captureId)!;
@@ -66,13 +71,15 @@ export class TranscriptRepo {
       language: string | null;
       durationMs: number | null;
       segments: TranscriptSegment[] | null;
+      elapsedMs?: number | null;
+      settings?: Transcript["settings"];
     },
     now = Date.now(),
   ): Transcript | null {
     this.db
       .query(
         `UPDATE transcripts SET status = 'done', text = ?, model = ?, language = ?, duration_ms = ?,
-           segments = ?, error = NULL, updated_at = ? WHERE capture_id = ?`,
+           segments = ?, elapsed_ms = ?, settings = ?, error = NULL, updated_at = ? WHERE capture_id = ?`,
       )
       .run(
         t.text,
@@ -80,6 +87,8 @@ export class TranscriptRepo {
         t.language,
         t.durationMs,
         t.segments === null ? null : JSON.stringify(t.segments),
+        t.elapsedMs ?? null,
+        t.settings ? JSON.stringify(t.settings) : null,
         now,
         captureId,
       );

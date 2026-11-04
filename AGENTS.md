@@ -15,6 +15,7 @@ bun run e2e            # builds the web app, runs Playwright (phone viewport) ag
 bun run start          # yamt start: http://localhost:7890 + https://<host>.<tailnet>.ts.net:7444
 bun run dev            # same with Vite HMR (web on port+1, proxying /api)
 bun run format         # biome --write
+bun run check:stt      # the speech-to-text process: ruff + pytest (services/stt/run.sh check; needs uv or nix)
 # local only, no Tailscale, no auth, scratch data (what agents and the design work use):
 bun packages/server/src/cli.ts start --local --no-auth --data-dir /tmp/yamt-dev [--dev] [--no-worker]
 bun packages/server/src/cli.ts mcp-token [--rotate] [--data-dir …]   # print the interactive MCP token
@@ -29,7 +30,7 @@ bun packages/server/src/cli.ts mcp-token [--rotate] [--data-dir …]   # print t
 - `start` rebuilds the web app when its sources are newer than the last build (`--no-build`
   skips the check); `--dev` uses Vite and never needs it.
 - Data lives in `~/.yamt/` (`--data-dir` / `YAMT_DATA_DIR`): `yamt.db`, `media/`, `runs/`,
-  `config.json`, `mcp-token`. Tests use temp dirs. Never point a test or a scratch run at the
+  `models/`, `config.json`, `mcp-token`. Tests use temp dirs. Never point a test or a scratch run at the
   real one.
 - Meal analysis: `start` runs the job worker, which analyses queued meals with Claude Code
   (claude-agent-acp, model `claude-opus-5-5`, logged in with the `claude` CLI). Pick another
@@ -39,6 +40,18 @@ bun packages/server/src/cli.ts mcp-token [--rotate] [--data-dir …]   # print t
   trace.ndjson`. Real runs cost money and quota: try changes against the fake agent
   (`YAMT_ANALYSIS_COMMAND="bun $PWD/packages/server/test/fake-agent.ts"`, scripted by a
   `fake:<script>` text capture, see its header) and keep live runs few.
+- Transcription: the worker transcribes voice memos on the CPU with faster-whisper
+  large-v3-turbo (int8, German) by running `services/stt/run.sh transcribe` once per batch (a uv
+  project; Python 3.12 comes from uv). Tools, on this NixOS VM neither is on PATH: **uv** from PATH,
+  else `run.sh` links `nixpkgs#uv` as `services/stt/.uv`; **ffmpeg** from `transcription.ffmpeg` /
+  `YAMT_FFMPEG`, else PATH, else the server links `nixpkgs#ffmpeg-headless` as
+  `services/stt/.ffmpeg-bin` on first use (`start` warns if there is none; memos then fail to
+  transcribe). The first memo downloads the model (~1.6 GB) into `<data>/models`; point
+  `YAMT_STT_MODELS_DIR` at an existing cache for scratch data dirs. Tune it with `"transcription":
+  {"model", "computeType", "threads", "beamSize", "vad", "language", "initialPrompt", …}` in
+  `<data>/config.json` or `YAMT_STT_*`. Tests and the e2e never load a model: they run
+  `packages/server/test/fake-stt.ts` (`YAMT_STT_COMMAND="bun $PWD/packages/server/test/fake-stt.ts"`,
+  see its header); `services/stt/run.sh smoke` does one real run with Whisper tiny, outside the gate.
 - Food data: Open Food Facts needs nothing; USDA FoodData Central needs a key (`FDC_API_KEY`, or
   `{"fdcApiKey": "…"}` in `<data>/config.json`; free at https://fdc.nal.usda.gov/api-key-signup).
   Without one, searches skip FDC and say so. Never commit a key; tests use recorded fixtures
@@ -69,7 +82,7 @@ the repo, an issue or a PR. `mcp-token --rotate` replaces it (the old one stops 
 
 `packages/shared` (zod schemas and types shared by server and web), `packages/server` (CLI, Hono
 API, auth, SQLite), `packages/web` (Vite + React + TanStack Router/Query + Tailwind + shadcn/ui),
-`e2e/` (Playwright), `docs/` (architecture, ADRs), `reports/` (background research).
+`services/stt` (the speech-to-text process, Python/uv), `e2e/` (Playwright), `docs/` (architecture, ADRs), `reports/` (background research).
 `.agents/skills/` holds project skills (`.claude/skills` links to it).
 
 ## Conventions
@@ -96,6 +109,11 @@ API, auth, SQLite), `packages/web` (Vite + React + TanStack Router/Query + Tailw
   prompt code. `acp/` stays free of DB and HTTP (it reports events; `analysis/` stores them). A run
   succeeds only by saving exactly one revision. Tests never start a real harness: they run
   `test/fake-agent.ts` as a custom harness; `createServer` runs no worker unless `worker` is set.
+- Transcription: the STT backend sits behind `SttBackend` (`transcription/backend.ts`); the
+  Python side speaks the NDJSON protocol in `services/stt/yamt_stt/protocol.py`, so change both
+  sides together. Python follows vibe-center's services: exact pins in `pyproject.toml`,
+  `uv.lock` committed, ruff (110 cols) and pytest; `bun run check:stt` before committing there.
+  Test audio is synthetic or public (espeak-ng, FLEURS), never a real recording.
 - Database: `bun:sqlite`, no ORM. SQL lives in repositories (`db/repos/<entity>.ts`, one per
   aggregate, taking a `Db` and returning shared types). Ids are UUIDv7 (`newId()`). Migrations:
   a new `db/migrations/<YYYYMMDDHHmm>_<what>.sql`; never edit an applied one (the runner checks

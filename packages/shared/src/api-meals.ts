@@ -13,6 +13,8 @@ export const mealPaths = {
   captures: (mealId: string) => `/api/meals/${mealId}/captures`,
   analyse: (mealId: string) => `/api/meals/${mealId}/analyse`,
   retract: (captureId: string) => `/api/captures/${captureId}/retract`,
+  /** Re-run an audio capture's transcript (e.g. after a model change); the audio stays as it is. */
+  transcribe: (captureId: string) => `/api/captures/${captureId}/transcribe`,
   /** The original bytes, as uploaded. Supports range requests (audio playback). */
   media: (captureId: string) => `/api/media/${captureId}`,
   /** The JPEG derivative of a HEIC/HEIF photo (404 when there is none). */
@@ -91,15 +93,24 @@ export interface TranscriptSegment {
   text: string;
 }
 
-/** Speech-to-text of one audio capture: created `pending` on upload, filled by the worker (#9). */
+/**
+ * Speech-to-text of one audio capture: created `pending` on upload, filled by the transcribe job
+ * (#9), reset to `pending` by a re-run (`POST /api/captures/:id/transcribe`).
+ */
 export interface Transcript {
   captureId: string;
   status: TranscriptStatus;
   text: string | null;
+  /** What transcribed it, e.g. `faster-whisper large-v3-turbo int8`. */
   model: string | null;
   language: string | null;
+  /** Length of the audio. */
   durationMs: number | null;
   segments: TranscriptSegment[] | null;
+  /** Wall time of the transcription itself (model loading and ffmpeg not counted). */
+  elapsedMs: number | null;
+  /** The STT settings it ran with (compute type, threads, beam size, VAD, prompt…). */
+  settings: Record<string, string | number | boolean | null> | null;
   error: string | null;
   createdAt: number;
   updatedAt: number;
@@ -199,6 +210,16 @@ export interface CaptureResponse {
  */
 export interface AnalyseResponse {
   meal: Meal;
+  jobId: string;
+}
+
+/**
+ * `POST /api/captures/:id/transcribe`: the transcript, reset to `pending`, and its job. Idempotent
+ * while the job is queued. Doesn't analyse the meal again: press analyse for that.
+ */
+export interface TranscribeResponse {
+  capture: Capture;
+  transcript: Transcript;
   jobId: string;
 }
 

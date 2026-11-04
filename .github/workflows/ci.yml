@@ -16,11 +16,27 @@ jobs:
         with:
           bun-version: "1.4.2"
 
+      # the real-ffmpeg normalisation test runs when ffmpeg is there
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+
       - run: bun install --frozen-lockfile
 
       - run: bun run check
 
       - run: bun run build
+
+  # The speech-to-text process (services/stt): ruff + pytest against a stub backend, no model download.
+  stt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: services/stt/uv.lock
+
+      - run: services/stt/run.sh check
 
   # One throwaway server (temp data dir, localhost, auth bypassed), the shell in Chromium.
   e2e:
@@ -35,6 +51,9 @@ jobs:
       - run: bun install --frozen-lockfile
 
       - run: bunx playwright install --with-deps chromium
+
+      # the transcription spec normalises a memo with the real ffmpeg (then a fake STT process)
+      - run: sudo apt-get install -y --no-install-recommends ffmpeg
 
       - run: bun run e2e
 

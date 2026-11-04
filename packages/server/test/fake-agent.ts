@@ -190,9 +190,16 @@ const app = acp
         return stop();
       }
       const data = JSON.parse(meal.text) as {
-        captures: { id: string; kind: string; text?: string; media?: { path: string } }[];
+        captures: {
+          id: string;
+          kind: string;
+          text?: string;
+          media?: { path: string };
+          transcript?: { status: string; text: string | null } | null;
+        }[];
       };
       s.record.captureKinds = data.captures.map((x) => x.kind);
+      s.record.transcripts = data.captures.flatMap((x) => (x.transcript ? [x.transcript] : []));
       const directive =
         data.captures.map((x) => /\bfake:([\w:]+)/.exec(x.text ?? "")?.[1]).find(Boolean) ?? "save";
       const [script, arg] = directive.split(":");

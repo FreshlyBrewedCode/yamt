@@ -431,7 +431,10 @@ describe("server lifecycle", () => {
       const photo = await o.meals.addUpload(m.id, new File([fixture("gradient.heic")], "p.heic"), {});
       o.meals.analyse(m.id);
       await waitFor("analysed", () => o.repos.meals.get(m.id)?.status === "analysed");
-      const run = o.repos.runs.listForMeal(m.id)[0]!;
+      // the agent rewrites its record after save_meal_revision: read it once the run has ended
+      const run = await waitFor("the run ended", () =>
+        o.repos.runs.listForMeal(m.id).find((r) => r.status !== "running"),
+      );
       const rec = JSON.parse(
         readFileSync(join(dataPaths(o.dataDir).runs, run.id, "fake-agent.json"), "utf8"),
       ) as { systemPrompt: string; prompt: { type: string; text?: string }[] };

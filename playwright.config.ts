@@ -42,7 +42,8 @@ export default defineConfig({
     reuseExistingServer: false,
     stdout: "pipe",
     gracefulShutdown: { signal: "SIGTERM", timeout: 5000 },
-    // analyses run against the scripted fake agent, never a real Claude
+    // analyses run against the scripted fake agent, never a real Claude; transcription against the
+    // fake STT process (no model download), after the real ffmpeg (PATH, or linked from nixpkgs)
     env: {
       ...(Object.fromEntries(Object.entries(process.env).filter(([, v]) => v !== undefined)) as Record<
         string,
@@ -50,6 +51,7 @@ export default defineConfig({
       >),
       YAMT_ANALYSIS_HARNESS: "custom",
       YAMT_ANALYSIS_COMMAND: `bun ${resolve("packages/server/test/fake-agent.ts")}`,
+      YAMT_STT_COMMAND: `bun ${resolve("packages/server/test/fake-stt.ts")}`,
     },
   },
 });
