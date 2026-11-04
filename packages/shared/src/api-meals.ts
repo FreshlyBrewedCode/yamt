@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { MealRevisionView } from "./api-nutrition.ts";
 
 /**
  * Meals and their captures (#6). Times are epoch milliseconds throughout. Captures are immutable
@@ -47,7 +48,7 @@ export interface Meal {
   status: MealStatus;
   eatenAt: number;
   eatenAtSource: EatenAtSource;
-  /** The analysis revision shown for this meal (#7); null until the first analysis. */
+  /** The latest analysis revision (#7); null until the first analysis. */
   currentRevisionId: string | null;
   createdAt: number;
   updatedAt: number;
@@ -76,7 +77,7 @@ export interface Capture {
   jpegDerivative: "ok" | "missing" | null;
   text: string | null;
   url: string | null;
-  /** For `answer` captures: the agent question it answers (#7/#11). */
+  /** For `answer` captures: the agent question it answers (a question of the then current revision). */
   questionId: string | null;
   retractedAt: number | null;
 }
@@ -131,11 +132,15 @@ export interface MealsResponse {
   meals: MealSummary[];
 }
 
-/** `GET /api/meals/:id`: every capture (retracted ones included, flagged) and the transcripts. */
+/**
+ * `GET /api/meals/:id`: every capture (retracted ones included, flagged), the transcripts, and
+ * the current analysis revision with its items, questions and computed totals.
+ */
 export interface MealDetailResponse {
   meal: Meal;
   captures: Capture[];
   transcripts: Transcript[];
+  revision: MealRevisionView | null;
 }
 
 const captureText = z.string().trim().min(1).max(20_000);
@@ -154,8 +159,15 @@ export const JsonCaptureBody = z.discriminatedUnion("kind", [
     })
     .strict(),
   z.object({ kind: z.literal("correction"), text: captureText, capturedAt }).strict(),
-  // questionId arrives with the questions table (#7/#11)
-  z.object({ kind: z.literal("answer"), text: captureText, capturedAt }).strict(),
+  z
+    .object({
+      kind: z.literal("answer"),
+      text: captureText,
+      /** The question answered; it must belong to the meal's current revision. */
+      questionId: z.uuid().optional(),
+      capturedAt,
+    })
+    .strict(),
 ]);
 export type JsonCaptureBody = z.infer<typeof JsonCaptureBody>;
 

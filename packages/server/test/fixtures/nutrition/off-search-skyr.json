@@ -1,0 +1,261 @@
+{
+  "hits": [
+    {
+      "code": "5690845001987",
+      "brands": ["Skyr", " Isey Skyr"],
+      "quantity": "170 g",
+      "countries_tags": ["en:germany", "en:iceland", "en:switzerland"],
+      "nutriments": {
+        "carbohydrates_100g": 4.6,
+        "energy-kcal_100g": 79,
+        "energy-kj_100g": 333,
+        "fat_100g": 2.2,
+        "proteins_100g": 9.5,
+        "salt_100g": 0.08,
+        "saturated-fat_100g": 1.3,
+        "sodium_100g": 0.032,
+        "sugars_100g": 4
+      },
+      "product_name": "Skyr Moka",
+      "product_name_de": "Skyr Mocca",
+      "product_name_en": "Skyr mokka"
+    },
+    {
+      "code": "4337185761638",
+      "brands": ["K-Classic"],
+      "quantity": "500 g",
+      "countries_tags": ["en:germany"],
+      "nutriments": {
+        "carbohydrates_100g": 4,
+        "energy-kcal_100g": 64,
+        "energy-kj_100g": 270,
+        "fat_100g": 0.2,
+        "fiber_100g": 0,
+        "proteins_100g": 11,
+        "salt_100g": 0.08,
+        "saturated-fat_100g": 0.1,
+        "sodium_100g": 0.032,
+        "sugars_100g": 4
+      },
+      "product_name": "Skyr natur",
+      "product_name_de": "Skyr natur",
+      "product_name_en": "Skyr Natur",
+      "generic_name": "Skyr",
+      "generic_name_de": "Skyr"
+    },
+    {
+      "code": "20692285",
+      "brands": ["Milbona"],
+      "quantity": "350 g",
+      "countries_tags": ["en:belgium", "en:france", "en:germany", "en:italy", "en:switzerland"],
+      "nutriments": {
+        "carbohydrates_100g": 4,
+        "energy-kcal_100g": 62,
+        "fat_100g": 0.2,
+        "fiber_100g": 0,
+        "proteins_100g": 11,
+        "salt_100g": 0.128,
+        "saturated-fat_100g": 0.1,
+        "sodium_100g": 0.051,
+        "sugars_100g": 4
+      },
+      "product_name": "Skyr Natural",
+      "product_name_de": "Skyr Natural",
+      "product_name_en": "Skyr Natural",
+      "generic_name": "Skyr Natural",
+      "generic_name_de": "Frischkäse, Magerstufe"
+    },
+    {
+      "code": "4016241040619",
+      "brands": ["Arla"],
+      "quantity": "450 g",
+      "countries_tags": ["en:germany"],
+      "nutriments": {
+        "carbohydrates_100g": 8.1,
+        "energy-kcal_100g": 73,
+        "fat_100g": 0.2,
+        "proteins_100g": 8.7,
+        "salt_100g": 0.13,
+        "saturated-fat_100g": 0.1,
+        "sodium_100g": 0.052,
+        "sugars_100g": 7.6
+      },
+      "product_name": "Skyr Himbeer & Cranberry",
+      "product_name_de": "Skyr Himbeer & Cranberry",
+      "product_name_en": "Skyr Himbeer & Cranberry",
+      "generic_name": "Skyr Himbeer & Cranberry",
+      "generic_name_de": "Skyr Himbeer & Cranberry"
+    },
+    {
+      "code": "4056489035381",
+      "brands": ["Lidl"],
+      "quantity": "150g",
+      "countries_tags": ["en:germany", "en:ireland", "en:switzerland"],
+      "nutriments": {
+        "carbohydrates_100g": 4,
+        "energy-kcal_100g": 62,
+        "energy-kj_100g": 263,
+        "fat_100g": 0.2,
+        "proteins_100g": 11,
+        "salt_100g": 0.13,
+        "saturated-fat_100g": 0.1,
+        "sodium_100g": 0.052,
+        "sugars_100g": 4
+      },
+      "product_name": "SKYR",
+      "product_name_de": "Skyr",
+      "product_name_en": "Skyr"
+    }
+  ],
+  "aggregations": null,
+  "facets": {},
+  "charts": {},
+  "page": 1,
+  "page_size": 5,
+  "page_count": 60,
+  "debug": {
+    "query": {
+      "query": {
+        "bool": {
+          "should": [
+            {
+              "bool": {
+                "should": [
+                  {
+                    "match_phrase": {
+                      "product_name.de": {
+                        "query": "skyr",
+                        "boost": 2
+                      }
+                    }
+                  },
+                  {
+                    "match_phrase": {
+                      "product_name.en": {
+                        "query": "skyr",
+                        "boost": 2
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "bool": {
+                "should": [
+                  {
+                    "match_phrase": {
+                      "generic_name.de": {
+                        "query": "skyr",
+                        "boost": 2
+                      }
+                    }
+                  },
+                  {
+                    "match_phrase": {
+                      "generic_name.en": {
+                        "query": "skyr",
+                        "boost": 2
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "bool": {
+                "should": [
+                  {
+                    "match_phrase": {
+                      "categories.de": {
+                        "query": "skyr",
+                        "boost": 2
+                      }
+                    }
+                  },
+                  {
+                    "match_phrase": {
+                      "categories.en": {
+                        "query": "skyr",
+                        "boost": 2
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "bool": {
+                "should": [
+                  {
+                    "match_phrase": {
+                      "labels.de": {
+                        "query": "skyr",
+                        "boost": 2
+                      }
+                    }
+                  },
+                  {
+                    "match_phrase": {
+                      "labels.en": {
+                        "query": "skyr",
+                        "boost": 2
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "match_phrase": {
+                "brands": {
+                  "query": "skyr",
+                  "boost": 2
+                }
+              }
+            },
+            {
+              "multi_match": {
+                "query": "skyr",
+                "fields": [
+                  "product_name.de",
+                  "product_name.en",
+                  "generic_name.de",
+                  "generic_name.en",
+                  "categories.de",
+                  "categories.en",
+                  "labels.de",
+                  "labels.en",
+                  "brands"
+                ]
+              }
+            }
+          ],
+          "filter": [
+            {
+              "bool": {
+                "must": [
+                  {
+                    "term": {
+                      "countries_tags": {
+                        "value": "en:germany"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          ],
+          "minimum_should_match": 1
+        }
+      },
+      "size": 5,
+      "from": 0
+    }
+  },
+  "took": 7,
+  "timed_out": false,
+  "count": 300,
+  "is_count_exact": true,
+  "warnings": null
+}

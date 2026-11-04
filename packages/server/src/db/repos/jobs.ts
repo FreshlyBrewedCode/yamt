@@ -207,6 +207,11 @@ export class JobRepo {
     return this.requeue(job, runAfter, reason, -1, now);
   }
 
+  /** Whether a job with this key waits in the queue (e.g. another analysis of the meal). */
+  hasQueued(dedupeKey: string): boolean {
+    return this.queuedWithKey(dedupeKey) !== null;
+  }
+
   /** Cancels the queued job with this key, if any (e.g. the audio capture was retracted). */
   cancelQueued(dedupeKey: string, reason: string, now = Date.now()): number {
     return this.db

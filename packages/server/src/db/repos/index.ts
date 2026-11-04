@@ -1,7 +1,9 @@
 import type { Db } from "../index.ts";
 import { CaptureRepo } from "./captures.ts";
+import { FoodRepo } from "./foods.ts";
 import { JobRepo } from "./jobs.ts";
 import { MealRepo } from "./meals.ts";
+import { RevisionRepo } from "./revisions.ts";
 import { TranscriptRepo } from "./transcripts.ts";
 import { WeightRepo } from "./weight.ts";
 
@@ -16,5 +18,7 @@ export function createRepos(db: Db) {
     transcripts: new TranscriptRepo(db),
     jobs: new JobRepo(db),
     weight: new WeightRepo(db),
+    foods: new FoodRepo(db),
+    revisions: new RevisionRepo(db),
   };
 }

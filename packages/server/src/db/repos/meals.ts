@@ -86,6 +86,24 @@ export class MealRepo {
     return this.get(id);
   }
 
+  /** A new analysis revision is the meal's current one; the status follows it (see RevisionService). */
+  setCurrentRevision(id: string, revisionId: string, status: MealStatus, now = Date.now()): Meal | null {
+    this.db
+      .query("UPDATE meals SET current_revision_id = ?, status = ?, updated_at = ? WHERE id = ?")
+      .run(revisionId, status, now, id);
+    return this.get(id);
+  }
+
+  /** Meals eaten in [from, to), oldest first, every one (for a day's summary). */
+  eatenBetween(from: number, to: number): Meal[] {
+    return this.db
+      .query<Row, [number, number]>(
+        "SELECT * FROM meals WHERE eaten_at >= ? AND eaten_at < ? ORDER BY eaten_at, id",
+      )
+      .all(from, to)
+      .map(toMeal);
+  }
+
   /** Pins `eatenAt` (user or agent); captures no longer move it. */
   setEatenAt(id: string, eatenAt: number, source: "user" | "agent", now = Date.now()): Meal | null {
     this.db

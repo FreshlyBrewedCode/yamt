@@ -1,0 +1,266 @@
+{
+  "hits": [
+    {
+      "code": "20003166",
+      "brands": ["Crownfield"],
+      "quantity": "500g",
+      "countries_tags": ["en:belgium", "en:france", "en:germany", "en:italy", "en:netherlands", "en:spain"],
+      "nutriments": {
+        "carbohydrates_100g": 58.7,
+        "energy-kcal_100g": 372,
+        "energy-kj_100g": 1566,
+        "fat_100g": 7,
+        "fiber_100g": 10,
+        "proteins_100g": 13.5,
+        "salt_100g": 0.03,
+        "saturated-fat_100g": 1.3,
+        "sodium_100g": 0.012,
+        "sugars_100g": 0.7
+      },
+      "product_name": "Haferflocken",
+      "product_name_de": "Haferflocken",
+      "product_name_en": "Haferflocken Extra zart",
+      "generic_name": "Haferflocken Kleinblatt",
+      "generic_name_de": "Haferflocken Kleinblatt"
+    },
+    {
+      "code": "4058172307409",
+      "brands": ["dmBio", "dm Bio"],
+      "quantity": "1kg",
+      "countries_tags": ["en:germany"],
+      "nutriments": {
+        "carbohydrates_100g": 59,
+        "energy-kcal_100g": 372,
+        "energy-kj_100g": 1562,
+        "fat_100g": 7,
+        "fiber_100g": 10,
+        "proteins_100g": 14,
+        "salt_100g": 0.02,
+        "saturated-fat_100g": 1.3,
+        "sodium_100g": 0.008,
+        "sugars_100g": 0.7
+      },
+      "product_name": "Haferflocken Feinblatt",
+      "product_name_de": "Haferflocken Feinblatt",
+      "product_name_en": "Bio Haferflocken",
+      "generic_name": "Haferflocken",
+      "generic_name_de": "Haferflocken"
+    },
+    {
+      "code": "20283360",
+      "brands": ["Crownfield", "Lidl", "Fortin Mühlenwerke"],
+      "quantity": "500 g",
+      "countries_tags": ["en:belgium", "en:france", "en:germany", "en:spain", "en:switzerland"],
+      "nutriments": {
+        "carbohydrates_100g": 68.7,
+        "energy-kcal_100g": 372,
+        "fat_100g": 7,
+        "fiber_100g": 10,
+        "proteins_100g": 13.5,
+        "salt_100g": 0.008,
+        "saturated-fat_100g": 1.3,
+        "sodium_100g": 0.0032,
+        "sugars_100g": 0.7
+      },
+      "product_name": "Kernige Haferflocken",
+      "product_name_de": "Kernige Haferflocken",
+      "product_name_en": "Kernige Haferflocken",
+      "generic_name": "Haferflocken kernig",
+      "generic_name_de": "Haferflocken kernig"
+    },
+    {
+      "code": "4061458061506",
+      "brands": ["Knusperone", "H. & J. Brüggen", "Aldi"],
+      "quantity": "500 g",
+      "countries_tags": ["en:germany"],
+      "nutriments": {
+        "carbohydrates_100g": 59,
+        "energy-kcal_100g": 375,
+        "energy-kj_100g": 1580,
+        "fat_100g": 7,
+        "fiber_100g": 10,
+        "proteins_100g": 14,
+        "salt_100g": 0.02,
+        "saturated-fat_100g": 1.3,
+        "sodium_100g": 0.008,
+        "sugars_100g": 0.7
+      },
+      "product_name": "Haferflocken - kernig",
+      "product_name_de": "Haferflocken - kernig",
+      "product_name_en": "Haferflocken kernig",
+      "generic_name": "Vollkorn-Haferflocken",
+      "generic_name_de": "Vollkorn-Haferflocken"
+    },
+    {
+      "code": "20028589",
+      "brands": ["Golden Breakfast"],
+      "quantity": "500g",
+      "countries_tags": ["en:france", "en:germany", "en:united-kingdom"],
+      "nutriments": {
+        "carbohydrates_100g": 58.7,
+        "energy-kcal_100g": 372,
+        "fat_100g": 7,
+        "fiber_100g": 4,
+        "proteins_100g": 13.5,
+        "salt_100g": 0.02,
+        "saturated-fat_100g": 1.3,
+        "sodium_100g": 0.008,
+        "sugars_100g": 0.7
+      },
+      "product_name": "Haferflocken",
+      "product_name_de": "Haferflocken",
+      "product_name_en": "Haferflocken"
+    }
+  ],
+  "aggregations": null,
+  "facets": {},
+  "charts": {},
+  "page": 1,
+  "page_size": 5,
+  "page_count": 74,
+  "debug": {
+    "query": {
+      "query": {
+        "bool": {
+          "should": [
+            {
+              "bool": {
+                "should": [
+                  {
+                    "match_phrase": {
+                      "product_name.de": {
+                        "query": "haferflocken",
+                        "boost": 2
+                      }
+                    }
+                  },
+                  {
+                    "match_phrase": {
+                      "product_name.en": {
+                        "query": "haferflocken",
+                        "boost": 2
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "bool": {
+                "should": [
+                  {
+                    "match_phrase": {
+                      "generic_name.de": {
+                        "query": "haferflocken",
+                        "boost": 2
+                      }
+                    }
+                  },
+                  {
+                    "match_phrase": {
+                      "generic_name.en": {
+                        "query": "haferflocken",
+                        "boost": 2
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "bool": {
+                "should": [
+                  {
+                    "match_phrase": {
+                      "categories.de": {
+                        "query": "haferflocken",
+                        "boost": 2
+                      }
+                    }
+                  },
+                  {
+                    "match_phrase": {
+                      "categories.en": {
+                        "query": "haferflocken",
+                        "boost": 2
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "bool": {
+                "should": [
+                  {
+                    "match_phrase": {
+                      "labels.de": {
+                        "query": "haferflocken",
+                        "boost": 2
+                      }
+                    }
+                  },
+                  {
+                    "match_phrase": {
+                      "labels.en": {
+                        "query": "haferflocken",
+                        "boost": 2
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "match_phrase": {
+                "brands": {
+                  "query": "haferflocken",
+                  "boost": 2
+                }
+              }
+            },
+            {
+              "multi_match": {
+                "query": "haferflocken",
+                "fields": [
+                  "product_name.de",
+                  "product_name.en",
+                  "generic_name.de",
+                  "generic_name.en",
+                  "categories.de",
+                  "categories.en",
+                  "labels.de",
+                  "labels.en",
+                  "brands"
+                ]
+              }
+            }
+          ],
+          "filter": [
+            {
+              "bool": {
+                "must": [
+                  {
+                    "term": {
+                      "countries_tags": {
+                        "value": "en:germany"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          ],
+          "minimum_should_match": 1
+        }
+      },
+      "size": 5,
+      "from": 0
+    }
+  },
+  "took": 6,
+  "timed_out": false,
+  "count": 369,
+  "is_count_exact": true,
+  "warnings": null
+}

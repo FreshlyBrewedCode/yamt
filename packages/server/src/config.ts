@@ -27,6 +27,8 @@ export function dataPaths(dataDir: string) {
     runs: join(dataDir, "runs"),
     /** Optional local settings (`AppConfig`); never in the repo. */
     config: join(dataDir, "config.json"),
+    /** The long-lived MCP token for interactive sessions (0600), see `yamt mcp-token`. */
+    mcpToken: join(dataDir, "mcp-token"),
   };
 }
 
@@ -54,11 +56,15 @@ export const AppConfigFile = z
   .object({
     /** The Tailscale login allowed in, as `tailscale serve` reports it (e.g. `alice@github`). */
     login: z.string().trim().min(1).optional(),
+    /** USDA FoodData Central API key (https://fdc.nal.usda.gov/api-key-signup); env FDC_API_KEY wins. */
+    fdcApiKey: z.string().trim().min(1).optional(),
   })
   .strict();
 
 export interface AppConfig {
   login: string | null;
+  /** Null: FDC is reported as unavailable, searches use history and Open Food Facts. */
+  fdcApiKey: string | null;
 }
 
 export function loadConfig(dataDir: string, env: Env = process.env): AppConfig {
@@ -70,5 +76,6 @@ export function loadConfig(dataDir: string, env: Env = process.env): AppConfig {
     file = parsed.data;
   }
   const login = env.YAMT_LOGIN?.trim() || file.login || null;
-  return { login };
+  const fdcApiKey = env.FDC_API_KEY?.trim() || file.fdcApiKey || null;
+  return { login, fdcApiKey };
 }

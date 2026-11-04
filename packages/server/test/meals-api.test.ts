@@ -78,7 +78,7 @@ describe("meals", () => {
     const meal = await newMeal();
     expect(meal).toMatchObject({ status: "draft", eatenAtSource: "created", currentRevisionId: null });
     const detail = await call<MealDetailResponse>("GET", mealPaths.meal(meal.id));
-    expect(detail.body).toEqual({ meal, captures: [], transcripts: [] });
+    expect(detail.body).toEqual({ meal, captures: [], transcripts: [], revision: null });
     expect((await call("GET", mealPaths.meal("nope"))).status).toBe(404);
   });
 

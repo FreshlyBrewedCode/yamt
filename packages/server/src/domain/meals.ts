@@ -20,6 +20,7 @@ import { exifTakenAt } from "../media/exif.ts";
 import { heicToJpeg } from "../media/heic.ts";
 import type { MediaStore } from "../media/store.ts";
 import { HttpError } from "./errors.ts";
+import type { RevisionService } from "./revisions.ts";
 
 /** How far a client clock may run ahead before its `capturedAt` is refused. */
 const CLOCK_SKEW_MS = 60 * 60_000;
@@ -42,6 +43,7 @@ export class MealService {
   constructor(
     private readonly repos: Repos,
     private readonly media: MediaStore,
+    private readonly revisions: RevisionService,
     /** Seam for tests: the HEIC → JPEG conversion. */
     private readonly toJpeg: (heic: Uint8Array) => Promise<Uint8Array> = heicToJpeg,
   ) {}
@@ -60,13 +62,28 @@ export class MealService {
       meal,
       captures: this.repos.captures.listForMeal(id).map(toCapture),
       transcripts: this.repos.transcripts.listForMeal(id),
+      revision: this.revisions.current(meal),
     };
   }
 
-  /** Text, link, correction and answer captures. */
+  /**
+   * Text, link, correction and answer captures. An answer may name the question it answers,
+   * which must be one of the meal's current revision (older questions were superseded).
+   */
   addJson(mealId: string, body: JsonCaptureBody, now = Date.now()): CaptureResponse {
-    this.meal(mealId);
+    const meal = this.meal(mealId);
     checkCapturedAt(body.capturedAt, now);
+    const questionId = body.kind === "answer" ? (body.questionId ?? null) : null;
+    if (questionId !== null) {
+      const question = this.repos.revisions.question(questionId);
+      if (!question || question.revisionId !== meal.currentRevisionId) {
+        throw new HttpError(
+          400,
+          "questionId: not a question of this meal's current analysis",
+          "answer one of the questions in the meal's current revision",
+        );
+      }
+    }
     return this.record({
       id: newId(),
       mealId,
@@ -74,6 +91,7 @@ export class MealService {
       capturedAt: body.capturedAt ?? null,
       text: body.text ?? null,
       url: body.kind === "link" ? body.url : null,
+      questionId,
       now,
     });
   }
@@ -149,6 +167,7 @@ export class MealService {
       if (capture.kind === "audio") {
         this.repos.jobs.cancelQueued(dedupeKeys.transcribe(captureId), "capture retracted", now);
       }
+      if (capture.questionId) this.repos.revisions.refreshAnswer(capture.questionId);
       const meal = this.repos.meals.capturesChanged(capture.mealId, now)!;
       return { capture: toCapture(capture), meal };
     })();
@@ -203,6 +222,7 @@ export class MealService {
   private record(c: NewCapture): CaptureResponse {
     return this.repos.db.transaction(() => {
       const capture = this.repos.captures.insert(c);
+      if (capture.questionId) this.repos.revisions.refreshAnswer(capture.questionId);
       let transcript = null;
       if (capture.kind === "audio") {
         transcript = this.repos.transcripts.upsertPending(capture.id, c.now);

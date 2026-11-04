@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "yamt": {
+      "type": "http",
+      "url": "http://127.0.0.1:${YAMT_PORT:-7890}/mcp",
+      "headers": {
+        "Authorization": "Bearer ${YAMT_MCP_TOKEN:-}"
+      }
+    }
+  }
+}
