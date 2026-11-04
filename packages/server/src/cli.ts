@@ -67,6 +67,7 @@ const WEB_BUILD_SOURCES: WebBuildSources = {
   webIndexHtml: join(WEB_DIR, "index.html"),
   webPublic: join(WEB_DIR, "public"),
   webViteConfig: join(WEB_DIR, "vite.config.ts"),
+  webServiceWorker: join(WEB_DIR, "sw.js"),
   webPackageJson: join(WEB_DIR, "package.json"),
   sharedSrc: join(SHARED_DIR, "src"),
   sharedPackageJson: join(SHARED_DIR, "package.json"),

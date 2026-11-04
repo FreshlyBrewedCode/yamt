@@ -219,5 +219,6 @@ export class RevisionService {
   }
 }
 
-const totalsOf = (items: readonly MealItem[]): Totals =>
+/** The totals of any set of stored items (a revision, a day): `computeTotals`, nothing else. */
+export const totalsOf = (items: readonly MealItem[]): Totals =>
   computeTotals(items.map((i) => ({ grams: i.grams, per100g: i.per100g, provenance: i.provenance })));

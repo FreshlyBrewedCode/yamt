@@ -2,12 +2,16 @@ import {
   type AnalyseResponse,
   type CaptureResponse,
   type CreateMealBody,
+  type DayTotals,
   type JsonCaptureBody,
   MAX_UPLOAD_BYTES,
   type Meal,
   type MealDetailResponse,
+  type MealItem,
   type MealSummary,
   type MealsQuery,
+  type MealsResponse,
+  type NutrientTotals,
   type RetractResponse,
   type TranscribeResponse,
   type UploadCaptureFields,
@@ -21,7 +25,8 @@ import { exifTakenAt } from "../media/exif.ts";
 import { heicToJpeg } from "../media/heic.ts";
 import type { MediaStore } from "../media/store.ts";
 import { HttpError } from "./errors.ts";
-import type { RevisionService } from "./revisions.ts";
+import { type RevisionService, totalsOf } from "./revisions.ts";
+import { assertTimeZone, localDate, localTimeZone } from "./time.ts";
 
 /** How far a client clock may run ahead before its `capturedAt` is refused. */
 const CLOCK_SKEW_MS = 60 * 60_000;
@@ -51,12 +56,56 @@ export class MealService {
     private readonly jobsChanged: () => void = () => {},
   ) {}
 
-  create(body: CreateMealBody): Meal {
-    return this.repos.meals.insert({ eatenAt: body.eatenAt });
+  /**
+   * A new draft. With a client `id` it is idempotent: an existing meal with that id is answered
+   * as it is (`created: false`), so a retried request never makes a second meal.
+   */
+  ensure(body: CreateMealBody): { meal: Meal; created: boolean } {
+    if (body.id) {
+      const existing = this.repos.meals.get(body.id);
+      if (existing) return { meal: existing, created: false };
+    }
+    return { meal: this.repos.meals.insert({ id: body.id, eatenAt: body.eatenAt }), created: true };
   }
 
-  list(q: MealsQuery): MealSummary[] {
-    return this.repos.meals.list(q);
+  create(body: CreateMealBody): Meal {
+    return this.ensure(body).meal;
+  }
+
+  /**
+   * The overview: meals with what they hold and their current revision's title, totals and open
+   * questions, plus each day's totals (in `tz`) over those meals. Totals come from `totalsOf`.
+   */
+  list(q: MealsQuery): MealsResponse {
+    const timeZone = q.tz ?? localTimeZone();
+    try {
+      assertTimeZone(timeZone);
+    } catch {
+      throw new HttpError(400, `tz: unknown time zone ${timeZone}`, "an IANA zone like Europe/Berlin");
+    }
+    const days = new Map<string, { meals: number; unanalysed: number; items: MealItem[] }>();
+    const meals: MealSummary[] = this.repos.meals.list(q).map((m) => {
+      const view = this.revisions.current(m);
+      const date = localDate(m.eatenAt, timeZone);
+      const day = days.get(date) ?? { meals: 0, unanalysed: 0, items: [] };
+      days.set(date, day);
+      day.meals++;
+      if (view) day.items.push(...view.items);
+      else day.unanalysed++;
+      return {
+        ...m,
+        title: view?.revision.title ?? null,
+        totals: view ? nutrientTotals(view.totals) : null,
+        openQuestions: view?.questions.filter((x) => x.answeredByCaptureId === null).length ?? 0,
+      };
+    });
+    const dayTotals: DayTotals[] = [...days].map(([date, d]) => ({
+      date,
+      meals: d.meals,
+      unanalysed: d.unanalysed,
+      totals: nutrientTotals(totalsOf(d.items)),
+    }));
+    return { meals, days: dayTotals, timeZone };
   }
 
   detail(id: string): MealDetailResponse {
@@ -74,8 +123,10 @@ export class MealService {
    * Text, link, correction and answer captures. An answer may name the question it answers,
    * which must be one of the meal's current revision (older questions were superseded).
    */
-  addJson(mealId: string, body: JsonCaptureBody, now = Date.now()): CaptureResponse {
+  addJson(mealId: string, body: JsonCaptureBody, now = Date.now()): CaptureResponse & { created: boolean } {
     const meal = this.meal(mealId);
+    const existing = this.existing(mealId, body.id);
+    if (existing) return existing;
     checkCapturedAt(body.capturedAt, now);
     const questionId = body.kind === "answer" ? (body.questionId ?? null) : null;
     if (questionId !== null) {
@@ -89,7 +140,7 @@ export class MealService {
       }
     }
     return this.record({
-      id: newId(),
+      id: body.id ?? newId(),
       mealId,
       kind: body.kind,
       capturedAt: body.capturedAt ?? null,
@@ -109,8 +160,10 @@ export class MealService {
     file: File,
     fields: UploadCaptureFields,
     now = Date.now(),
-  ): Promise<CaptureResponse> {
+  ): Promise<CaptureResponse & { created: boolean }> {
     this.meal(mealId);
+    const existing = this.existing(mealId, fields.id);
+    if (existing) return existing;
     checkCapturedAt(fields.capturedAt, now);
     if (file.size === 0) throw new HttpError(400, "the file is empty");
     if (file.size > MAX_UPLOAD_BYTES) {
@@ -124,7 +177,7 @@ export class MealService {
       throw new HttpError(400, `a ${type.mimeType} file is not ${kind === "image" ? "an image" : "audio"}`);
     }
 
-    const id = newId();
+    const id = fields.id ?? newId();
     const path = this.media.pathFor(id, type.ext, now);
     const written: string[] = [];
     try {
@@ -243,6 +296,23 @@ export class MealService {
     };
   }
 
+  /**
+   * A retried create: the capture with the client's id, if it is already stored (for this meal;
+   * an id of another meal's capture is a conflict).
+   */
+  private existing(mealId: string, id: string | undefined): (CaptureResponse & { created: false }) | null {
+    if (!id) return null;
+    const c = this.repos.captures.get(id);
+    if (!c) return null;
+    if (c.mealId !== mealId) throw new HttpError(409, "id: a capture of another meal has this id");
+    return {
+      capture: toCapture(c),
+      transcript: c.kind === "audio" ? this.repos.transcripts.get(id) : null,
+      meal: this.meal(mealId),
+      created: false,
+    };
+  }
+
   private meal(id: string): Meal {
     const meal = this.repos.meals.get(id);
     if (!meal) throw new HttpError(404, "meal not found");
@@ -250,7 +320,7 @@ export class MealService {
   }
 
   /** One transaction: the capture, for audio its transcript and job, and the meal's times. */
-  private record(c: NewCapture): CaptureResponse {
+  private record(c: NewCapture): CaptureResponse & { created: true } {
     const res = this.repos.db.transaction(() => {
       const capture = this.repos.captures.insert(c);
       if (capture.questionId) this.repos.revisions.refreshAnswer(capture.questionId);
@@ -267,9 +337,15 @@ export class MealService {
       return { capture: toCapture(capture), transcript, meal };
     })();
     if (res.transcript) this.jobsChanged();
-    return res;
+    return { ...res, created: true };
   }
 }
+
+const nutrientTotals = ({ grams, items, nutrients }: NutrientTotals): NutrientTotals => ({
+  grams,
+  items,
+  nutrients,
+});
 
 function checkCapturedAt(capturedAt: number | undefined, now: number): void {
   if (capturedAt !== undefined && capturedAt > now + CLOCK_SKEW_MS) {

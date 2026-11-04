@@ -24,11 +24,11 @@ export function mealRoutes(s: Services): Hono<IdentityEnv> {
   const r = new Hono<IdentityEnv>();
 
   r.post("/meals", async (c) => {
-    const meal = s.meals.create(CreateMealBody.parse(await readJson(c)));
-    return c.json<MealResponse>({ meal }, 201);
+    const { meal, created } = s.meals.ensure(CreateMealBody.parse(await readJson(c)));
+    return c.json<MealResponse>({ meal }, created ? 201 : 200);
   });
 
-  r.get("/meals", (c) => c.json<MealsResponse>({ meals: s.meals.list(MealsQuery.parse(c.req.query())) }));
+  r.get("/meals", (c) => c.json<MealsResponse>(s.meals.list(MealsQuery.parse(c.req.query()))));
 
   r.get("/meals/:id", (c) => c.json<MealDetailResponse>(s.meals.detail(c.req.param("id"))));
 
@@ -42,13 +42,16 @@ export function mealRoutes(s: Services): Hono<IdentityEnv> {
       const file = form.get("file");
       if (!(file instanceof File)) throw new HttpError(400, "file: a file upload is required");
       const fields = UploadCaptureFields.parse({
+        id: textField(form, "id"),
         kind: textField(form, "kind"),
         capturedAt: textField(form, "capturedAt"),
       });
-      return c.json<CaptureResponse>(await s.meals.addUpload(mealId, file, fields), 201);
+      const { created, ...res } = await s.meals.addUpload(mealId, file, fields);
+      return c.json<CaptureResponse>(res, created ? 201 : 200);
     }
     if (type.startsWith("application/json")) {
-      return c.json<CaptureResponse>(s.meals.addJson(mealId, JsonCaptureBody.parse(await readJson(c))), 201);
+      const { created, ...res } = s.meals.addJson(mealId, JsonCaptureBody.parse(await readJson(c)));
+      return c.json<CaptureResponse>(res, created ? 201 : 200);
     }
     throw new HttpError(
       415,

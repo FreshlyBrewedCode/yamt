@@ -106,6 +106,109 @@ describe("meals", () => {
   });
 });
 
+describe("idempotent creates (client ids)", () => {
+  test("a meal and its captures sent twice are stored once", async () => {
+    const id = Bun.randomUUIDv7();
+    const first = await call<MealResponse>("POST", mealPaths.meals, { id });
+    expect(first.status).toBe(201);
+    expect(first.body.meal.id).toBe(id);
+    const again = await call<MealResponse>("POST", mealPaths.meals, { id });
+    expect(again.status).toBe(200);
+    expect(again.body.meal).toEqual(first.body.meal);
+    expect((await call("POST", mealPaths.meals, { id: "not-a-uuid" })).status).toBe(400);
+
+    const noteId = Bun.randomUUIDv7();
+    const note = { id: noteId, kind: "text", text: "Brot mit Käse", capturedAt: Date.now() - 1000 };
+    const n1 = await call<CaptureResponse>("POST", mealPaths.captures(id), note);
+    expect(n1.status).toBe(201);
+    expect(n1.body.capture.id).toBe(noteId);
+    const n2 = await call<CaptureResponse>("POST", mealPaths.captures(id), note);
+    expect(n2.status).toBe(200);
+    expect(n2.body.capture).toEqual(n1.body.capture);
+
+    const memoId = Bun.randomUUIDv7();
+    const memo = () => upload(new Blob([fakeM4a()]), "memo.m4a", { id: memoId, kind: "audio" });
+    const u1 = await call<CaptureResponse>("POST", mealPaths.captures(id), memo());
+    expect(u1.status).toBe(201);
+    const u2 = await call<CaptureResponse>("POST", mealPaths.captures(id), memo());
+    expect(u2.status).toBe(200);
+    expect(u2.body.capture).toEqual(u1.body.capture);
+    expect(u2.body.transcript?.status).toBe("pending");
+
+    const detail = await call<MealDetailResponse>("GET", mealPaths.meal(id));
+    expect(detail.body.captures.map((c) => c.id)).toEqual([noteId, memoId]);
+
+    // a capture id of this meal sent to another meal is a conflict, not a copy
+    const other = await newMeal();
+    expect((await call("POST", mealPaths.captures(other.id), note)).status).toBe(409);
+  });
+});
+
+describe("overview", () => {
+  test("title, totals and open questions per meal; per-day totals in the asked zone", async () => {
+    const t = Date.UTC(2032, 5, 1, 22, 30); // 00:30 on 2 June in Berlin, still 1 June in UTC
+    const late = await newMeal({ eatenAt: t });
+    const early = await newMeal({ eatenAt: t - 2 * 3_600_000 });
+    const draft = await newMeal({ eatenAt: t - 3 * 3_600_000 });
+    await call(
+      "POST",
+      mealPaths.captures(draft.id),
+      upload(new Blob([fakeM4a()]), "m.m4a", { kind: "audio" }),
+    );
+    const save = (mealId: string, kcal: number, questions = 0) =>
+      app.services.revisions.save({
+        mealId,
+        runId: null,
+        title: `Meal ${kcal}`,
+        summary: "",
+        eatenAt: null,
+        assumptions: [],
+        items: [
+          {
+            description: "something",
+            grams: 100,
+            provenance: "estimate",
+            confidence: "medium",
+            estimatePer100g: { energyKcal: kcal, protein: 10, fat: 5, carbohydrate: 20, fiber: 2 },
+          },
+        ],
+        questions: Array.from({ length: questions }, (_, i) => ({
+          question: `Q${i}?`,
+          whyItMatters: "matters",
+          impactKcal: 150,
+        })),
+      });
+    save(late.id, 300, 1);
+    save(early.id, 500);
+
+    const range = `from=${t - 86_400_000}&to=${t + 1}`;
+    const berlin = await call<MealsResponse>("GET", `${mealPaths.meals}?${range}&tz=Europe/Berlin`);
+    expect(berlin.status).toBe(200);
+    expect(berlin.body.timeZone).toBe("Europe/Berlin");
+    expect(berlin.body.meals.map((m) => [m.title, m.totals?.nutrients.energyKcal, m.openQuestions])).toEqual([
+      ["Meal 300", 300, 1],
+      ["Meal 500", 500, 0],
+      [null, undefined, 0],
+    ]);
+    expect(berlin.body.meals[2]).toMatchObject({ status: "draft", pendingTranscripts: 1, totals: null });
+    expect(berlin.body.days).toMatchObject([
+      { date: "2032-06-02", meals: 1, unanalysed: 0, totals: { nutrients: { energyKcal: 300 } } },
+      {
+        date: "2032-06-01",
+        meals: 2,
+        unanalysed: 1,
+        totals: { nutrients: { energyKcal: 500, protein: 10 } },
+      },
+    ]);
+
+    const utc = await call<MealsResponse>("GET", `${mealPaths.meals}?${range}&tz=UTC`);
+    expect(utc.body.days).toMatchObject([
+      { date: "2032-06-01", meals: 3, totals: { nutrients: { energyKcal: 800 } } },
+    ]);
+    expect((await call("GET", `${mealPaths.meals}?tz=Mars/Olympus`)).status).toBe(400);
+  });
+});
+
 describe("JSON captures", () => {
   test("text, link, correction and answer", async () => {
     const meal = await newMeal();

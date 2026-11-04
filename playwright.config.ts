@@ -2,11 +2,14 @@ import { existsSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { defineConfig, devices } from "@playwright/test";
+import { writeFakeMic } from "./e2e/fake-mic.ts";
 
 // One throwaway server per run: temp data dir, localhost only, the dev auth bypass (there is no
 // `tailscale serve` in front of it to add the identity header).
 process.env.YAMT_E2E_DATA_DIR ??= mkdtempSync(join(tmpdir(), "yamt-e2e-"));
 const port = Number(process.env.YAMT_E2E_PORT ?? 7898);
+// Chromium records from a fake microphone playing a made-up tone (the capture spec)
+const fakeMic = writeFakeMic(join(process.env.YAMT_E2E_DATA_DIR, "fake-mic.wav"));
 // Playwright's downloaded browsers don't run on NixOS: use a nix chromium if one is linked
 // (`nix build nixpkgs#chromium -o .chromium`) or named in YAMT_E2E_CHROMIUM.
 const chromium =
@@ -32,7 +35,15 @@ export default defineConfig({
         viewport: { width: 390, height: 844 },
         hasTouch: true,
         isMobile: true,
-        launchOptions: chromium ? { executablePath: chromium } : {},
+        permissions: ["microphone"],
+        launchOptions: {
+          ...(chromium ? { executablePath: chromium } : {}),
+          args: [
+            "--use-fake-device-for-media-stream",
+            "--use-fake-ui-for-media-stream",
+            `--use-file-for-fake-audio-capture=${fakeMic}`,
+          ],
+        },
       },
     },
   ],

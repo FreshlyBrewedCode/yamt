@@ -17,12 +17,15 @@ export function staticHandler(distDir: string): (req: Request) => Promise<Respon
     }
     const path = normalize(decodeURIComponent(new URL(req.url).pathname)).replace(/^(\.\.(\/|$))+/, "");
     const file = Bun.file(join(distDir, path));
+    const immutable = path.startsWith("/assets/");
     if (path !== "/" && (await file.exists())) {
-      const immutable = path.startsWith("/assets/");
       return new Response(file, {
         headers: { "cache-control": immutable ? "public, max-age=31536000, immutable" : "no-cache" },
       });
     }
+    // a hashed asset that is gone (an older build's lazy chunk) must fail as such, not parse
+    // index.html as JavaScript; the app reloads itself on that error
+    if (immutable) return new Response("not found", { status: 404 });
     return new Response(Bun.file(index), {
       headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-cache" },
     });

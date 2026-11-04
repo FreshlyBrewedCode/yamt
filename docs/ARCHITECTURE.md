@@ -1,9 +1,10 @@
 # yamt: architecture
 
 What exists today (the scaffold, #3, the meal backend, #6, the nutrition layer with the yamt
-MCP server, #7, the analysis job over ACP, #8, and the transcription worker, #9), how it fits
-together, and where wave 1 goes next. Why it is built this way: [ADR 0001](adr/0001-wave-1-architecture.md).
-Commands and conventions: [AGENTS.md](../AGENTS.md).
+MCP server, #7, the analysis job over ACP, #8, the transcription worker, #9, and the PWA with
+meal capture, #10), how it fits together, and where wave 1 goes next. Why it is built this way:
+[ADR 0001](adr/0001-wave-1-architecture.md). Commands and conventions: [AGENTS.md](../AGENTS.md).
+The design: [design/design.md](design/design.md).
 
 ## Components
 
@@ -17,7 +18,8 @@ yamt start   (one Bun process, binds 127.0.0.1:7890 only)
   │                           zod-validated bodies; meals, captures, media, weight
   ├─ MCP server      /mcp     bearer tokens (agent runs, interactive Claude Code sessions),
   │                           loopback callers only; the agent's only way to read and write
-  ├─ SPA             /*       packages/web/dist   (dev: Vite on 7891 proxies /api)
+  ├─ SPA             /*       packages/web/dist   (dev: Vite on 7891 proxies /api); the PWA:
+  │                           manifest, icons, /sw.js (app shell only)
   ├─ job worker      drains the `jobs` table: `analyse` (one at a time), `transcribe` (one batch
   │    │             at a time, alongside)
   │    ├─ analysis run: one harness process per run, ACP over stdio, cwd ~/.yamt/runs/<run>/
@@ -84,12 +86,24 @@ packages/server/test/     bun tests, temp dirs only; fixtures/ holds made-up ima
                           fake-agent.ts is a scripted ACP agent (tests never start a real harness),
                           fake-stt.ts a scripted STT process and fake-ffmpeg.ts an ffmpeg stand-in
                           (tests never load a speech model); fixtures/memo-de.m4a is synthetic speech
+packages/web/
+  index.html              iOS/PWA metas, manifest and icon links, the dark-mode switch
+  public/                 manifest.webmanifest, icons/ (rendered by scripts/icons.ts)
+  sw.js                   the service worker template (vite.config.ts fills in the build's files)
+  test/                   bun tests: the upload queue, the recorder's logic
 packages/web/src/
-  main.tsx                router + query client
-  routes/                 TanStack file routes (__root.tsx, index.tsx); routeTree.gen.ts is generated
+  main.tsx                router + query client, starts the upload queue, registers the worker
+  routes/                 TanStack file routes: __root.tsx, index.tsx (the overview),
+                          meals.$mealId.tsx (a meal's capture screen); routeTree.gen.ts is generated
   lib/api.ts, queries.ts  the fetch client and every TanStack Query hook
-  components/ui/          shadcn/ui components (button, card, input, badge, sheet, tabs)
-  index.css               Tailwind 4 + the theme tokens (light/dark)
+  lib/outbox/             the upload queue: outbox.ts (Outbox), store.ts (IndexedDB), transport.ts
+                          (fetch/XHR), index.ts (the app's queue and its hooks)
+  lib/recorder.ts         the recorder's state machine and helpers; hooks/use-recorder.ts wires it
+  lib/sw.ts, ids.ts, format.ts  worker registration, client UUIDv7s, number/date formatting
+  components/             slab.tsx (the design's primitives), totals-slab, recorder-band,
+                          add-strip (photo/note/link/audio), capture-list; ui/ (shadcn: button,
+                          input, sheet)
+  index.css               Tailwind 4 + the D · Slab theme tokens (light/dark)
 e2e/                      Playwright specs (phone viewport)
 docs/adr/                 architecture decision records
 .agents/skills/log-meal/  SKILL.md: how to analyse a meal (the job's system prompt, and a skill for
@@ -554,14 +568,20 @@ load per batch.
 
 All behind the identity check, writes also same-origin; paths in `mealPaths` / `weightPaths`.
 
-- `POST /api/meals` (`{eatenAt?}`), `GET /api/meals?from&to&limit` (by `eatenAt`, newest first,
-  with live capture counts per kind and a cover photo), `GET /api/meals/:id` (meal, every capture
+- `POST /api/meals` (`{id?, eatenAt?}`), `GET /api/meals?from&to&limit&tz` (by `eatenAt`, newest
+  first, with live capture counts per kind, a cover photo, pending transcripts, and the current
+  revision's title, totals and open questions; plus `days`: each day's totals over those meals,
+  days reckoned in `tz`, the server's zone by default), `GET /api/meals/:id` (meal, every capture
   including retracted ones, transcripts, and the current revision with items, questions, answers
   and computed totals).
-- `POST /api/meals/:id/captures`: `multipart/form-data` with `file` (+ `kind`, `capturedAt`) for
-  audio, image and file; JSON for `text`, `link` (http/https `url`), `correction`, `answer`
-  (optional `questionId`: a question of the meal's current revision, else 400).
-  A `capturedAt` more than an hour ahead of the server is refused.
+- `POST /api/meals/:id/captures`: `multipart/form-data` with `file` (+ `id`, `kind`,
+  `capturedAt`) for audio, image and file; JSON for `text`, `link` (http/https `url`),
+  `correction`, `answer` (optional `questionId`: a question of the meal's current revision, else
+  400). A `capturedAt` more than an hour ahead of the server is refused.
+- **Client ids:** meals and captures accept an optional `id` (a UUID; the web app sends UUIDv7s).
+  A create with an id that exists answers the stored record with 200 instead of storing it again
+  (201 the first time; a capture id of another meal is a 409), so the upload queue can retry after
+  a lost response without duplicates.
 - `POST /api/captures/:id/retract` (idempotent), `POST /api/meals/:id/analyse` (409 without a live
   capture; on a `failed` meal, the retry), `GET /api/media/:captureId[/jpeg]`.
 - `POST /api/captures/:id/transcribe`: re-run an audio capture's transcript (400 for other kinds,
@@ -588,18 +608,107 @@ All behind the identity check, writes also same-origin; paths in `mealPaths` / `
 - Vite 8, React 19, TanStack Router (file routes, code-split) and Query, Tailwind 4.
 - shadcn/ui (`components.json`, new-york style, lucide icons, `cn` from the `cn` package): add
   components with `bunx shadcn@4.23.0 add <name>`. Theme tokens live in `src/index.css`:
-  shadcn's semantic names (`background`, `card`, `primary`, `muted`, `destructive`, `chart-1…5`,
-  radii) for light (`:root`) and dark (`.dark`). `index.html` sets `.dark` from
-  `prefers-color-scheme` before first paint and follows changes.
-- Mobile first: `viewport-fit=cover`, safe-area padding on `#root`, a single column capped at
-  `max-w-md`; the e2e runs at 390×844 with touch.
+  shadcn's semantic names (`background`, `card`, `primary`, `muted`, `destructive`, radii,
+  all square) plus the design's bands (see [Design](#design)) for light (`:root`) and dark
+  (`.dark`). `index.html` sets `.dark` from `prefers-color-scheme` before first paint and follows
+  changes.
+- Mobile first: `viewport-fit=cover`, a single column capped at `max-w-md`; the top and side
+  safe areas pad `#root`, the bottom one belongs to each screen's bottom slab (its fill runs to the
+  edge). The e2e runs at 390×844 with touch.
+
+### Design
+
+Direction D · Slab from spike #5, written down in [design/design.md](design/design.md): screens
+are stacks of edge-to-edge filled bands (ink for the one thing on a screen, lime for whatever
+wants the user, tint for secondary content, plain lists; orange only for failure), Space Grotesk
+(self-hosted, `@fontsource-variable/space-grotesk`), tabular numbers, uppercase micro-labels,
+square corners. The tokens are in `index.css` (shadcn's names mapped onto the palette, plus
+`ink`, `lime`, `lime-soft`, `tint`, `orange` and their foregrounds); the primitives (`Band`,
+`Strip`, `Label`, `SlabButton`, `BottomSlab`, `StatusLabel`) in `components/slab.tsx`.
+
+### Screens (#10)
+
+- **Overview** (`/`): today's totals as the ink slab (kcal, protein, fat, carbs, fibre; how many
+  of today's meals aren't analysed yet; `TotalsSlab` takes `targets` once #12 has them), then the
+  last 14 days by day (a tint strip with the day's kcal from `days`), each meal a row with time,
+  status, title ("Untitled meal" until analysed), what it holds and its kcal; needs input is a
+  lime row, failed an orange one. Meals that exist only on this phone so far (started offline)
+  are listed from the upload queue; drafts with nothing captured are left out. **Log meal** is the
+  sticky lime slab.
+- **Meal** (`/meals/:id`, `?new=1` from Log meal): the capture screen for a new or an existing
+  meal. Log meal makes a UUIDv7 on the phone and opens it; the server learns of the meal with its
+  first capture, so an abandoned "Log meal" leaves nothing behind. Header (time, status, title),
+  for an analysed meal its numbers as the ink slab and its open questions in lime (answered with a
+  memo or note for now; #11 builds the detail with items, provenance, answers, corrections,
+  revisions and the trace between the numbers and the recorder), a failed meal's error in orange,
+  the recorder, the add strip (Photo: `accept="image/*" multiple`, iOS offers camera or library;
+  Audio: `accept="audio/*"` for Voice Memos via Files; Note and Link: sheets), the capture list
+  (thumbnail or playback, transcript snippet, upload state, retract with an inline confirm), and
+  the bottom slab: Analyse / Analyse queued / Analysing… / Retry analysis / Re-analyse (only with
+  something new since the current revision). Analysing returns to the overview.
+- **Live status:** no push channel; the overview polls `GET /api/meals` every 3 s while a meal is
+  queued, analysing or has a pending transcript, the meal screen polls its meal likewise.
+
+### Recording
+
+`hooks/use-recorder.ts` over the DOM-free `lib/recorder.ts` (state machine idle → requesting →
+recording → stopping → idle | error): `getUserMedia` + `MediaRecorder` with the first supported
+of `audio/mp4` (iOS Safari, AAC like Voice Memos), `audio/webm;codecs=opus`, `audio/webm`,
+`audio/ogg;codecs=opus`, 1 s timeslices; a level meter from a Web Audio `AnalyserNode` (RMS of
+the time-domain frame, every 120 ms, 22 bars); a screen wake lock while recording where the
+browser has `navigator.wakeLock`. iOS stops a home-screen app's recording when the screen locks
+or the app goes to the background, so the screen says so, and the recorder stops itself on
+`visibilitychange`/`pagehide` and keeps what it has. The recording becomes an audio capture
+(`voice-memo-<date>-<time>.m4a|webm`, `capturedAt` = the start) through the upload queue.
+
+### The upload queue (`lib/outbox`)
+
+**Uploads never lose data.** Every capture goes through one queue (`Outbox`), never straight to
+the API:
+
+1. `addCapture` writes the entry (the blob as it is, file name, type, kind, the client's
+   `capturedAt`, a UUIDv7 that becomes the capture's id) to IndexedDB (`yamt` / `outbox`) and only
+   then returns; files over `MAX_UPLOAD_BYTES` or empty ones are refused right there with a message
+   (Bun would answer 413 with an empty body).
+2. One sender works through the entries oldest first: it creates the meal (`POST /api/meals {id}`,
+   idempotent, once per meal and session), then sends the capture (JSON with fetch, uploads with
+   XHR for progress) with its id, so a retry after a lost response is answered with the stored
+   capture. Before the entry is deleted the meal's queries are refreshed, so the row never blinks.
+3. A network failure or a 5xx/408/429 retries with backoff (2 s, 4 s … 60 s); `online`,
+   `offline` and the app becoming visible wake the queue at once. While `navigator.onLine` is
+   false nothing is attempted. Any other refusal (4xx: a broken file, a skewed clock) marks the
+   entry refused with the server's reason; the row turns orange with Retry and Discard.
+4. **Analyse** is an entry too (`requestAnalyse`): it waits until every capture of its meal has
+   left the queue, so pressing Analyse while uploads run, or offline, is fine; a refused upload
+   holds it until the user retries or discards it.
+5. The queue starts with the app (`startOutbox` in `main.tsx`) and sends what an earlier visit
+   left. Without IndexedDB (rare) it falls back to memory and says so in the console.
+
+The screens merge the queue's entries (`useMealOutbox`) with the server's captures by id.
+
+### PWA
+
+- `public/manifest.webmanifest`: `display: standalone`, portrait, start URL and scope `/`, page
+  colour as theme and background colour, icons 192/512 (`any`) and 512 `maskable`;
+  `apple-touch-icon` 180 px. The icons (a black "y" in Space Grotesk on lime) are rendered by
+  `bun packages/web/scripts/icons.ts` with Chromium and committed.
+- `index.html`: `apple-mobile-web-app-capable`, status bar style `default`, `theme-color` per
+  colour scheme (the page colours), `viewport-fit=cover`.
+- **Service worker** (`/sw.js`, built from `packages/web/sw.js` by the `serviceWorker` plugin in
+  `vite.config.ts`, which inserts the build's file list and a version hash; production builds
+  only): precaches the shell (`/`, hashed assets, icons, manifest), answers navigations network
+  first (4 s) with the cached shell as the fallback, other shell files cache first; it never
+  handles `/api` or `/mcp`. It takes over at once (`skipWaiting`, `clients.claim`) and drops older
+  shell caches; a page that then misses an old lazy chunk gets a 404 (the static handler no longer
+  answers a missing `/assets/*` with `index.html`) and reloads itself (`vite:preloadError`).
+  `lib/sw.ts` registers it and exports `serviceWorkerReady`, which #13 awaits to subscribe to push;
+  #13 adds its `push` and `notificationclick` handlers to `sw.js`.
 
 ## Planned (epic #2)
 
 Meals, captures, media storage, the job queue and weight entries (#6), the nutrition layer
 with the MCP server (#7), the ACP runtime with the analysis job and worker loop (#8), and the
-transcription worker (#9) are in. Still to come, in stack order: the PWA shell and meal capture
-(#10); meal detail, questions and corrections (#11); the day
-view, goals and weight (#12); Web Push (#13). Spikes #4 (speech-to-text, CPU vs GPU) and #5
-(design directions; the result becomes `docs/design/design.md` and replaces the neutral theme
-tokens) run alongside. See the epic for the decisions each one builds on.
+transcription worker (#9) and the PWA with meal capture (#10) are in. Still to come, in stack
+order: meal detail, questions and corrections (#11); the day view, goals and weight (#12); Web
+Push (#13). Spike #4 (speech-to-text) decided ADR 0002; spike #5's chosen design is
+[design/design.md](design/design.md). See the epic for the decisions each one builds on.

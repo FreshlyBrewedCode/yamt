@@ -23,14 +23,17 @@ const toMeal = (r: Row): Meal => ({
   updatedAt: r.updated_at,
 });
 
+/** What the meals table knows about a meal in the overview; the service adds the revision's part. */
+export type MealCaptureSummary = Omit<MealSummary, "title" | "totals" | "openQuestions">;
+
 /** The time a capture stands for: EXIF beats what the client reported beats arrival. */
 export const CAPTURE_TIME_SQL = "COALESCE(taken_at, captured_at, created_at)";
 
 export class MealRepo {
   constructor(private readonly db: Db) {}
 
-  insert(m: { eatenAt?: number; now?: number } = {}): Meal {
-    const id = newId();
+  insert(m: { id?: string; eatenAt?: number; now?: number } = {}): Meal {
+    const id = m.id ?? newId();
     const now = m.now ?? Date.now();
     this.db
       .query(
@@ -47,7 +50,7 @@ export class MealRepo {
   }
 
   /** Meals eaten in [from, to), newest first, with what they hold (live captures only). */
-  list(q: { from?: number; to?: number; limit: number }): MealSummary[] {
+  list(q: { from?: number; to?: number; limit: number }): MealCaptureSummary[] {
     const rows = this.db
       .query<Row, [number, number, number]>(
         "SELECT * FROM meals WHERE eaten_at >= ? AND eaten_at < ? ORDER BY eaten_at DESC, id DESC LIMIT ?",
@@ -70,6 +73,14 @@ export class MealRepo {
       )
       .all(...ids);
     const coverOf = new Map(covers.map((c) => [c.meal_id, c.id]));
+    const pending = this.db
+      .query<{ meal_id: string; n: number }, string[]>(
+        `SELECT c.meal_id, count(*) AS n FROM transcripts t JOIN captures c ON c.id = t.capture_id
+         WHERE c.meal_id IN (${marks}) AND c.retracted_at IS NULL AND t.status = 'pending'
+         GROUP BY c.meal_id`,
+      )
+      .all(...ids);
+    const pendingOf = new Map(pending.map((p) => [p.meal_id, p.n]));
 
     return rows.map((r) => {
       const captureKinds: MealSummary["captureKinds"] = {};
@@ -79,7 +90,13 @@ export class MealRepo {
         captureKinds[c.kind] = c.n;
         captureCount += c.n;
       }
-      return { ...toMeal(r), captureCount, captureKinds, coverCaptureId: coverOf.get(r.id) ?? null };
+      return {
+        ...toMeal(r),
+        captureCount,
+        captureKinds,
+        coverCaptureId: coverOf.get(r.id) ?? null,
+        pendingTranscripts: pendingOf.get(r.id) ?? 0,
+      };
     });
   }
 
