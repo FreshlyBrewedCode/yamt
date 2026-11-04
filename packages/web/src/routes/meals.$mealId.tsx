@@ -4,6 +4,7 @@ import { ArrowLeft, X, Zap } from "lucide-react";
 import { useMemo, useState } from "react";
 import { AddStrip } from "@/components/add-strip";
 import { CaptureList, useCaptureRows } from "@/components/capture-list";
+import { AgainList, LogAgainSheet, type RepeatSource } from "@/components/log-again";
 import { MealDetail } from "@/components/meal-detail";
 import { RecorderBand } from "@/components/recorder-band";
 import {
@@ -83,6 +84,7 @@ function MealCapture({
   const { snapshot, entries } = useMealOutbox(mealId);
   const [problem, setProblem] = useState<string | null>(null);
   const [openedAt] = useState(() => Date.now());
+  const [again, setAgain] = useState<RepeatSource | null>(null);
 
   const save = async (capture: PendingCapture, capturedAt?: number) => {
     setProblem(null);
@@ -208,7 +210,17 @@ function MealCapture({
             Nothing yet. Record what you're eating, or add a photo, note, link or audio file, or paste one.
           </p>
         )}
+        {/* Log meal, before anything is captured: the same as before, without an analysis (#30) */}
+        {isNew && !meal && rows.length === 0 && <AgainList onPick={setAgain} />}
       </main>
+      <LogAgainSheet
+        source={again}
+        onClose={() => setAgain(null)}
+        onLogged={() => {
+          setAgain(null);
+          void navigate({ to: "/" });
+        }}
+      />
 
       <AnalyseSlab
         mealId={mealId}

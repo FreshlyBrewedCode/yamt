@@ -8,7 +8,7 @@ import {
   type Transcript,
 } from "@yamt/shared";
 import { cn } from "cn";
-import { Mic, Pause, Pencil, Play, Plus, Square, X, Zap } from "lucide-react";
+import { Mic, Pause, Pencil, Play, Plus, Repeat, Square, X, Zap } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { type Recording, useRecorder } from "@/hooks/use-recorder";
 import { formatDayTime, formatNumber, fromLocalInput, plural, toLocalInput } from "@/lib/format";
@@ -24,6 +24,7 @@ import { useUpdateMeal } from "@/lib/queries";
 import { formatDuration, recordingName } from "@/lib/recorder";
 import { CaptureList, useCaptureRows } from "./capture-list";
 import { ItemsList } from "./items-list";
+import { LogAgainSheet, type RepeatSource } from "./log-again";
 import { RevisionHistory } from "./revision-history";
 import { BackButton, Band, BottomSlab, Disclosure, Label, SlabButton, StatusLabel, Strip } from "./slab";
 import { TotalsSlab } from "./totals-slab";
@@ -43,7 +44,9 @@ type VoiceTarget = { kind: "answer"; questionId: string } | { kind: "correction"
  * lime-soft; tap for the source) → what it assumed (tint) → a free correction → captures,
  * revision history and the trace, collapsed. The bottom slab is the one action: "Answer &
  * re-analyse" / "Correct & re-analyse" / "Re-analyse" / "Retry analysis" (lime) when there is
- * something for the next analysis, else "Add to this meal" (tint), which opens the capture view.
+ * something for the next analysis, else "Add to this meal" (tint), which opens the capture view;
+ * on an analysed meal split with "Log again" (#30), which copies it to a new meal. A meal that was
+ * logged again links its source under the title and has no run to trace.
  * Answers and corrections go through the upload queue like every capture.
  */
 export function MealDetail({ detail }: { detail: MealDetailResponse }) {
@@ -59,6 +62,7 @@ export function MealDetail({ detail }: { detail: MealDetailResponse }) {
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [skipped, setSkipped] = useState<ReadonlySet<string>>(new Set());
   const [correction, setCorrection] = useState("");
+  const [again, setAgain] = useState<RepeatSource | null>(null);
   const hasQuestions = (view?.questions.length ?? 0) > 0;
 
   // a "needs input" notification links to #questions: bring the question into view once
@@ -140,6 +144,16 @@ export function MealDetail({ detail }: { detail: MealDetailResponse }) {
   const latestRun = runs[0] ?? null;
   const traceRun = (view?.revision.runId && runs.find((r) => r.id === view.revision.runId)) || latestRun;
   const estimated = view ? estimatedShare(view.totals) : null;
+  // a finished analysis (not preliminary) can be logged again
+  const repeatable =
+    view && meal.status === "analysed" && view.revision.status === "analysed"
+      ? {
+          mealId,
+          title: view.revision.title,
+          eatenAt: meal.eatenAt,
+          kcal: view.totals.nutrients.energyKcal,
+        }
+      : null;
 
   return (
     <>
@@ -269,10 +283,20 @@ export function MealDetail({ detail }: { detail: MealDetailResponse }) {
             <RevisionHistory mealId={mealId} captures={captures} runs={runs} currentId={view.revision.id} />
           </Disclosure>
         )}
-        {traceRun && (
+        {traceRun ? (
           <Disclosure title="Trace" meta={runMeta(traceRun)} data-testid="trace-section">
             <TraceView run={traceRun} />
           </Disclosure>
+        ) : (
+          view?.revision.kind === "copy" && (
+            <Disclosure title="Trace" meta="no analysis" data-testid="trace-section">
+              <p className="bg-tint px-5 py-4 font-medium text-sm" data-testid="no-analysis">
+                Nothing was analysed: this meal was logged again from {detail.source?.title ?? "another meal"}
+                , and its items were copied from there. Add something to it and re-analyse to have it
+                analysed.
+              </p>
+            </Disclosure>
+          )
         )}
       </main>
 
@@ -293,6 +317,15 @@ export function MealDetail({ detail }: { detail: MealDetailResponse }) {
         newCaptures={newSince + pendingCaptures}
         onSubmit={() => void submit()}
         onAdd={() => navigate({ to: "/meals/$mealId", params: { mealId }, search: { add: true } })}
+        onLogAgain={repeatable ? () => setAgain(repeatable) : undefined}
+      />
+      <LogAgainSheet
+        source={again}
+        onClose={() => setAgain(null)}
+        onLogged={({ meal: copy }) => {
+          setAgain(null);
+          void navigate({ to: "/meals/$mealId", params: { mealId: copy.id } });
+        }}
       />
     </>
   );
@@ -396,7 +429,7 @@ function correctionRows(
 }
 
 function DetailHeader({ detail }: { detail: MealDetailResponse }) {
-  const { meal, revision: view } = detail;
+  const { meal, revision: view, source } = detail;
   const [editing, setEditing] = useState(false);
   const status = meal.status;
   return (
@@ -431,6 +464,23 @@ function DetailHeader({ detail }: { detail: MealDetailResponse }) {
           <p className="mt-2 font-medium text-muted-foreground" data-testid="meal-summary">
             {view.revision.summary}
           </p>
+        )}
+        {source && (
+          <Link
+            to="/meals/$mealId"
+            params={{ mealId: source.mealId }}
+            className="-mb-2 mt-1 flex min-h-11 items-center gap-2 font-medium text-muted-foreground text-sm outline-none focus-visible:underline"
+            data-testid="logged-again-from"
+          >
+            <Repeat className="size-4 shrink-0" strokeWidth={2.5} />
+            <span className="min-w-0">
+              Logged again from{" "}
+              <span className="font-bold text-foreground underline underline-offset-4">
+                {source.title ?? "Untitled meal"}
+              </span>{" "}
+              · {formatDayTime(source.eatenAt)}
+            </span>
+          </Link>
         )}
       </header>
       {editing && <EatenAtEditor meal={meal} onDone={() => setEditing(false)} />}
@@ -791,6 +841,8 @@ function DetailSlab(props: {
   newCaptures: number;
   onSubmit: () => void;
   onAdd: () => void;
+  /** An analysed meal can be logged again (#30): the calm slab offers it beside adding. */
+  onLogAgain?: () => void;
 }) {
   const { status, pendingCaptures, refused } = props;
   if (props.analyseQueued) {
@@ -826,6 +878,23 @@ function DetailSlab(props: {
         <SlabButton disabled data-testid="detail-slab">
           <Zap className="size-7" strokeWidth={2.5} /> Answer & re-analyse
         </SlabButton>
+      </BottomSlab>
+    );
+  }
+  if (!something && status !== "failed" && props.onLogAgain) {
+    // two quiet halves, like the day view's steps: neither wants the user
+    const half =
+      "h-[76px] gap-2 px-3 text-lg enabled:active:bg-lime enabled:active:text-lime-foreground enabled:active:opacity-100";
+    return (
+      <BottomSlab>
+        <Band tone="tint" className="grid grid-cols-2 divide-x divide-border">
+          <SlabButton tone="tint" className={half} onClick={props.onAdd} data-testid="detail-slab">
+            <Plus className="size-6 shrink-0" strokeWidth={2.5} /> Add more
+          </SlabButton>
+          <SlabButton tone="tint" className={half} onClick={props.onLogAgain} data-testid="log-again-button">
+            <Repeat className="size-6 shrink-0" strokeWidth={2.5} /> Log again
+          </SlabButton>
+        </Band>
       </BottomSlab>
     );
   }

@@ -70,7 +70,7 @@ test("answer the agent's question: re-analysed into a new revision; history and 
   await slab(page).click();
 
   // queued, analysed again, a new revision without the question
-  await expect(slab(page)).toHaveText(/Add to this meal/, { timeout: 20_000 });
+  await expect(slab(page)).toHaveText(/Add more/, { timeout: 20_000 });
   await expect(kcal(page)).toHaveText("799");
   await expect(page.getByTestId("questions")).toHaveCount(0);
   const detail = (await (await request.get(mealPaths.meal(mealId))).json()) as MealDetailResponse;
@@ -111,7 +111,7 @@ test("a correction and the time it was eaten", async ({ page, request }) => {
   const mealId = await seedMeal(request, ["Kürbis-Linsen-Curry", "fake:meal"], "analysed");
   await page.goto(`/meals/${mealId}`);
   await expect(kcal(page)).toHaveText("838");
-  await expect(slab(page)).toHaveText(/Add to this meal/);
+  await expect(slab(page)).toHaveText(/Add more/);
 
   // when: yesterday 12:30 pins it
   await page.getByTestId("eaten-at").click();
@@ -130,7 +130,7 @@ test("a correction and the time it was eaten", async ({ page, request }) => {
   await page.getByRole("textbox", { name: "Correction" }).fill("Nur die halbe Portion Reis");
   await expect(slab(page)).toHaveText(/Correct & re-analyse/);
   await slab(page).click();
-  await expect(slab(page)).toHaveText(/Add to this meal/, { timeout: 20_000 });
+  await expect(slab(page)).toHaveText(/Add more/, { timeout: 20_000 });
   await expect(kcal(page)).toHaveText("799");
   const detail = (await (await request.get(mealPaths.meal(mealId))).json()) as MealDetailResponse;
   expect(detail.captures.filter((c) => c.kind === "correction").map((c) => c.text)).toEqual([
@@ -162,7 +162,7 @@ test("a spoken answer, recorded in place, is transcribed and answers the questio
 
   await expect(slab(page)).toHaveText(/Answer & re-analyse/);
   await slab(page).click();
-  await expect(slab(page)).toHaveText(/Add to this meal/, { timeout: 20_000 });
+  await expect(slab(page)).toHaveText(/Add more/, { timeout: 20_000 });
   await expect(kcal(page)).toHaveText("799");
 });
 
