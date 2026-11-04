@@ -77,8 +77,11 @@ export function parseNdjson(text: string): { entries: TraceEntry[]; skipped: num
 }
 
 const MCP_PREFIX = /^mcp__.+?__/;
-/** `mcp__yamt__search_foods` → `search_foods`. */
-export const toolName = (raw: string): string => raw.replace(MCP_PREFIX, "");
+/** OpenCode names MCP tools `<server>_<tool>` (#28): `yamt_get_meal`. */
+const OPENCODE_PREFIX = /^yamt_(?=[a-z])/;
+
+/** `mcp__yamt__search_foods` (Claude Code), `yamt_search_foods` (OpenCode) → `search_foods`. */
+export const toolName = (raw: string): string => raw.replace(MCP_PREFIX, "").replace(OPENCODE_PREFIX, "");
 
 export function parseTrace(text: string): ParsedTrace {
   const { entries, skipped } = parseNdjson(text);

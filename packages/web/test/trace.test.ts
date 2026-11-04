@@ -160,6 +160,7 @@ describe("summaries", () => {
   test("tool names lose the MCP prefix", () => {
     expect(toolName("mcp__yamt__save_meal_revision")).toBe("save_meal_revision");
     expect(toolName("WebSearch")).toBe("WebSearch");
+    expect(toolName("yamt_get_meal")).toBe("get_meal"); // OpenCode
   });
 
   test("inputs of the yamt tools by their key fields", () => {
