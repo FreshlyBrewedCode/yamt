@@ -8,6 +8,7 @@ import {
   type FixGoalBody,
   type GoalResponse,
   type GoalsResponse,
+  type GuidedGoalBody,
   goalPaths,
   type HealthResponse,
   type MealDetailResponse,
@@ -16,10 +17,12 @@ import {
   type MealStatus,
   type MealsResponse,
   mealPaths,
+  type ProfileResponse,
   type PushEvents,
   type PushResponse,
   type PushSubscriptionResponse,
   type PushTestResponse,
+  profilePaths,
   pushPaths,
   type RetractResponse,
   runPaths,
@@ -49,6 +52,8 @@ export const keys = {
   goals: ["goals"] as const,
   weight: ["weight"] as const,
   weightRange: (from: number, to: number) => ["weight", { from, to }] as const,
+  weightRecent: ["weight", "recent"] as const,
+  profile: ["profile"] as const,
   push: ["push"] as const,
   /** This browser's support, permission and subscription (not server state, kept here with it). */
   pushDevice: ["push", "device"] as const,
@@ -212,6 +217,36 @@ export function useWeight(from: number, to: number) {
   return useQuery({
     queryKey: keys.weightRange(from, to),
     queryFn: () => api.get<WeightResponse>(`${weightPaths.weight}?from=${from}&to=${to}&limit=1000`),
+  });
+}
+
+/** The newest weight entries (enough for the guided setup's "last 7 days"), newest first. */
+export function useRecentWeight() {
+  return useQuery({
+    queryKey: keys.weightRecent,
+    queryFn: () => api.get<WeightResponse>(`${weightPaths.weight}?limit=60`),
+  });
+}
+
+/** The body profile the guided setup saved (#24); null before the first one. */
+export function useProfile() {
+  return useQuery({
+    queryKey: keys.profile,
+    queryFn: () => api.get<ProfileResponse>(profilePaths.profile),
+    staleTime: 60_000,
+  });
+}
+
+/** A guided goal: the server calculates it again, saves the profile and the goal from today. */
+export function useSaveGuidedGoal() {
+  return useMutation({
+    mutationFn: (body: GuidedGoalBody) => api.post<GoalResponse>(profilePaths.guidedGoal, body),
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: keys.goals });
+      void queryClient.invalidateQueries({ queryKey: keys.profile });
+      void queryClient.invalidateQueries({ queryKey: keys.weight });
+      void queryClient.invalidateQueries({ queryKey: keys.meals });
+    },
   });
 }
 

@@ -1,4 +1,4 @@
-import type { Goal, Targets } from "@yamt/shared";
+import type { Goal, GoalDerivation, Targets } from "@yamt/shared";
 import { type Db, newId } from "../index.ts";
 
 interface Row {
@@ -10,6 +10,7 @@ interface Row {
   carbohydrate_g: number | null;
   fiber_g: number | null;
   note: string;
+  derivation: string | null;
   created_at: number;
   updated_at: number;
 }
@@ -25,6 +26,7 @@ const toGoal = (r: Row): Goal => ({
     fiber: r.fiber_g,
   },
   note: r.note,
+  derivation: r.derivation ? (JSON.parse(r.derivation) as GoalDerivation) : null,
   createdAt: r.created_at,
   updatedAt: r.updated_at,
 });
@@ -38,15 +40,30 @@ const NEWEST_FIRST = "ORDER BY effective_from DESC, id DESC";
 export class GoalRepo {
   constructor(private readonly db: Db) {}
 
-  insert(g: { effectiveFrom: string; targets: Targets; note: string; now?: number }): Goal {
+  insert(g: {
+    effectiveFrom: string;
+    targets: Targets;
+    note: string;
+    /** How a guided goal was calculated (#24); none for targets set by hand. */
+    derivation?: GoalDerivation | null;
+    now?: number;
+  }): Goal {
     const id = newId();
     const now = g.now ?? Date.now();
     this.db
       .query(
         `INSERT INTO goals (id, effective_from, energy_kcal, protein_g, fat_g, carbohydrate_g, fiber_g, note,
-           created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           derivation, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(id, g.effectiveFrom, ...targetValues(g.targets), g.note, now, now);
+      .run(
+        id,
+        g.effectiveFrom,
+        ...targetValues(g.targets),
+        g.note,
+        g.derivation ? JSON.stringify(g.derivation) : null,
+        now,
+        now,
+      );
     return this.get(id)!;
   }
 
@@ -74,14 +91,20 @@ export class GoalRepo {
     return r ? toGoal(r) : null;
   }
 
-  /** Replaces a goal's targets and note in place (a typo fix); its start date stays. */
+  /**
+   * Replaces a goal's targets and note in place (a typo fix); its start date stays. Changed
+   * targets drop a guided goal's derivation: the numbers are no longer what it explains.
+   */
   fix(id: string, g: { targets: Targets; note: string; now?: number }): Goal | null {
+    const before = this.get(id);
+    const same =
+      before !== null && targetValues(before.targets).every((v, i) => v === targetValues(g.targets)[i]);
     this.db
       .query(
         `UPDATE goals SET energy_kcal = ?, protein_g = ?, fat_g = ?, carbohydrate_g = ?, fiber_g = ?, note = ?,
-           updated_at = ? WHERE id = ?`,
+           derivation = CASE WHEN ? THEN derivation ELSE NULL END, updated_at = ? WHERE id = ?`,
       )
-      .run(...targetValues(g.targets), g.note, g.now ?? Date.now(), id);
+      .run(...targetValues(g.targets), g.note, same ? 1 : 0, g.now ?? Date.now(), id);
     return this.get(id);
   }
 }

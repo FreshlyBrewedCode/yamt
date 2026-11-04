@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { MealSummary } from "./api-meals.ts";
 import type { CoreNutrient, NutrientTotals } from "./api-nutrition.ts";
 import type { WeightEntry } from "./api-weight.ts";
+import { type GoalDerivation, guidedSummary } from "./goal-calc.ts";
 
 /**
  * Daily goals and the day view (#12). A goal is a set of daily targets in force from a local
@@ -34,6 +35,8 @@ export interface Goal {
   effectiveFrom: string;
   targets: Targets;
   note: string;
+  /** How a guided goal (#24) was calculated; null for targets set by hand. */
+  derivation: GoalDerivation | null;
   createdAt: number;
   updatedAt: number;
 }
@@ -184,4 +187,9 @@ export function goalPeriods<G extends Pick<Goal, "id" | "effectiveFrom">>(
       replaced: newer.some((n) => n.effectiveFrom === g.effectiveFrom),
     };
   });
+}
+
+/** What a goal is called in a line: its note, else for a guided goal "Cut, standard pace"; "" for neither. */
+export function goalLabel(goal: Pick<Goal, "note" | "derivation">): string {
+  return goal.note || (goal.derivation ? guidedSummary(goal.derivation) : "");
 }

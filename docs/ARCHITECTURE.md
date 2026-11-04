@@ -3,8 +3,8 @@
 What exists today (the scaffold, #3, the meal backend, #6, the nutrition layer with the yamt
 MCP server, #7, the analysis job over ACP, #8, the transcription worker, #9, the PWA with
 meal capture, #10, the meal detail with questions and corrections, #11, the day view with
-goals and weight, #12, and Web Push notifications, #13), how it fits together, and what comes
-after wave 1. Why it is built this way:
+goals and weight, #12, Web Push notifications, #13, and the guided goal setup, #24), how it
+fits together, and what comes after wave 1. Why it is built this way:
 [ADR 0001](adr/0001-wave-1-architecture.md). Commands and conventions: [AGENTS.md](../AGENTS.md).
 The design: [design/design.md](design/design.md).
 
@@ -48,7 +48,10 @@ packages/shared/src/      contracts shared by server and web (no runtime deps bu
   api-meals.ts            meals, captures, transcripts, media: `mealPaths`, enums, bodies, types
   api-weight.ts           weight entries: `weightPaths`, body, types
   api-goals.ts            goals and days: `goalPaths`, bodies, `DayResponse`, `goalInForce`, `goalPeriods`,
-                          `dayProgress`, `addDays` (shared by server and web)
+                          `dayProgress`, `addDays`, `goalLabel` (shared by server and web)
+  goal-calc.ts            guided goals (#24): `calculateGoal` (the algorithm, `ALGORITHM_VERSION`), its
+                          presets as data, `defaultChoices`, `goalWeight`, `refusalFor`; pure, no zod
+  api-profile.ts          the profile and guided goals: `profilePaths`, `ProfileBody`, `GuidedGoalBody`
   api-nutrition.ts        foods, revisions, items, questions, totals: enums and types
   api-runs.ts             analysis runs and trace lines: `runPaths`, `AnalysisRun`, `TraceEntry`
   api-push.ts             Web Push: `pushPaths`, `PUSH_EVENTS`, `SubscribeBody`, `PushEventsBody`,
@@ -91,7 +94,7 @@ packages/server/src/
                           heic.ts (HEIC → JPEG), downscale.ts (JPEG → ≤ 1600 px, upright)
   db/                     index.ts (open, pragmas, migration runner, newId), migrations/*.sql,
                           repos/ (one per aggregate: meals, captures, transcripts, jobs, weight,
-                          foods, revisions, runs, goals, push)
+                          foods, revisions, runs, goals, profile, push)
   push/                   vapid.ts (the key pair in vapid.json), sender.ts (PushSender: encrypt, sign,
                           deliver, 404/410 cleanup), messages.ts (what a meal's notification says,
                           notifyMeal)
@@ -101,6 +104,7 @@ packages/server/test/     bun tests, temp dirs only; fixtures/ holds made-up ima
                           fake-agent.ts is a scripted ACP agent (tests never start a real harness),
                           fake-stt.ts a scripted STT process and fake-ffmpeg.ts an ffmpeg stand-in
                           (tests never load a speech model); fixtures/memo-de.m4a is synthetic speech
+packages/shared/test/     bun tests: goal-calc (the fixture, equations, caps, floors, rounding, defaults)
 packages/web/
   index.html              iOS/PWA metas, manifest and icon links, the dark-mode switch
   public/                 manifest.webmanifest, icons/ (rendered by scripts/icons.ts)
@@ -111,7 +115,8 @@ packages/web/src/
   main.tsx                router + query client, starts the upload queue, registers the worker
   routes/                 TanStack file routes: __root.tsx, index.tsx (the overview),
                           meals.$mealId.tsx (a meal: its detail or its capture view), days.$date.tsx
-                          (the day view), goals.tsx (goals and weight), settings.tsx (notifications);
+                          (the day view), goals.tsx (goals and weight), goals_.guided.tsx (the guided
+                          setup, /goals/guided), settings.tsx (notifications);
                           routeTree.gen.ts
                           is generated
   lib/api.ts, queries.ts  the fetch client and every TanStack Query hook
@@ -123,7 +128,8 @@ packages/web/src/
   lib/sw.ts, ids.ts, format.ts  worker registration and its messages, client UUIDv7s, number/date formatting
   lib/push.ts             this browser's push support, permission and subscription (subscribeDevice)
   components/             slab.tsx (the design's primitives), totals-slab (+ TargetBar), meal-row (+ groupByDay),
-                          weight-entry, weight-trend, recorder-band,
+                          weight-entry, weight-trend, recorder-band, choice (choice rows, chips, the
+                          stepper, the slider, the split bar), goal-explanation,
                           add-strip (photo/note/link/audio), capture-list (+ useCaptureRows),
                           meal-detail (the detail screen), items-list (provenance, confidence,
                           source), revision-history, trace-view; ui/ (shadcn: button, input, sheet)
@@ -240,6 +246,17 @@ new value never needs a table rebuild.
   every past day keeps the targets it had; only the latest row can be changed in place (a typo
   fix). Goals are never deleted. Dates rather than times because a goal is about calendar days:
   the same reckoning as the overview's day totals.
+- **profile** (#24): one row (`id = 1`): `sex`, `birth_year`, `height_cm`, `body_fat_pct`
+  (null: not given), `daily_life`, `training` (JSON `{sessionsPerWeek, minutes, type,
+  intensity}`), `updated_at`. What the guided setup asks; saved with every guided goal and
+  pre-filling the next one. No weight: that comes from `weight_entries`.
+- **goals.derivation** (#24): JSON, null for targets set by hand. A guided goal's whole
+  calculation: `version` (`ALGORITHM_VERSION`), `inputs` (the profile, the weight used, the start
+  date for the age), `choices` (goal, pace, protein preset, fat %), `weight` (kg, `average` of the
+  last 7 days or `latest` entry, how many entries) and `result` (every intermediate value, the
+  explanation lines, the notes on floors and caps, the targets). So a later retro can say why a
+  target was what it was even after the algorithm changes. A typo fix that changes the targets
+  drops it (the numbers are no longer what it explains); a note-only fix keeps it.
 - **push_subscriptions** (#13): one per device and browser that turned notifications on:
   `endpoint` (unique; the push service's URL for it), the browser's keys `p256dh` and `auth`,
   `events` (JSON toggles `{"analysed": true, "needs_input": true, "failed": true}`; a missing key
@@ -653,12 +670,67 @@ All behind the identity check, writes also same-origin; paths in `mealPaths` / `
   `progress` per target (`dayProgress`: eaten, target, left, over) and the weight entries
   measured that day.
 
+- **Profile and guided goals** (#24, `profilePaths`): `GET /api/profile` (`{profile}`, null before
+  the first guided setup), `PUT /api/profile` (`ProfileBody`), `POST /api/goals/guided`
+  (`{profile, choices, pregnantOrBreastfeeding?, weightKg?, effectiveFrom?}`): in one transaction
+  it logs `weightKg` as a weight entry (measured now) if given, takes the weight from the log
+  (`goalWeight`; 400 without any), runs `calculateGoal` itself (the client's numbers are never
+  stored), saves the profile and adds a goal from `effectiveFrom` (the phone's today) with its
+  `derivation`; 201 with the goal. A refusal is a 422 (`hint`: `under_18`, `pregnancy`,
+  `underweight_cut`) and changes nothing.
+
 - **Push** (#13, `pushPaths`): `GET /api/push` (the VAPID public key and every subscription,
   without keys), `POST /api/push/subscriptions` (a `PushSubscription.toJSON()` plus optional
   `events`; https endpoints on public hosts only; the same endpoint again updates its keys and
   keeps its toggles: 201 new, 200 known), `PATCH /api/push/subscriptions/:id` (the toggles),
   `DELETE /api/push/subscriptions/:id`, `POST /api/push/subscriptions/:id/test` (a test
   notification to that one, whatever its toggles: `{delivery: sent | gone | failed, error}`).
+
+## Guided goals (#24)
+
+A guided way to set the daily targets: cut, maintain or bulk from body data and an activity
+self-assessment, every number with a one-line explanation, adjusted through presets and
+percentages rather than raw kcal and grams. The research behind every number:
+[reports/Goal setting research.md](../reports/Goal%20setting%20research.md).
+
+- **One pure, versioned function**, `calculateGoal(inputs, choices)` in `@yamt/shared`
+  (`goal-calc.ts`). The web app runs it live while the user taps presets; the server runs it
+  again on save and stores its result, so stored targets never come from the client's
+  arithmetic. Change a rule or a number → bump `ALGORITHM_VERSION`; old goals keep the
+  derivation they were made with.
+- **v2, in short:** resting energy by Mifflin-St Jeor (`rmrEquation`), or Cunningham
+  (`500 + 22·FFM`) only for the people it was validated on: body fat given and under 25 % (men)
+  / 32 % (women) **and** training of at least 2 sessions and 3 hours a week (ten Haaf 2014's
+  inclusion criteria for recreational athletes; `LEAN_BODY_FAT`, `CUNNINGHAM_TRAINING`). Always
+  one named equation, never a blend; with body fat given the result also carries the other
+  equation's value (`rmr.alternative`) and the reason (`rmr.basis`). v1 used Cunningham whenever
+  body fat was lean, whatever the training: lean-mass resting energy times a PAL calibrated on
+  population equations overshot for people who train little. The rest is as in v1: × a
+  daily-life PAL (1.40 / 1.50 / 1.65 / 1.85, exercise excluded); plus training at 75 % of
+  `sessions × hours × (MET − 1) × RMR/24` per week, per day; maintenance rounded to 10, capped at 2.4 × resting. The pace in % body
+  weight per week (cut 0.25 / 0.5 / 0.75, bulk 0.1 / 0.25 / 0.4) at 7,700 kcal/kg, a cut's
+  deficit at most 25 % of maintenance and 1,000 kcal, a bulk's surplus at most 15 %; never under
+  1,200 / 1,500 kcal, a cut never under resting. Protein in g per kg of a reference weight
+  (the weight at BMI 25 above it): 1.2 / 1.6 / 2.0 / 2.4, capped at 35 % of energy. Fat as 20–40
+  % of energy, never under 0.6 g/kg. Fibre `max(30, 14 g per 1,000 kcal)`. Carbs the rest at EU
+  factors (carbs exclude fibre, which counts 2 kcal/g), so 4P + 9F + 4C + 2·fibre matches the
+  kcal within ±10 after rounding to 5 g. Defaults: protein by training, goal and age, the
+  standard pace, fat 30 %.
+- **Transparent by construction:** every explanation line names its formula or source
+  (equation and year with its inputs and why it was chosen, PAL with FAO/WHO and DGE, MET from
+  the 2024 Compendium and the 75 % discount, 7,700 kcal/kg, the protein tier's reference, DGE
+  for fat and fibre, carbs as the remainder). `goalMethod(version)` lists each formula with its
+  short citation for the "How this is calculated" disclosure, by version, so a v1 goal still
+  explains v1's rule; `METHOD_FOOTER` says it's a starting estimate the weight trend corrects,
+  and `GOAL_RESEARCH_URL` links the research report. Stored v1 derivations stay as they were
+  (their lines and numbers; `rmr.basis` and `rmr.alternative` are absent).
+- **The weight** comes from the log (`goalWeight`): the mean of the last 7 days with at least 4
+  entries, else the newest entry. A weight typed in the flow is logged as an entry on save and
+  then counts like any other.
+- **Light safety:** no targets under 18 or during pregnancy and breastfeeding, no cut at a BMI
+  under 18.5 (`refusalFor`, `REFUSALS`: neutral wording); floors and caps are named in notes.
+- Simple first: no MCP tool, no nudge to recalculate, no adaptive expenditure (that is the
+  later retro's job; the report's section 6 is its start).
 
 ## Notifications (#13)
 
@@ -742,7 +814,7 @@ square corners. The tokens are in `index.css` (shadcn's names mapped onto the pa
 `ink`, `lime`, `lime-soft`, `tint`, `orange` and their foregrounds); the primitives (`Band`,
 `Strip`, `Label`, `SlabButton`, `BottomSlab`, `StatusLabel`) in `components/slab.tsx`.
 
-### Screens (#10, #11, #12, #13)
+### Screens (#10, #11, #12, #13, #24)
 
 - **Overview** (`/`): today's totals as the ink slab against the goal in force today (kcal,
   protein, fat, carbs, fibre with what's left; "N meals not counted yet" for those without an
@@ -769,7 +841,25 @@ square corners. The tokens are in `index.css` (shadcn's names mapped onto the pa
   delete (inline confirm), the daily targets (blank = no target) and the goal history (each
   goal's period, "replaced the same day", the one in force). Changing a target brings the bottom
   slab: **Save · from today** (a new goal from the phone's today) or, with the toggle "Fix a typo
-  in the current goal", **Fix current goal** (PATCH in place).
+  in the current goal", **Fix current goal** (PATCH in place). Above the targets the guided row
+  (#24): lime **Guided setup** while no goal is in force, a tint **Guided setup** /
+  **Recalculate** (with a saved profile) after; a guided goal in force gets a "Why these targets"
+  disclosure with its stored explanation, and guided goals in the history read "Guided · cut,
+  standard pace" and open theirs.
+- **Guided setup** (#24, `/goals/guided`, from the goals screen's guided row): five steps, one
+  question block each, the header saying "Guided setup · n / 5" with a five-part progress bar;
+  the header's back goes a step back (answers stay), on the first step it leaves. 1 **You**:
+  sex, birth year, height, optional body fat, the weight (the log's figure as placeholder, or a
+  new one typed), "pregnant or breastfeeding" for women; refusals replace the bottom slab with a
+  band saying why. 2 **Daily life**: four choice rows with examples. 3 **Training**: a stepper for
+  sessions per week (0 skips the rest), type, typical length, intensity. 4 **Goal**: cut /
+  maintain / bulk, then the paces with what they mean ("≈ 0.4 kg a week, −440 kcal a day"). 5
+  **Your targets**: the kcal in the ink slab with maintenance, the change and the macro split
+  bar; the explanation lines per section with the pace, protein and fat presets and a fat
+  slider, all live; notes on floors and caps; a closed "How this is calculated" disclosure
+  (`GoalMethod`, also under a goal's "Why these targets"); **Save · from today** posts the inputs and choices
+  (not the numbers) and goes back. The profile (`useProfile`) and the guided goal in force
+  pre-fill the next run ("Recalculate").
 - Back buttons (`BackButton`) go back in the app's history, or to the overview when the screen
   was opened directly, so a meal opened from a day view returns there.
 - **Meal** (`/meals/:id`): one route per meal. A meal with an analysis, or a failed one, opens
@@ -881,5 +971,5 @@ Meals, captures, media storage, the job queue and weight entries (#6), the nutri
 with the MCP server (#7), the ACP runtime with the analysis job and worker loop (#8), and the
 transcription worker (#9), the PWA with meal capture (#10), the meal detail with questions and
 corrections (#11), the day view with goals and weight (#12) and Web Push notifications (#13)
-are in: wave 1 is complete. Spike #4 (speech-to-text) decided ADR 0002; spike #5's chosen design is
+are in: wave 1 is complete. On top of it, the guided goal setup (#24). Spike #4 (speech-to-text) decided ADR 0002; spike #5's chosen design is
 [design/design.md](design/design.md). See the epic for the decisions each one builds on.

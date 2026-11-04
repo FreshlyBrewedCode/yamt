@@ -7,7 +7,10 @@ import {
   FixGoalBody,
   type GoalResponse,
   type GoalsResponse,
+  GuidedGoalBody,
   LocalDate,
+  ProfileBody,
+  type ProfileResponse,
 } from "@yamt/shared";
 import { Hono } from "hono";
 import type { IdentityEnv } from "../auth/identity.ts";
@@ -15,7 +18,7 @@ import { HttpError } from "../domain/errors.ts";
 import type { Services } from "../services.ts";
 import { readJson } from "./middleware.ts";
 
-/** Goals and days (mounted under /api, behind auth). Paths: `goalPaths`. */
+/** Goals, guided goals, the profile and days (mounted under /api, behind auth). Paths: `goalPaths`, `profilePaths`. */
 export function goalRoutes(s: Services): Hono<IdentityEnv> {
   const r = new Hono<IdentityEnv>();
 
@@ -23,6 +26,17 @@ export function goalRoutes(s: Services): Hono<IdentityEnv> {
 
   r.post("/goals", async (c) =>
     c.json<GoalResponse>({ goal: s.goals.create(CreateGoalBody.parse(await readJson(c))) }, 201),
+  );
+
+  // a guided goal (#24): calculated here from the profile, the choices and the weight log
+  r.post("/goals/guided", async (c) =>
+    c.json<GoalResponse>({ goal: s.goals.guided(GuidedGoalBody.parse(await readJson(c))) }, 201),
+  );
+
+  r.get("/profile", (c) => c.json<ProfileResponse>({ profile: s.repos.profile.get() }));
+
+  r.put("/profile", async (c) =>
+    c.json<ProfileResponse>({ profile: s.repos.profile.put(ProfileBody.parse(await readJson(c))) }),
   );
 
   r.get("/goals/current", (c) =>
