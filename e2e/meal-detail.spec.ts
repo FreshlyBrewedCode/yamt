@@ -95,7 +95,7 @@ test("answer the agent's question: re-analysed into a new revision; history and 
     .click();
   await traceLoaded;
   const trace = page.getByTestId("trace-section").getByTestId("trace");
-  await expect(trace).toContainText("custom");
+  await expect(trace).toContainText("Custom agent");
   await expect(trace.locator('[data-tool="get_meal"]')).toBeVisible();
   await expect(trace.locator('[data-tool="create_food"]')).toHaveCount(2);
   const save = trace.locator('[data-tool="save_meal_revision"]');

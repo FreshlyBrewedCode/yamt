@@ -109,6 +109,7 @@ describe("parseTrace", () => {
       "error",
       "error",
     ]);
+    expect(p.items[0]).toMatchObject({ text: "model fake: not offered by the harness" });
     expect(p.items[1]).toMatchObject({ text: "Die Notiz nennt Haferflocken." });
     expect(p.items[2]).toMatchObject({
       name: "search_foods",
@@ -196,4 +197,30 @@ describe("summaries", () => {
     expect(summariseResult("WebFetch", "line one\nline two", "completed")).toBe("line one line two");
     expect(summariseResult("x", null, "failed")).toBe("failed");
   });
+});
+
+test("config events since #28: what was set, what wasn't offered, what went through _meta", () => {
+  const p = parseTrace(
+    [
+      line(1, "config", { what: "model", configId: "model", value: "sonnet", error: null }),
+      line(2, "config", {
+        what: "effort",
+        configId: "effort",
+        value: "max",
+        error: "not offered by the harness",
+      }),
+      line(3, "config", {
+        what: "model",
+        configId: "model",
+        value: "claude-opus-5-5",
+        error: null,
+        note: "not in the harness's list; set through session/new instead",
+      }),
+    ].join("\n"),
+  );
+  expect(p.items.map((i) => (i.type === "notice" ? i.text : i.type))).toEqual([
+    "model set to sonnet",
+    "effort max: not offered by the harness",
+    "model claude-opus-5-5: not in the harness's list; set through session/new instead",
+  ]);
 });

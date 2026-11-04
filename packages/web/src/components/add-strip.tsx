@@ -129,7 +129,7 @@ export function AddStrip({
  * Sheets slide in from the top: on iOS the keyboard covers the bottom half of the screen, and a
  * bottom sheet would sit behind it.
  */
-function CaptureSheet({
+export function CaptureSheet({
   open,
   onClose,
   title,
@@ -178,7 +178,7 @@ function CaptureSheet({
   );
 }
 
-const fieldClass =
+export const fieldClass =
   "w-full bg-tint px-5 py-4 font-medium text-base text-foreground outline-none placeholder:text-muted-foreground focus:bg-lime-soft";
 
 function NoteSheet({

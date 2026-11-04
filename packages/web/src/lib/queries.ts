@@ -2,6 +2,10 @@
 
 import { QueryClient, useMutation, useQuery } from "@tanstack/react-query";
 import {
+  type AgentOptionsResponse,
+  type AgentResponse,
+  type AgentSettingsBody,
+  agentPaths,
   apiPaths,
   type CreateGoalBody,
   type DayResponse,
@@ -57,6 +61,8 @@ export const keys = {
   push: ["push"] as const,
   /** This browser's support, permission and subscription (not server state, kept here with it). */
   pushDevice: ["push", "device"] as const,
+  agent: ["agent"] as const,
+  agentOptions: (harness: string, model: string | null) => ["agent", "options", harness, model] as const,
 };
 
 /** The browser's zone: days are the phone's calendar days. */
@@ -346,5 +352,68 @@ export function useTestPush() {
     mutationFn: (id: string) => api.post<PushTestResponse>(pushPaths.test(id)),
     // a gone subscription was removed on the server
     onSuccess: (r) => (r.delivery === "gone" ? pushChanged() : undefined),
+  });
+}
+
+// ---- Agent settings (#28) -------------------------------------------------------------------------
+
+/** The effective harness, model and effort with their sources, and the harnesses found on the server. */
+export function useAgent() {
+  return useQuery({ queryKey: keys.agent, queryFn: () => api.get<AgentResponse>(agentPaths.agent) });
+}
+
+const optionsUrl = (harness: string, model: string | null, refresh = false) => {
+  const q = new URLSearchParams({ harness });
+  if (model) q.set("model", model);
+  if (refresh) q.set("refresh", "1");
+  return `${agentPaths.options}?${q}`;
+};
+
+const fetchAgentOptions = (harness: string, model: string | null) =>
+  queryClient.fetchQuery({
+    queryKey: keys.agentOptions(harness, model),
+    queryFn: () => api.get<AgentOptionsResponse>(optionsUrl(harness, model)),
+    staleTime: 5 * 60_000,
+  });
+
+/**
+ * What a harness offers with `model` selected: the server starts the harness to ask (a second or
+ * two) and keeps the answer an hour, so this stays fresh for a while too and isn't retried.
+ */
+export function useAgentOptions(harness: string | undefined, model: string | null, enabled = true) {
+  return useQuery({
+    queryKey: keys.agentOptions(harness ?? "", model),
+    queryFn: () => api.get<AgentOptionsResponse>(optionsUrl(harness ?? "", model)),
+    enabled: enabled && !!harness,
+    staleTime: 5 * 60_000,
+    retry: false,
+  });
+}
+
+/** Asks the harness again (a login fixed, a new model): drops what the server and the app know. */
+export function useRefreshAgentOptions() {
+  return useMutation({
+    mutationFn: async (v: { harness: string; model: string | null }) => {
+      const fresh = await api.get<AgentOptionsResponse>(optionsUrl(v.harness, v.model, true));
+      queryClient.removeQueries({ queryKey: ["agent", "options", v.harness] });
+      queryClient.setQueryData(keys.agentOptions(v.harness, v.model), fresh);
+      return fresh;
+    },
+    onError: (_e, v) => queryClient.invalidateQueries({ queryKey: keys.agentOptions(v.harness, v.model) }),
+  });
+}
+
+/** Saves the app's Agent setting. A model switch keeps the saved effort only if the new model offers it. */
+export function useSaveAgent() {
+  return useMutation({
+    mutationFn: async (v: AgentSettingsBody & { keepEffortIfOffered?: boolean }) => {
+      const { keepEffortIfOffered, ...body } = v;
+      if (keepEffortIfOffered && body.effort !== null && body.model !== null) {
+        const opts = await fetchAgentOptions(body.harness, body.model);
+        if (!opts.effort?.choices.some((c) => c.value === body.effort)) body.effort = null;
+      }
+      return api.put<AgentResponse>(agentPaths.agent, body);
+    },
+    onSuccess: (r) => queryClient.setQueryData(keys.agent, r),
   });
 }

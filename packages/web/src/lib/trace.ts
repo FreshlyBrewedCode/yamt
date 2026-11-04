@@ -199,10 +199,17 @@ export function parseTrace(text: string): ParsedTrace {
         items.push({ type: "permission", tool: toolName(name), decision: str(e.decision) ?? "?", t: e.t });
         break;
       }
-      case "config":
+      case "config": {
+        // `what` since #28 (model or effort); older traces name only the option
+        const what = str(e.what) ?? str(e.configId) ?? "option";
+        const value = str(e.value);
         if (str(e.error))
-          items.push({ type: "notice", text: `config ${str(e.configId)}: ${str(e.error)}`, t: e.t });
+          items.push({ type: "notice", text: `${what} ${value ?? ""}: ${str(e.error)}`, t: e.t });
+        else if (str(e.note))
+          items.push({ type: "notice", text: `${what} ${value ?? ""}: ${str(e.note)}`, t: e.t });
+        else if (value) items.push({ type: "notice", text: `${what} set to ${value}`, t: e.t });
         break;
+      }
       case "cancel":
         items.push({ type: "error", text: `cancelled (${str(e.reason) ?? "?"})`, t: e.t });
         break;

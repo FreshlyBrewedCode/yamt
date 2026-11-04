@@ -26,6 +26,7 @@ export function CheckSquare({ on, className }: { on: boolean; className?: string
 /**
  * One option of a single choice, as a full-width row (≥ 72 px): the title bold, one line of
  * example under it, the check on the right. Rows stack with dividers in a `ChoiceList`; each is a toggle button (`aria-pressed`).
+ * A disabled row is muted without a square, unless it is the chosen one (a choice fixed elsewhere).
  */
 export function ChoiceRow({
   title,
@@ -63,7 +64,7 @@ export function ChoiceRow({
           </span>
         )}
       </span>
-      {!disabled && <CheckSquare on={selected} />}
+      {(!disabled || selected) && <CheckSquare on={selected} />}
     </button>
   );
 }
@@ -92,13 +93,15 @@ export interface ChipOption<T> {
 
 /**
  * Preset chips: equal cells in one row, 56 px (64 with a number), tint; the chosen one in the
- * foreground fill. For the presets the user picks from instead of typing a number.
+ * foreground fill. For the presets the user picks from instead of typing a number. More than
+ * five wrap into two rows (six efforts don't fit one row at 390 px).
  */
 export function Chips<T extends string | number>({
   label,
   options,
   value,
   onChange,
+  disabled = false,
   className,
   ...props
 }: {
@@ -106,12 +109,16 @@ export function Chips<T extends string | number>({
   options: readonly ChipOption<T>[];
   value: T | null;
   onChange: (value: T) => void;
+  /** Fixed elsewhere: the chosen chip stays visible, nothing can be pressed, the rest is muted. */
+  disabled?: boolean;
 } & Omit<React.ComponentProps<"fieldset">, "onChange">) {
   return (
-    <fieldset aria-label={label} className={cn("min-w-0", className)} {...props}>
+    <fieldset aria-label={label} disabled={disabled} className={cn("min-w-0", className)} {...props}>
       <div
         className="grid gap-0.5"
-        style={{ gridTemplateColumns: `repeat(${options.length}, minmax(0, 1fr))` }}
+        style={{
+          gridTemplateColumns: `repeat(${options.length > 5 ? Math.ceil(options.length / 2) : options.length}, minmax(0, 1fr))`,
+        }}
       >
         {options.map((o) => {
           const on = o.value === value;
@@ -125,6 +132,7 @@ export function Chips<T extends string | number>({
                 "flex min-w-0 flex-col items-center justify-center px-1 outline-none focus-visible:underline",
                 o.sub !== undefined ? "h-16" : "h-14",
                 on ? "bg-foreground text-background" : "bg-tint",
+                disabled && !on && "text-muted-foreground",
               )}
             >
               {o.sub !== undefined && <span className="display text-[20px]">{o.sub}</span>}

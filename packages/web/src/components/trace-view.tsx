@@ -1,4 +1,4 @@
-import type { AnalysisRun } from "@yamt/shared";
+import { type AnalysisRun, HARNESS_LABELS, type HarnessKind } from "@yamt/shared";
 import { cn } from "cn";
 import { useState } from "react";
 import { formatElapsed, formatNumber, formatTime } from "@/lib/format";
@@ -18,6 +18,7 @@ export function runMeta(run: AnalysisRun): string {
   const parts = [
     run.endedAt !== null ? formatElapsed(run.endedAt - run.startedAt) : "running",
     run.model,
+    run.effort && run.effort !== "default" ? run.effort : null,
     run.status === "failed" ? "failed" : null,
   ];
   return parts.filter(Boolean).join(" · ");
@@ -36,9 +37,18 @@ export function TraceView({ run }: { run: AnalysisRun }) {
   const turn = run.usage?.turn;
   const tokens = turn ? { input: turn.inputTokens, output: turn.outputTokens } : (t?.run.tokens ?? null);
   const cost = t?.run.cost ?? run.usage?.context?.cost ?? null;
+  const answered = run.model ?? t?.run.model ?? null;
   const facts: [string, string][] = [
-    ["Model", run.model ?? t?.run.model ?? "—"],
-    ["Harness", run.harness],
+    ["Model", answered ?? "—"],
+    // what the settings asked for, when the harness reports it differently (an alias, a fallback)
+    ...(run.requestedModel && run.requestedModel !== answered
+      ? ([["Asked for", run.requestedModel]] as [string, string][])
+      : []),
+    [
+      "Effort",
+      run.effort ?? (run.requestedEffort ? `${run.requestedEffort} (not offered)` : "harness default"),
+    ],
+    ["Harness", HARNESS_LABELS[run.harness as HarnessKind] ?? run.harness],
     ["Started", `${formatTime(run.startedAt)}${run.attempt > 1 ? ` · attempt ${run.attempt}` : ""}`],
     ["Took", run.endedAt !== null ? formatElapsed(run.endedAt - run.startedAt) : "running…"],
     ["Outcome", runStatusText[run.status]],
@@ -59,6 +69,14 @@ export function TraceView({ run }: { run: AnalysisRun }) {
           </div>
         ))}
       </dl>
+      {run.configNote && (
+        <p
+          className="border-border border-t px-5 py-3 font-medium text-muted-foreground text-sm"
+          data-testid="run-config-note"
+        >
+          {run.configNote}
+        </p>
+      )}
       {run.error && (
         <p className="bg-orange px-5 py-3 font-bold text-orange-foreground text-sm" role="alert">
           {run.error}
