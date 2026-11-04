@@ -28,6 +28,8 @@ import {
   type PushTestResponse,
   profilePaths,
   pushPaths,
+  type RepeatableResponse,
+  type RepeatMealResponse,
   type RetractResponse,
   runPaths,
   type TranscribeResponse,
@@ -50,6 +52,8 @@ export const keys = {
   mealsRange: (from: number, to: number, tz: string) => ["meals", { from, to, tz }] as const,
   meal: (id: string) => ["meal", id] as const,
   revisions: (mealId: string) => ["meal", mealId, "revisions"] as const,
+  /** Under "meals": a new or re-analysed meal changes what can be logged again. */
+  repeatable: ["meals", "repeatable"] as const,
   trace: (runId: string) => ["run", runId, "trace"] as const,
   /** Under "meals", so everything that refreshes the meals refreshes the day view too. */
   day: (date: string, tz: string) => ["meals", "day", date, tz] as const,
@@ -170,6 +174,42 @@ export function useUpdateMeal(mealId: string) {
       void queryClient.invalidateQueries({ queryKey: keys.meals });
     },
   });
+}
+
+/** Recent analysed meals to log again (#30), one per title, the most often logged first. */
+export function useRepeatable(enabled = true) {
+  return useQuery({
+    queryKey: keys.repeatable,
+    queryFn: () => api.get<RepeatableResponse>(mealPaths.repeatable),
+    enabled,
+    staleTime: 60_000,
+  });
+}
+
+/**
+ * Log a meal again (#30): one request, not a capture, so it doesn't go through the upload queue;
+ * offline it fails and says so (`repeatError`). `id` (a UUIDv7 made when the sheet opened) makes
+ * a retry after a lost response answer the same copy.
+ */
+export function useRepeatMeal() {
+  return useMutation({
+    mutationFn: (v: { sourceId: string; id: string; factor: number; eatenAt: number }) =>
+      api.post<RepeatMealResponse>(mealPaths.repeat(v.sourceId), {
+        id: v.id,
+        factor: v.factor,
+        eatenAt: v.eatenAt,
+        tz: browserZone(),
+      }),
+    onSettled: () => void queryClient.invalidateQueries({ queryKey: keys.meals }),
+  });
+}
+
+/** What a failed "log again" says: offline is the usual reason, and it needs the server. */
+export function repeatError(e: Error): string {
+  if (!(e instanceof ApiError) || !navigator.onLine) {
+    return "No connection: logging a meal again needs yamt. Try again once you're online.";
+  }
+  return `Couldn't log it: ${e.message}`;
 }
 
 /** Transcribe a voice capture again (after a failure). */

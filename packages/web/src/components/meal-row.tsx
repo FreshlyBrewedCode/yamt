@@ -20,7 +20,8 @@ export interface MealRowData {
 
 /**
  * Days, newest first, with their meals: the server's, plus meals that exist only on this phone so
- * far (started offline). Empty drafts (opened, nothing captured) are left out.
+ * far (started offline). Empty drafts (opened, nothing captured) are left out; a meal logged again
+ * (#30) has no captures but its analysis, and counts like any other.
  */
 export function groupByDay(meals: MealSummary[], entries: readonly OutboxEntry[]) {
   const rows = new Map<string, MealRowData>();
@@ -44,7 +45,7 @@ export function groupByDay(meals: MealSummary[], entries: readonly OutboxEntry[]
   }
   const byDay = new Map<number, MealRowData[]>();
   for (const r of rows.values()) {
-    if (r.meal && r.meal.captureCount === 0 && r.pending === 0) continue;
+    if (r.meal && r.meal.captureCount === 0 && r.meal.currentRevisionId === null && r.pending === 0) continue;
     const start = startOfDay(r.eatenAt);
     byDay.set(start, [...(byDay.get(start) ?? []), r]);
   }
@@ -67,7 +68,7 @@ export function MealRow({ row }: { row: MealRowData }) {
   else if (hot)
     detail = m?.openQuestions ? `${plural(m.openQuestions, "question")} for you` : "Needs your input";
   else {
-    const parts = [m ? captureSummary(m.captureKinds) : ""];
+    const parts = [m?.sourceMealId ? "Logged again" : "", m ? captureSummary(m.captureKinds) : ""];
     if (row.pending > 0) parts.push(`${row.pending} uploading`);
     if (m && m.pendingTranscripts > 0) parts.push("transcribing");
     detail = parts.filter(Boolean).join(" · ");

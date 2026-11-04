@@ -122,7 +122,7 @@ export function yamtTools(s: Services): Tool[] {
     tool({
       name: "get_meal",
       scope: "meal",
-      description: `A meal with everything captured for it: transcripts of voice memos, text notes, links, photos (with a local file path you can view), corrections and answers to earlier questions, plus the current analysis revision (items, questions and their answers, computed totals) and the list of earlier revisions. Retracted captures are left out. Captures marked afterCurrentRevision arrived after the current revision was saved: take them into account.`,
+      description: `A meal with everything captured for it: transcripts of voice memos, text notes, links, photos (with a local file path you can view), corrections and answers to earlier questions, plus the current analysis revision (items, questions and their answers, computed totals) and the list of earlier revisions. Retracted captures are left out. Captures marked afterCurrentRevision arrived after the current revision was saved: take them into account. A revision of kind "copy" was logged again from an earlier meal (no analysis; its assumptions say from where and at what portion).`,
       schema: z.object({ mealId: id("meal") }),
       run({ mealId }) {
         const detail = s.meals.detail(mealId);
@@ -168,6 +168,7 @@ export function yamtTools(s: Services): Tool[] {
           revisions: s.repos.revisions.listForMeal(mealId).map((r) => ({
             id: r.id,
             number: r.number,
+            kind: r.kind,
             title: r.title,
             status: r.status,
             createdAt: iso(r.createdAt),
@@ -446,6 +447,8 @@ function revisionOut(v: MealRevisionView, iso: (ms: number | null) => string | n
   return {
     id: v.revision.id,
     number: v.revision.number,
+    // `copy`: logged again from another meal (#30), not analysed from this meal's captures
+    kind: v.revision.kind,
     title: v.revision.title,
     summary: v.revision.summary,
     status: v.revision.status,

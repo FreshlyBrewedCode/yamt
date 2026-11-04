@@ -5,6 +5,7 @@ import type {
   MealRevision,
   Nutrients,
   Provenance,
+  RevisionKind,
   RevisionStatus,
 } from "@yamt/shared";
 import { type Db, newId } from "../index.ts";
@@ -15,6 +16,8 @@ interface RevisionRow {
   meal_id: string;
   number: number;
   run_id: string | null;
+  kind: RevisionKind;
+  source_revision_id: string | null;
   title: string;
   summary: string;
   eaten_at: number | null;
@@ -50,6 +53,8 @@ const toRevision = (r: RevisionRow): MealRevision => ({
   mealId: r.meal_id,
   number: r.number,
   runId: r.run_id,
+  kind: r.kind,
+  sourceRevisionId: r.source_revision_id,
   title: r.title,
   summary: r.summary,
   eatenAt: r.eaten_at,
@@ -84,6 +89,9 @@ const toQuestion = (r: QuestionRow): MealQuestion => ({
 export interface NewRevision {
   mealId: string;
   runId: string | null;
+  /** `analysis` by default; `copy` with `sourceRevisionId` for a meal logged again (#30). */
+  kind?: RevisionKind;
+  sourceRevisionId?: string | null;
   title: string;
   summary: string;
   eatenAt: number | null;
@@ -122,14 +130,17 @@ export class RevisionRepo {
         .get(r.mealId)?.n ?? 0) + 1;
     this.db
       .query(
-        `INSERT INTO meal_revisions (id, meal_id, number, run_id, title, summary, eaten_at, assumptions, status, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO meal_revisions (id, meal_id, number, run_id, kind, source_revision_id, title, summary, eaten_at,
+           assumptions, status, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
         r.mealId,
         number,
         r.runId,
+        r.kind ?? "analysis",
+        r.sourceRevisionId ?? null,
         r.title,
         r.summary,
         r.eatenAt,

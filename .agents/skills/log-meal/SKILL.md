@@ -46,6 +46,12 @@ contradicts them, and change exactly what the new material says (captures marked
 quietly drop items the user didn't object to. The new revision is complete on its own: repeat the
 unchanged items, don't save only the difference.
 
+A current revision of kind `copy` was not analysed: the user logged an earlier meal again ("the
+same cappuccino"), and yamt copied that meal's items, scaled by the portion they picked (its last
+assumption says from which meal and by what factor). The meal then has no captures of its own
+until the user adds some, so everything captured counts as new. Start from the copy like from any
+earlier revision: the user's captures say what was different this time.
+
 ## 3. Split the meal into items
 
 - One item per food as eaten: "2 Scheiben Vollkornbrot", "Butter", "Gouda", not "Käsebrot".

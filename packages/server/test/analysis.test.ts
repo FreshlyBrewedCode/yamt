@@ -269,6 +269,34 @@ describe("analysis run lifecycle", () => {
   });
 });
 
+describe("log again (#30)", () => {
+  test("a copy runs nothing; once a capture arrives, re-analysis starts from the copied revision", async () => {
+    const sourceId = meal("Cappuccino, fake:save");
+    s.meals.analyse(sourceId);
+    await settledMeal(sourceId, "analysed");
+    const { meal: copy, revision } = s.meals.repeat(sourceId, { factor: 2, eatenAt: Date.now() });
+    expect(copy.status).toBe("analysed");
+    expect(() => s.meals.analyse(copy.id)).toThrow("nothing to analyse yet");
+    await Bun.sleep(100);
+    expect(runs(copy.id)).toEqual([]);
+
+    s.meals.addJson(copy.id, { kind: "text", text: "Diesmal mit Hafermilch, fake:save" });
+    s.meals.analyse(copy.id);
+    const m = await settledMeal(copy.id, "analysed");
+    const [run] = await finishedRun(copy.id);
+    expect(run?.status).toBe("succeeded");
+    expect(s.repos.revisions.listForMeal(copy.id).map((r) => [r.number, r.kind, r.runId])).toEqual([
+      [1, "copy", null],
+      [2, "analysis", run!.id],
+    ]);
+    expect(m).toMatchObject({ currentRevisionId: run!.revisionId, eatenAtSource: "user" });
+    const rec = fakeRecord(run!.id);
+    expect(rec.currentRevision).toEqual({ number: revision.revision.number, kind: "copy" });
+    const prompt = rec.prompt as { text?: string }[];
+    expect(prompt[0]?.text).toContain("This is a re-analysis: revision 1 exists");
+  });
+});
+
 describe("transcripts", () => {
   /** An audio capture with a pending transcript, as an upload would make it. */
   function audio(mealId: string) {

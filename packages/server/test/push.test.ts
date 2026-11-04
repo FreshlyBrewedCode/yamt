@@ -6,11 +6,13 @@ import {
   ALL_PUSH_EVENTS,
   type Meal,
   type MealRevisionView,
+  mealPaths,
   type PushPayload,
   type PushResponse,
   type PushSubscriptionResponse,
   type PushTestResponse,
   pushPaths,
+  type RepeatMealResponse,
 } from "@yamt/shared";
 import type { AnalysisConfig } from "../src/config.ts";
 import { dataPaths } from "../src/config.ts";
@@ -238,6 +240,7 @@ describe("mealNotification", () => {
     eatenAtSource: "capture",
     currentRevisionId: "r1",
     analysisError: null,
+    sourceMealId: null,
     createdAt: 0,
     updatedAt: 0,
     ...over,
@@ -461,5 +464,22 @@ describe("notifications from the analysis job", () => {
     await waitFor("one notification", () => received(phone).length === 1);
     await Bun.sleep(150);
     expect(received(phone).map((p) => [p.event, p.url])).toEqual([["analysed", `/meals/${mealId}`]]);
+    s.repos.pushSubscriptions.delete(s.repos.pushSubscriptions.byEndpoint(phone.subscription.endpoint)!.id);
+  });
+
+  test("logging a meal again notifies nothing: there was no analysis (#30)", async () => {
+    const phone = browser();
+    s.repos.pushSubscriptions.upsert(phone.subscription);
+    const source = meal("Cappuccino, fake:save");
+    s.meals.analyse(source);
+    await waitFor("analysed", () => received(phone).length === 1);
+    const res = await call<RepeatMealResponse>("POST", mealPaths.repeat(source), {
+      factor: 1,
+      eatenAt: Date.now(),
+    });
+    expect(res.status).toBe(201);
+    expect(res.body.meal.status).toBe("analysed");
+    await Bun.sleep(200);
+    expect(received(phone).map((p) => p.url)).toEqual([`/meals/${source}`]);
   });
 });

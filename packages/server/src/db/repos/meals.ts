@@ -8,6 +8,7 @@ interface Row {
   eaten_at_source: EatenAtSource;
   current_revision_id: string | null;
   analysis_error: string | null;
+  source_meal_id: string | null;
   created_at: number;
   updated_at: number;
 }
@@ -19,6 +20,7 @@ const toMeal = (r: Row): Meal => ({
   eatenAtSource: r.eaten_at_source,
   currentRevisionId: r.current_revision_id,
   analysisError: r.analysis_error,
+  sourceMealId: r.source_meal_id,
   createdAt: r.created_at,
   updatedAt: r.updated_at,
 });
@@ -32,15 +34,23 @@ export const CAPTURE_TIME_SQL = "COALESCE(taken_at, captured_at, created_at)";
 export class MealRepo {
   constructor(private readonly db: Db) {}
 
-  insert(m: { id?: string; eatenAt?: number; now?: number } = {}): Meal {
+  /** A new draft; `eatenAt` pins the time (`user`). `sourceMealId`: logged again from that meal (#30). */
+  insert(m: { id?: string; eatenAt?: number; sourceMealId?: string; now?: number } = {}): Meal {
     const id = m.id ?? newId();
     const now = m.now ?? Date.now();
     this.db
       .query(
-        `INSERT INTO meals (id, status, eaten_at, eaten_at_source, created_at, updated_at)
-         VALUES (?, 'draft', ?, ?, ?, ?)`,
+        `INSERT INTO meals (id, status, eaten_at, eaten_at_source, source_meal_id, created_at, updated_at)
+         VALUES (?, 'draft', ?, ?, ?, ?, ?)`,
       )
-      .run(id, m.eatenAt ?? now, m.eatenAt === undefined ? "created" : "user", now, now);
+      .run(
+        id,
+        m.eatenAt ?? now,
+        m.eatenAt === undefined ? "created" : "user",
+        m.sourceMealId ?? null,
+        now,
+        now,
+      );
     return this.get(id)!;
   }
 
@@ -111,6 +121,22 @@ export class MealRepo {
       )
       .get(since);
     return r ? toMeal(r) : null;
+  }
+
+  /**
+   * Meals eaten in [from, to) whose current revision is an analysed one (not preliminary), newest
+   * first, with that revision's id and title: what can be logged again (#30).
+   */
+  analysedBetween(from: number, to: number): { meal: Meal; revisionId: string; title: string }[] {
+    return this.db
+      .query<Row & { revision_title: string }, [number, number]>(
+        `SELECT m.*, r.title AS revision_title FROM meals m
+         JOIN meal_revisions r ON r.id = m.current_revision_id
+         WHERE m.eaten_at >= ? AND m.eaten_at < ? AND r.status = 'analysed'
+         ORDER BY m.eaten_at DESC, m.id DESC`,
+      )
+      .all(from, to)
+      .map((r) => ({ meal: toMeal(r), revisionId: r.current_revision_id!, title: r.revision_title }));
   }
 
   /** Sets the status; `error` is kept only with `failed` (why the analysis failed), else cleared. */

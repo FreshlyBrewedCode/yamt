@@ -15,6 +15,10 @@ export const mealPaths = {
   revisions: (mealId: string) => `/api/meals/${mealId}/revisions`,
   captures: (mealId: string) => `/api/meals/${mealId}/captures`,
   analyse: (mealId: string) => `/api/meals/${mealId}/analyse`,
+  /** Log the meal again (#30): a new meal with a copy of its current revision, no analysis. */
+  repeat: (mealId: string) => `/api/meals/${mealId}/repeat`,
+  /** Recent analysed meals to log again (`RepeatableQuery`): one per title, most often first. */
+  repeatable: "/api/meals/repeatable",
   retract: (captureId: string) => `/api/captures/${captureId}/retract`,
   /** Re-run an audio capture's transcript (e.g. after a model change); the audio stays as it is. */
   transcribe: (captureId: string) => `/api/captures/${captureId}/transcribe`,
@@ -93,6 +97,8 @@ export interface Meal {
   currentRevisionId: string | null;
   /** Why the analysis failed for good (status `failed`); null otherwise. */
   analysisError: string | null;
+  /** The meal this one was logged again from (#30); null for a meal of its own. */
+  sourceMealId: string | null;
   createdAt: number;
   updatedAt: number;
 }
@@ -241,6 +247,15 @@ export interface MealDetailResponse {
   transcripts: Transcript[];
   revision: MealRevisionView | null;
   runs: AnalysisRun[];
+  /** The meal it was logged again from (#30), as it is now; null for a meal of its own. */
+  source: MealSource | null;
+}
+
+/** The meal another one was logged again from: its current title (null without one) and time. */
+export interface MealSource {
+  mealId: string;
+  title: string | null;
+  eatenAt: number;
 }
 
 /**
@@ -322,6 +337,56 @@ export interface TranscribeResponse {
   capture: Capture;
   transcript: Transcript;
   jobId: string;
+}
+
+/** The portions the app offers for logging a meal again (#30); the server takes any factor in range. */
+export const REPEAT_FACTORS = [0.5, 1, 1.5, 2] as const;
+
+/**
+ * `POST /api/meals/:id/repeat` (#30): log the meal again at `eatenAt` (pinned, source `user`),
+ * every item's grams × `factor`. With an `id` it is idempotent like `CreateMealBody`: 201 the
+ * first time, 200 with the stored copy after (a meal with that id that isn't a copy of this one
+ * is a 409). `tz` (the phone's zone) dates the source in the copy's assumption line.
+ */
+export const RepeatMealBody = z
+  .object({
+    id: clientId,
+    factor: z.number().min(0.1).max(10),
+    eatenAt: epochMs,
+    tz: z.string().min(1).max(64).optional(),
+  })
+  .strict();
+export type RepeatMealBody = z.infer<typeof RepeatMealBody>;
+
+/** `POST /api/meals/:id/repeat`: the new meal and its one revision, the copy. */
+export interface RepeatMealResponse {
+  meal: Meal;
+  revision: MealRevisionView;
+}
+
+/**
+ * `GET /api/meals/repeatable?days&limit` (#30): analysed meals eaten in the last `days` days,
+ * one per title (case and spacing aside), the most often logged first, then the most recent.
+ */
+export const RepeatableQuery = z.object({
+  days: z.coerce.number().int().min(1).max(365).default(30),
+  limit: z.coerce.number().int().min(1).max(20).default(5),
+});
+export type RepeatableQuery = z.infer<typeof RepeatableQuery>;
+
+export interface RepeatableMeal {
+  /** The latest meal with this title: the one a tap logs again. */
+  mealId: string;
+  title: string;
+  eatenAt: number;
+  /** How many meals in the window had this title (copies included). */
+  times: number;
+  /** The latest meal's totals (computed, like every total). */
+  totals: NutrientTotals;
+}
+
+export interface RepeatableResponse {
+  meals: RepeatableMeal[];
 }
 
 /** `POST /api/captures/:id/retract`: idempotent; the capture keeps its first `retractedAt`. */

@@ -1,4 +1,4 @@
-import type { AnalysisRun, Capture, CaptureKind, MealRevisionView } from "@yamt/shared";
+import type { AnalysisRun, Capture, CaptureKind, MealRevision, MealRevisionView } from "@yamt/shared";
 import { cn } from "cn";
 import { useState } from "react";
 import { captureSummary, formatDayTime, formatDelta, formatGrams, formatNumber } from "@/lib/format";
@@ -8,7 +8,9 @@ import { Disclosure, Label } from "./slab";
 import { runMeta, TraceView } from "./trace-view";
 
 /** What arrived between the revision before and this one ("after 1 answer · 1 correction"). */
-function trigger(captures: Capture[], from: number | null, to: number): string {
+function trigger(captures: Capture[], revision: MealRevision, from: number | null): string {
+  if (revision.kind === "copy") return "logged again";
+  const to = revision.createdAt;
   if (from === null) return "first analysis";
   const kinds: Partial<Record<CaptureKind, number>> = {};
   for (const c of captures) {
@@ -70,7 +72,7 @@ export function RevisionHistory({
               </div>
               <Label className="mt-1 text-muted-foreground">
                 {formatDayTime(r.createdAt)} · {r.status === "needs_input" ? "needs input" : "analysed"} ·{" "}
-                {trigger(captures, before?.revision.createdAt ?? null, r.createdAt)}
+                {trigger(captures, r, before?.revision.createdAt ?? null)}
               </Label>
               <p className="mt-1 truncate font-medium text-sm">{r.title}</p>
             </button>
@@ -140,7 +142,9 @@ function RevisionBody({ view, run }: { view: MealRevisionView; run: AnalysisRun 
         </Disclosure>
       ) : (
         <p className="px-5 py-3 font-medium text-muted-foreground text-sm">
-          Saved in an interactive session (no run).
+          {view.revision.kind === "copy"
+            ? "Logged again from another meal: its items were copied, nothing was analysed (no run)."
+            : "Saved in an interactive session (no run)."}
         </p>
       )}
     </div>

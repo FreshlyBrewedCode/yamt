@@ -77,7 +77,7 @@ test("log a meal: record, photos, note, link, analyse", async ({ page }) => {
   // offers Re-analyse once something new is there
   await row.click();
   await expect(page.getByTestId("meal-totals")).toContainText("500");
-  await page.getByRole("button", { name: "Add to this meal" }).click();
+  await page.getByRole("button", { name: "Add more" }).click();
   await expect(page).toHaveURL(/\?add=/);
   await expect(page.getByRole("button", { name: "Re-analyse" })).toHaveCount(0);
   await page.getByRole("button", { name: "Add note" }).click();

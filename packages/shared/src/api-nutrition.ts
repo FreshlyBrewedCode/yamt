@@ -63,14 +63,24 @@ export interface Food {
 export const RevisionStatus = z.enum(["analysed", "needs_input"]);
 export type RevisionStatus = z.infer<typeof RevisionStatus>;
 
+/**
+ * How a revision came about: `analysis` (an analysis run, or an interactive session, saved it)
+ * or `copy` (#30: the meal was logged again from another one; no run, no new numbers).
+ */
+export const RevisionKind = z.enum(["analysis", "copy"]);
+export type RevisionKind = z.infer<typeof RevisionKind>;
+
 /** A revision as stored: what an analysis concluded about a meal. Kept forever. */
 export interface MealRevision {
   id: string;
   mealId: string;
   /** 1, 2, … per meal. */
   number: number;
-  /** The analysis run (#8) that wrote it; null for interactive sessions. */
+  /** The analysis run (#8) that wrote it; null for interactive sessions and copies. */
   runId: string | null;
+  kind: RevisionKind;
+  /** For a copy: the revision (of the source meal) it was copied from. */
+  sourceRevisionId: string | null;
   title: string;
   summary: string;
   eatenAt: number | null;
