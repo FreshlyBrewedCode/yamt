@@ -1,8 +1,8 @@
 # yamt: architecture
 
-What exists today (the scaffold, #3), how it fits together, and where wave 1 goes next. Why it
-is built this way: [ADR 0001](adr/0001-wave-1-architecture.md). Commands and conventions:
-[AGENTS.md](../AGENTS.md).
+What exists today (the scaffold, #3, and the meal backend, #6), how it fits together, and where
+wave 1 goes next. Why it is built this way: [ADR 0001](adr/0001-wave-1-architecture.md).
+Commands and conventions: [AGENTS.md](../AGENTS.md).
 
 ## Components
 
@@ -13,29 +13,38 @@ iPhone (Safari / home-screen PWA), on the tailnet
   ▼
 yamt start   (one Bun process, binds 127.0.0.1:7890 only)
   ├─ Hono JSON API   /api/*   identity-header auth (except /api/health), same-origin writes,
-  │                           zod-validated bodies
+  │                           zod-validated bodies; meals, captures, media, weight
   ├─ SPA             /*       packages/web/dist   (dev: Vite on 7891 proxies /api)
   └─ SQLite          ~/.yamt/yamt.db   (WAL, foreign keys, 0600)
      data dir        ~/.yamt/  (0700): yamt.db, media/, runs/, config.json
+     job queue       the `jobs` table; the worker loop that drains it arrives with #8/#9
 ```
 
 ## Layout
 
 ```
 packages/shared/src/      contracts shared by server and web (no runtime deps but zod)
-  api.ts                  API paths, request schemas, response types
+  api.ts                  API paths, request schemas, response types (health, me)
+  api-meals.ts            meals, captures, transcripts, media: `mealPaths`, enums, bodies, types
+  api-weight.ts           weight entries: `weightPaths`, body, types
 packages/server/src/
   cli.ts                  `yamt start` (flags: --data-dir --port --https-port --local --no-auth --dev --no-build)
-  server.ts               composition root: data dir, DB, API, static; the mount points
+  server.ts               composition root: data dir, DB, services, API, static; the mount points
+  services.ts             createServices: repositories + domain services, what HTTP talks to
   config.ts               data dir resolution and setup, config.json, ports, version
   tailscale.ts            `tailscale serve --https=<port>` in the foreground
   build-stamp.ts          rebuild packages/web/dist when its sources changed
   auth/identity.ts        requireTailnetIdentity: the Tailscale-User-Login check, dev bypass
   auth/bearer.ts          requireBearer: token auth for machine clients (/mcp, from #7)
-  http/                   api.ts (routes), middleware.ts (sameOrigin, errors), origin.ts, static.ts
-  domain/errors.ts        HttpError
-  db/                     index.ts (open, pragmas, migration runner, newId), migrations/*.sql
-packages/server/test/     bun tests, temp dirs only
+  http/                   api.ts (mounts), meals.ts and weight.ts (routes), file-response.ts
+                          (media, ranges), middleware.ts (sameOrigin, errors, readJson),
+                          origin.ts, static.ts
+  domain/                 errors.ts (HttpError), meals.ts (MealService: captures, retract, analyse)
+  media/                  store.ts (write-once files), detect.ts (type sniffing), exif.ts,
+                          heic.ts (HEIC → JPEG)
+  db/                     index.ts (open, pragmas, migration runner, newId), migrations/*.sql,
+                          repos/ (one per aggregate: meals, captures, transcripts, jobs, weight)
+packages/server/test/     bun tests, temp dirs only; fixtures/ holds made-up images
 packages/web/src/
   main.tsx                router + query client
   routes/                 TanStack file routes (__root.tsx, index.tsx); routeTree.gen.ts is generated
@@ -88,10 +97,95 @@ docs/adr/                 architecture decision records
 - **Migrations:** `db/migrations/<YYYYMMDDHHmm>_<what>.sql`, applied in name order on open, each
   in its own transaction, tracked by name in `schema_migrations` together with a SHA-256 of the
   file. A failed migration rolls back and stops the start; an applied file whose checksum changed
-  stops it too ("add a new migration instead"). There are none yet; #6 adds the first tables.
+  stops it too ("add a new migration instead").
 - **Repositories:** no ORM. Each aggregate gets `db/repos/<entity>.ts` with the SQL for it,
   taking a `Db` and returning the shared domain types; services and routes never write SQL.
-  Ids are UUIDv7 (`newId()`), so they sort by creation time.
+  Ids are UUIDv7 (`newId()`), so they sort by creation time. `db/repos/meals.ts` and
+  `captures.ts` are the reference: a `Row` interface, a `toX` mapper to the shared type, a class
+  over `Db`; server-only fields (file paths) live on a `…Record` type that `toX` strips. Times are
+  epoch milliseconds everywhere (DB and API).
+
+### Data model
+
+Enum-like columns are validated in code (the zod enums in `@yamt/shared`), not with `CHECK`, so a
+new value never needs a table rebuild.
+
+- **meals**: `status` `draft` → `queued` → `analysing` → `analysed` | `needs_input` | `failed`;
+  `eaten_at` with `eaten_at_source`: `created` (no capture yet: the creation time), `capture` (the
+  earliest live capture), `user` (given on create), `agent` (refined by the analysis, #8). Only
+  `created`/`capture` follow the captures: adding or retracting one recomputes it from
+  `COALESCE(taken_at, captured_at, created_at)` (EXIF beats the client clock beats arrival).
+  `current_revision_id` stays null until revisions exist (#7).
+- **captures**: the raw material (`audio`, `image`, `text`, `link`, `file`, `correction`,
+  `answer`). Media kinds carry `mime_type`, `media_path` (relative to the data dir), `byte_size`,
+  `sha256`, `file_name`, and for HEIC/HEIF photos `jpeg_path`/`jpeg_status` (`ok` | `missing`);
+  text-like kinds `text`/`url`; `captured_at` is client-reported, `taken_at` the photo's EXIF
+  time; `question_id` is for answers (its FK arrives with the questions table, #7/#11).
+  **Immutable**: triggers refuse updates of the raw columns, a second retraction and any delete;
+  `retracted_at` is the only change (soft retraction). Meals with captures can't be deleted either.
+- **transcripts**: one per audio capture (`capture_id` is the key), created `pending` with it;
+  `done` with text, model, language, duration and `segments` (JSON `[{startMs, endMs, text}]`), or
+  `failed` with an error. Derived, so replaceable: `upsertPending` resets it for a new run.
+- **jobs**: see the queue below.
+- **weight_entries**: `measured_at`, `kg`, `note`, `source` (`manual`). User data, not raw
+  captures, so they can be deleted.
+
+### Media
+
+- Originals are stored byte for byte at `media/<yyyy>/<mm>/<capture id>.<ext>` (UTC month of
+  arrival), written once: 0600 files in 0700 dirs, via a `.part` file and a rename, never
+  replacing an existing file. The database holds the relative path, size and SHA-256 (the ETag).
+- The type comes from the first bytes (JPEG, PNG, HEIC/HEIF, MP4/M4A, WebM, Ogg, WAV, MP3, PDF…),
+  then the declared type, then the file name: iOS sends Voice Memos `.m4a` under several types,
+  Safari's `MediaRecorder` uploads `audio/mp4`. Without an explicit `kind` the upload becomes
+  `image`, `audio` or `file` by type.
+- Photos get `taken_at` from EXIF `DateTimeOriginal` (+ `OffsetTimeOriginal`; without an offset
+  the server's time zone applies), read with `exifr`.
+- **HEIC/HEIF**: the original stays authoritative; a JPEG derivative is written next to it
+  (`<capture id>.jpg`) with `heic-decode` (libheif compiled to WASM) and `jpeg-js`: pure JS, no
+  system library, about 1.5 s for a 12 MP photo on the VM, loaded lazily. If conversion fails the
+  capture is still stored, with `jpeg_status = 'missing'`.
+- Served by `GET /api/media/:captureId` (original) and `/api/media/:captureId/jpeg`, behind auth:
+  single byte ranges (audio seeking in Safari), ETag/304, `immutable` caching, `nosniff`, a
+  sandboxing CSP, and anything that is not plainly image/audio/video/PDF as an attachment.
+- Uploads are multipart and buffered in memory (single user); the limit is `MAX_UPLOAD_BYTES`
+  (200 MB, Bun's `maxRequestBodySize` answers 413 above it).
+
+### Job queue
+
+`jobs` (`db/repos/jobs.ts`) is a small SQLite queue for one in-process worker loop (#8 analyse,
+#9 transcribe). Types and payloads: `transcribe {captureId}`, `analyse {mealId}`.
+
+- `enqueue(type, payload, {dedupeKey, runAfter, maxAttempts})` is idempotent per `dedupe_key`
+  while a job is `queued` (a partial unique index backs it): one open `analyse:<meal>` per meal,
+  one `transcribe:<capture>` per audio capture. A request while the keyed job *runs* queues a new
+  one, which is not claimed until the running one ends (it may have missed new captures).
+- `claim({types})` takes the oldest due job in an IMMEDIATE transaction → `running`, attempt + 1.
+- `complete(id)` → `done`. `fail(id, error, {retryable})` → back to `queued` after 30 s, 2 min,
+  8 min … while attempts remain, else `failed` (final: the worker marks the meal/transcript).
+  `reschedule(id, runAfter)` → `queued` without spending an attempt (waiting for transcripts, GPU
+  host asleep). A requeue that meets a newer queued job with the same key is `cancelled` instead.
+- `cancelQueued(key)` (a retracted audio capture cancels its transcription) and
+  `releaseInterrupted()`, which the server runs at startup: jobs a previous process left
+  `running` count a failed attempt and are queued again.
+- Producers: an audio capture enqueues `transcribe` (with its pending transcript, in the same
+  transaction); `POST /api/meals/:id/analyse` sets the meal `queued` and enqueues `analyse`. Adding
+  captures to an `analysed`/`needs_input` meal does not queue it; the client calls analyse again.
+
+## API (#6)
+
+All behind the identity check, writes also same-origin; paths in `mealPaths` / `weightPaths`.
+
+- `POST /api/meals` (`{eatenAt?}`), `GET /api/meals?from&to&limit` (by `eatenAt`, newest first,
+  with live capture counts per kind and a cover photo), `GET /api/meals/:id` (meal, every capture
+  including retracted ones, transcripts).
+- `POST /api/meals/:id/captures`: `multipart/form-data` with `file` (+ `kind`, `capturedAt`) for
+  audio, image and file; JSON for `text`, `link` (http/https `url`), `correction`, `answer`.
+  A `capturedAt` more than an hour ahead of the server is refused.
+- `POST /api/captures/:id/retract` (idempotent), `POST /api/meals/:id/analyse` (409 without a live
+  capture), `GET /api/media/:captureId[/jpeg]`.
+- `POST /api/weight` (`{kg, measuredAt?, note?}`), `GET /api/weight?from&to&limit`,
+  `DELETE /api/weight/:id`.
 
 ## Request flow
 
@@ -117,10 +211,10 @@ docs/adr/                 architecture decision records
 
 ## Planned (epic #2)
 
-Wave 1 adds, in stack order: meals, captures, media storage, the job queue and weight entries
-(#6); the nutrition data layer and the yamt MCP server at `/mcp` (#7); the ACP runtime and the
-meal analysis job (#8); the transcription worker (#9); the PWA shell and meal capture (#10);
-meal detail, questions and corrections (#11); the day view, goals and weight (#12); Web Push
-(#13). Spikes #4 (speech-to-text, CPU vs GPU) and #5 (design directions; the result becomes
-`docs/design/design.md` and replaces the neutral theme tokens) run alongside. See the epic for
-the decisions each one builds on.
+Meals, captures, media storage, the job queue and weight entries (#6) are in. Still to come,
+in stack order: the nutrition data layer and the yamt MCP server at `/mcp` (#7); the ACP runtime
+and the meal analysis job, with the worker loop draining `jobs` (#8); the transcription worker
+(#9); the PWA shell and meal capture (#10); meal detail, questions and corrections (#11); the day
+view, goals and weight (#12); Web Push (#13). Spikes #4 (speech-to-text, CPU vs GPU) and #5
+(design directions; the result becomes `docs/design/design.md` and replaces the neutral theme
+tokens) run alongside. See the epic for the decisions each one builds on.

@@ -4,11 +4,15 @@ import { type AuthMode, type IdentityEnv, requireTailnetIdentity } from "../auth
 import { VERSION } from "../config.ts";
 import { appliedMigrations, type Db } from "../db/index.ts";
 import { HttpError } from "../domain/errors.ts";
+import type { Services } from "../services.ts";
+import { mealRoutes } from "./meals.ts";
 import { handleError, sameOrigin } from "./middleware.ts";
+import { weightRoutes } from "./weight.ts";
 
 export interface ApiDeps {
   db: Db;
   auth: AuthMode;
+  services: Services;
 }
 
 /**
@@ -26,6 +30,8 @@ export function createApi(deps: ApiDeps): Hono<IdentityEnv> {
   api.use("*", sameOrigin, requireTailnetIdentity(deps.auth));
 
   api.get(apiPaths.me.slice("/api".length), (c) => c.json<MeResponse>({ login: c.get("login") }));
+  api.route("/", mealRoutes(deps.services));
+  api.route("/", weightRoutes(deps.services));
 
   api.all("*", () => {
     throw new HttpError(404, "not found");
