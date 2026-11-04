@@ -80,7 +80,7 @@ function Caps({ c, inset }: { c: Classification; inset: boolean }) {
         className={cn(
           "absolute h-[7px] border-2 border-ink-foreground",
           x,
-          inset ? "bottom-[3px]" : "bottom-0",
+          inset ? "bottom-[5px]" : "bottom-0",
         )}
         data-cap="too-low"
         aria-hidden
@@ -93,7 +93,7 @@ function Caps({ c, inset }: { c: Classification; inset: boolean }) {
       className={cn(
         "absolute h-1 bg-ink-foreground",
         x,
-        c.direction === "over" ? (inset ? "top-[3px]" : "top-0") : inset ? "bottom-[3px]" : "bottom-0",
+        c.direction === "over" ? (inset ? "top-[5px]" : "top-0") : inset ? "bottom-[5px]" : "bottom-0",
       )}
       data-cap={c.direction}
       aria-hidden
@@ -147,7 +147,18 @@ function DaySquare({
         {Number(date.slice(8))}
       </span>
       {!future && !!day?.unanalysed && (
-        <span className="absolute right-1.5 bottom-1.5 size-2 bg-current" data-testid="not-analysed" />
+        <span
+          className={cn(
+            "absolute right-1.5 size-2 bg-current",
+            // above a cap at the bottom (under, too low)
+            look.c.tooLow || look.c.direction === "under"
+              ? selected
+                ? "bottom-4"
+                : "bottom-3"
+              : "bottom-1.5",
+          )}
+          data-testid="not-analysed"
+        />
       )}
       {kcalOnly && !day?.unanalysed && (
         <span className="absolute right-1 bottom-1 font-bold text-[10px] text-ink-muted">
@@ -301,6 +312,8 @@ export function SelectedDay({ day, today, now }: { day: MonthDay | undefined; to
             </>
           ) : plan ? (
             <span data-testid="plan-words">{plan}</span>
+          ) : day.totals && !day.goal ? (
+            "No targets for this day"
           ) : day.totals && !day.goal?.targets.energyKcal ? (
             "No kcal target for this day"
           ) : undefined
