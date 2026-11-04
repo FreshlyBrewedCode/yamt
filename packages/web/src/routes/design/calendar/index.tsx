@@ -11,8 +11,8 @@ function Index() {
       <Label className="text-muted-foreground">Spike #31</Label>
       <h1 className="display mt-1 text-[36px]">Calendar overview</h1>
       <p className="mt-3 font-medium text-muted-foreground">
-        Three ways to show which days are tracked and how each went against its targets. Mock data, 1 Sept –
-        18 Nov 2026.
+        Five ways (round 2: D and E) to show which days are tracked and how each went against its targets.
+        Mock data, 1 Sept – 18 Nov 2026.
       </p>
       {VARIANTS.map((v) => (
         <section key={v.key} className="mt-6 border-border border-t pt-4">

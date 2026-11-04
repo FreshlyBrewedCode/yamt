@@ -1,10 +1,15 @@
 // Spike #31: made-up data for the calendar overview variants. Nothing here talks to the server.
 // About two and a half months (1 Sept – 18 Nov 2026): untracked days, a few days with meals
-// not analysed yet, a period without a goal, a cut starting mid-October, days far under and
-// over, a weight entry on most days. "Today" is fixed so the screens are reproducible.
+// not analysed yet, a period without a goal, a cut starting mid-October (mid-week, from a
+// Wednesday), days far under and over, a weight entry on most days. "Today" is fixed so the
+// screens are reproducible. Round 2 pinned most days' kcal shares so every state of the plan
+// encoding (plan.ts) shows up in the visible months: on-plan days under the target during the
+// cut, a cut day far under (too low), weekends over during the cut, maintenance days slightly
+// over and under, a week with only two tracked days, the goal change mid-week.
 import {
   addDays,
   type Goal,
+  type GoalKind,
   goalInForce,
   type NutrientTotals,
   type TargetKey,
@@ -30,19 +35,32 @@ export interface MockDay {
   weightKg: number | null;
 }
 
-export type MockGoal = Pick<Goal, "id" | "effectiveFrom" | "targets" | "note">;
+export type MockGoal = Pick<Goal, "id" | "effectiveFrom" | "targets" | "note"> & {
+  /** What `goalLabel` would say: the note, else the guided summary. */
+  label: string;
+  /** The guided derivation's choice (null for targets set by hand). */
+  kind: GoalKind | null;
+  /** The guided derivation's calorie floor (kcal/day), if any. */
+  floorKcal: number | null;
+};
 
 export const goals: MockGoal[] = [
   {
     id: "goal-cut",
-    effectiveFrom: "2026-10-12",
-    note: "Cut",
+    effectiveFrom: "2026-10-14",
+    note: "",
+    label: "Cut, standard pace",
+    kind: "cut",
+    floorKcal: 1500,
     targets: { energyKcal: 2100, protein: 160, fat: 70, carbohydrate: 210, fiber: 30 },
   },
   {
     id: "goal-maintain",
     effectiveFrom: "2026-09-07",
     note: "",
+    label: "Maintain",
+    kind: "maintain",
+    floorKcal: 1500,
     targets: { energyKcal: 2600, protein: 150, fat: 85, carbohydrate: 300, fiber: 30 },
   },
 ];
@@ -69,7 +87,7 @@ const gauss = (mean: number, sd: number) => {
 };
 const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n));
 
-/** Days with nothing logged: a few scattered ones and a long weekend away. */
+/** Days with nothing logged: a few scattered ones, a long weekend away, a week with two tracked days (2–8 Nov). */
 const UNTRACKED = new Set([
   "2026-09-04",
   "2026-09-13",
@@ -77,9 +95,10 @@ const UNTRACKED = new Set([
   "2026-10-03",
   "2026-10-04",
   "2026-10-05",
-  "2026-10-18",
-  "2026-10-25",
-  "2026-11-01",
+  "2026-11-02",
+  "2026-11-03",
+  "2026-11-04",
+  "2026-11-06",
   "2026-11-08",
   "2026-11-14",
 ]);
@@ -90,14 +109,50 @@ const PENDING: Record<string, [meals: number, pending: number]> = {
   "2026-11-17": [4, 1],
   "2026-11-18": [2, 1],
 };
-/** Days far from the target: the kcal share of the target in force. */
-const FAR: Record<string, number> = {
+/**
+ * Pinned days: the kcal share of the target in force. Maintenance (±10 % on plan): slightly
+ * under and over, a day far under the floor, just-off days both ways, far over. The cut from
+ * Wed 14 Oct (−15 % … +5 % on plan): on-plan days under the target, weekends over, one day far
+ * under (too low), just-off days both ways. The rest of the days come from the seeded noise.
+ */
+const SHARE: Record<string, number> = {
+  // maintenance
+  "2026-09-08": 0.93,
+  "2026-09-10": 1.07,
   "2026-09-14": 0.42,
+  "2026-09-17": 1.14,
+  "2026-09-22": 0.86,
   "2026-09-26": 1.52,
   "2026-10-10": 1.38,
+  "2026-10-12": 0.95,
+  "2026-10-13": 1.08,
+  // the cut
+  "2026-10-14": 0.9,
+  "2026-10-15": 0.87,
+  "2026-10-16": 0.97,
+  "2026-10-17": 1.14,
+  "2026-10-18": 1.22,
+  "2026-10-19": 0.92,
+  "2026-10-20": 0.83,
+  "2026-10-21": 0.6,
+  "2026-10-22": 0.95,
+  "2026-10-23": 1.03,
+  "2026-10-24": 1.09,
+  "2026-10-25": 1.31,
+  "2026-10-26": 0.88,
+  "2026-10-27": 0.94,
+  "2026-10-28": 0.79,
+  "2026-10-30": 1.0,
   "2026-10-31": 1.61,
-  "2026-11-02": 0.38,
+  "2026-11-01": 1.12,
+  "2026-11-05": 0.92,
+  "2026-11-07": 1.16,
+  "2026-11-09": 0.9,
+  "2026-11-10": 0.38,
   "2026-11-11": 1.27,
+  "2026-11-12": 0.93,
+  "2026-11-13": 1.04,
+  "2026-11-16": 0.89,
 };
 
 function buildDays(): Map<string, MockDay> {
@@ -106,7 +161,7 @@ function buildDays(): Map<string, MockDay> {
   for (let d = FIRST; d <= TODAY; d = addDays(d, 1)) {
     const goal = goalFor(d);
     // the trend: slow loss, faster once the cut starts, with daily noise
-    weight -= goal?.note === "Cut" ? 0.055 : 0.02;
+    weight -= goal?.kind === "cut" ? 0.055 : 0.02;
     const weightKg = random() < 0.85 ? Math.round((weight + gauss(0, 0.35)) * 10) / 10 : null;
     if (UNTRACKED.has(d)) {
       days.set(d, { date: d, meals: 0, pending: 0, totals: null, weightKg });
@@ -119,7 +174,7 @@ function buildDays(): Map<string, MockDay> {
     }
     // without a goal the day still has numbers; scale them against what a goal would be
     const base = goal?.targets ?? { energyKcal: 2600, protein: 150, fat: 85, carbohydrate: 300, fiber: 30 };
-    const share = FAR[d] ?? clamp(gauss(0.94, 0.16), 0.5, 1.4);
+    const share = SHARE[d] ?? clamp(gauss(0.94, 0.16), 0.5, 1.4);
     // today: lunch still waiting, so the counted part is small
     const counted = d === TODAY ? 0.46 : pending > 0 ? share * (1 - pending / meals) : share;
     const kcal = base.energyKcal! * counted;

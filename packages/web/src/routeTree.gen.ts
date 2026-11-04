@@ -19,6 +19,8 @@ import { Route as DesignCalendarIndexRouteImport } from './routes/design/calenda
 import { Route as DesignCalendarARouteImport } from './routes/design/calendar/a'
 import { Route as DesignCalendarBRouteImport } from './routes/design/calendar/b'
 import { Route as DesignCalendarCRouteImport } from './routes/design/calendar/c'
+import { Route as DesignCalendarDRouteImport } from './routes/design/calendar/d'
+import { Route as DesignCalendarERouteImport } from './routes/design/calendar/e'
 import { Route as DesignCalendarSheetVariantRouteImport } from './routes/design/calendar/sheet.$variant'
 
 const IndexRoute = IndexRouteImport.update({
@@ -71,6 +73,16 @@ const DesignCalendarCRoute = DesignCalendarCRouteImport.update({
   path: '/design/calendar/c',
   getParentRoute: () => rootRouteImport,
 } as any)
+const DesignCalendarDRoute = DesignCalendarDRouteImport.update({
+  id: '/design/calendar/d',
+  path: '/design/calendar/d',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DesignCalendarERoute = DesignCalendarERouteImport.update({
+  id: '/design/calendar/e',
+  path: '/design/calendar/e',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const DesignCalendarSheetVariantRoute =
   DesignCalendarSheetVariantRouteImport.update({
     id: '/design/calendar/sheet/$variant',
@@ -88,6 +100,8 @@ export interface FileRoutesByFullPath {
   '/design/calendar/a': typeof DesignCalendarARoute
   '/design/calendar/b': typeof DesignCalendarBRoute
   '/design/calendar/c': typeof DesignCalendarCRoute
+  '/design/calendar/d': typeof DesignCalendarDRoute
+  '/design/calendar/e': typeof DesignCalendarERoute
   '/design/calendar/': typeof DesignCalendarIndexRoute
   '/design/calendar/sheet/$variant': typeof DesignCalendarSheetVariantRoute
 }
@@ -101,6 +115,8 @@ export interface FileRoutesByTo {
   '/design/calendar/a': typeof DesignCalendarARoute
   '/design/calendar/b': typeof DesignCalendarBRoute
   '/design/calendar/c': typeof DesignCalendarCRoute
+  '/design/calendar/d': typeof DesignCalendarDRoute
+  '/design/calendar/e': typeof DesignCalendarERoute
   '/design/calendar': typeof DesignCalendarIndexRoute
   '/design/calendar/sheet/$variant': typeof DesignCalendarSheetVariantRoute
 }
@@ -115,6 +131,8 @@ export interface FileRoutesById {
   '/design/calendar/a': typeof DesignCalendarARoute
   '/design/calendar/b': typeof DesignCalendarBRoute
   '/design/calendar/c': typeof DesignCalendarCRoute
+  '/design/calendar/d': typeof DesignCalendarDRoute
+  '/design/calendar/e': typeof DesignCalendarERoute
   '/design/calendar/': typeof DesignCalendarIndexRoute
   '/design/calendar/sheet/$variant': typeof DesignCalendarSheetVariantRoute
 }
@@ -130,6 +148,8 @@ export interface FileRouteTypes {
     | '/design/calendar/a'
     | '/design/calendar/b'
     | '/design/calendar/c'
+    | '/design/calendar/d'
+    | '/design/calendar/e'
     | '/design/calendar/'
     | '/design/calendar/sheet/$variant'
   fileRoutesByTo: FileRoutesByTo
@@ -143,6 +163,8 @@ export interface FileRouteTypes {
     | '/design/calendar/a'
     | '/design/calendar/b'
     | '/design/calendar/c'
+    | '/design/calendar/d'
+    | '/design/calendar/e'
     | '/design/calendar'
     | '/design/calendar/sheet/$variant'
   id:
@@ -156,6 +178,8 @@ export interface FileRouteTypes {
     | '/design/calendar/a'
     | '/design/calendar/b'
     | '/design/calendar/c'
+    | '/design/calendar/d'
+    | '/design/calendar/e'
     | '/design/calendar/'
     | '/design/calendar/sheet/$variant'
   fileRoutesById: FileRoutesById
@@ -170,6 +194,8 @@ export interface RootRouteChildren {
   DesignCalendarARoute: typeof DesignCalendarARoute
   DesignCalendarBRoute: typeof DesignCalendarBRoute
   DesignCalendarCRoute: typeof DesignCalendarCRoute
+  DesignCalendarDRoute: typeof DesignCalendarDRoute
+  DesignCalendarERoute: typeof DesignCalendarERoute
   DesignCalendarIndexRoute: typeof DesignCalendarIndexRoute
   DesignCalendarSheetVariantRoute: typeof DesignCalendarSheetVariantRoute
 }
@@ -246,6 +272,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DesignCalendarCRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/design/calendar/d': {
+      id: '/design/calendar/d'
+      path: '/design/calendar/d'
+      fullPath: '/design/calendar/d'
+      preLoaderRoute: typeof DesignCalendarDRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/design/calendar/e': {
+      id: '/design/calendar/e'
+      path: '/design/calendar/e'
+      fullPath: '/design/calendar/e'
+      preLoaderRoute: typeof DesignCalendarERouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/design/calendar/sheet/$variant': {
       id: '/design/calendar/sheet/$variant'
       path: '/design/calendar/sheet/$variant'
@@ -266,6 +306,8 @@ const rootRouteChildren: RootRouteChildren = {
   DesignCalendarARoute: DesignCalendarARoute,
   DesignCalendarBRoute: DesignCalendarBRoute,
   DesignCalendarCRoute: DesignCalendarCRoute,
+  DesignCalendarDRoute: DesignCalendarDRoute,
+  DesignCalendarERoute: DesignCalendarERoute,
   DesignCalendarIndexRoute: DesignCalendarIndexRoute,
   DesignCalendarSheetVariantRoute: DesignCalendarSheetVariantRoute,
 }

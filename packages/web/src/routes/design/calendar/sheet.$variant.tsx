@@ -23,7 +23,7 @@ function Sheet() {
                 title={s.label}
                 src={`/design/calendar/${v.key}${q ? `?${q}` : ""}`}
                 width={390}
-                height={1440}
+                height={2160}
                 className="block bg-white"
               />
               <figcaption className="mt-2 text-center text-neutral-600 text-sm dark:text-neutral-400">
