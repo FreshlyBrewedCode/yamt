@@ -1,6 +1,7 @@
 import type { Db } from "../index.ts";
 import { CaptureRepo } from "./captures.ts";
 import { FoodRepo } from "./foods.ts";
+import { GoalRepo } from "./goals.ts";
 import { JobRepo } from "./jobs.ts";
 import { MealRepo } from "./meals.ts";
 import { RevisionRepo } from "./revisions.ts";
@@ -22,5 +23,6 @@ export function createRepos(db: Db) {
     foods: new FoodRepo(db),
     revisions: new RevisionRepo(db),
     runs: new RunRepo(db),
+    goals: new GoalRepo(db),
   };
 }

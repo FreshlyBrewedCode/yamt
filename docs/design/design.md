@@ -17,7 +17,7 @@ real tokens live in `packages/web/src/index.css`, the real primitives in
 
    | Fill | Means | Examples |
    |---|---|---|
-   | **ink slab** | the one thing that matters on this screen (one per screen) | today's totals, the recorder, a meal's numbers |
+   | **ink slab** | the one thing that matters on this screen (one per screen) | today's totals, the recorder, a meal's numbers, a day's progress |
    | **acid lime** | whatever wants the user: an action or something to answer | Log meal, Analyse, a needs-input row, the question, the weight entry |
    | **quiet tint** | secondary content and section headers | day headers, "Assumed", the trend, the add-more strip's pressed state |
    | **plain background** | lists, separated by thin dividers | meals of a day, captures, items |
@@ -172,9 +172,43 @@ Units sit next to numbers smaller and muted (`28g`, `72 /160`).
   "→ result" below, messages under "Agent", thoughts under "Thinking" (muted, clamped), notes
   muted, errors as orange rows; a tap shows the full input/output in a page-colour block.
 - **Totals slab** (ink): the hero kcal left with its label, a secondary figure right, then a
-  4-column grid (Prot, Fat, Carb, Fibre). #12 adds targets: the right figure becomes "left of
-  2,400" in lime, each macro gets "/160" and a 6 px bar (track `ink-line`, fill lime). Without
-  targets the slab shows the plain numbers; it never shows invented goals.
+  4-column grid (Prot, Fat, Carb, Fibre), and an optional note under a thin `ink-line` divider
+  ("■ 1 meal not counted yet": meals without an analysis count nothing, so the totals are never
+  misread as the whole day). With the goal in force (#12) the right figure is what's left
+  ("1,704 / left of 2,400", in lime), the kcal get a 12 px bar and each target "/160" and a 6 px
+  bar; the day view adds "88 left" / "12 over" under each macro. A macro without a target shows
+  plain grams and no bar. Without a goal the slab shows the plain numbers; it never shows
+  invented goals.
+- **Over a target** (#12): a fact, not an alarm, and the same for every target (protein and fibre
+  are minimums, so "over" is often good). No red, no orange. The bar rescales so the target sits
+  where the lime ends, a 2 px gap in the slab's own colour marks the target, and the excess is
+  filled in the slab's foreground (paper on ink, white on charcoal); the right figure becomes
+  "+105 / over 2,400" in the foreground instead of lime. Text says "over", so it never relies on
+  the fill alone.
+- **Day view** (#12): back + the goals button in the header, the date as a micro-label and the
+  day ("Today", "Yesterday", "Monday", "Mon 26 Oct") as the page title; the totals slab with
+  targets; a plain 56 px goal row ("Goal since 14 Oct · Cut", "Targets →"; "No targets for this
+  day"); the day's meals; its weight. The bottom slab is two tint halves stepping to the day
+  before and after (the thumb's job on this screen); the next day is disabled on today. Steps
+  replace the history entry, so Back leaves the day view.
+- **Meal row without numbers** (#12): the muted "—" gets a "not counted" micro-label.
+- **Weight entry** (lime, #12): "Weight today" and the last entry as micro-labels, one 72 px
+  field on the page colour (display 40 px, `inputMode="decimal"`, a comma works, the last weight
+  as placeholder) beside a true-black "Log" (tint and muted while empty), "Now · change time"
+  below (a `datetime-local` once tapped); after logging, "Logged 81.4 kg · 07:10" with Undo.
+- **Weight trend** (tint, #12): the latest 7-day average in display 40 px, the change over the
+  window as a small ink chip ("−2.1 kg / 6 wk"), then a small SVG (no chart library): hairline
+  solid gridlines in `--border` with kg labels in a left gutter, raw entries as 5 px muted
+  squares, the moving average as a 2.5 px line in the foreground (lime stays for what wants the
+  user). A tap or drag reads the nearest entry ("Yesterday 06:59 · 81.7 kg · avg 81.9") in place
+  of the date axis.
+- **Target fields** (#12): 64 px rows, the name as an uppercase label, a 112 px tint field with
+  the number right-aligned in display 28 px (`lime-soft` while focused), the unit muted. A
+  changed form brings the bottom slab: ink "Save · from today" (the screen's lime is the weight
+  entry), with a tint toggle row above "Fix a typo in the current goal", which turns it into
+  "Fix current goal". History is a `Disclosure` of tint rows: the period ("14 Oct – today", "29
+  Sept – 13 Oct", "replaced the same day"), a five-column grid of targets, the note, and a small
+  ink "In force" chip.
 - **Recorder** (ink): the 96 px lime circle (mic / stop square), the timer in display 60 px,
   a level meter of thin vertical bars (lime for the live part, `ink-line` for the rest), and the
   lock note under a thin `ink-line` divider, always visible.
@@ -183,7 +217,9 @@ Units sit next to numbers smaller and muted (`28g`, `72 /160`).
 - **Capture row**: 48 px tile (photo thumbnail, or an icon on tint), bold title, micro-label
   status, a 44 px remove action. Removing asks once inline ("Remove?") because captures can't be
   un-retracted.
-- **Icon buttons** in headers: 48 px tint squares (close ✕, back ←).
+- **Icon buttons** in headers: 48 px tint squares (close ✕, back ←, the scale for goals and
+  weight on the overview and the day view). Back goes back in the app's history, or to the
+  overview when the screen was opened directly.
 - **Sheets** (note, link): slide in from the **top** (on iOS the keyboard covers the bottom
   half, a bottom sheet would sit behind it), on the page colour, square, display title, the input
   on tint (lime-soft while focused), a lime `SlabButton` to add.

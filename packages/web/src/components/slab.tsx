@@ -1,8 +1,9 @@
 // The D · Slab primitives (docs/design/design.md): full-bleed bands told apart by fill, the
 // micro-label, section strips, block buttons and the sticky bottom slab.
+import { useCanGoBack, useRouter } from "@tanstack/react-router";
 import type { MealStatus } from "@yamt/shared";
 import { cn } from "cn";
-import { ChevronDown } from "lucide-react";
+import { ArrowLeft, ChevronDown } from "lucide-react";
 import type * as React from "react";
 import { useState } from "react";
 
@@ -104,6 +105,25 @@ export function BottomSlab({ hint, children }: { hint?: React.ReactNode; childre
 export const iconButtonClass =
   "flex size-12 shrink-0 items-center justify-center bg-tint outline-none active:opacity-70 focus-visible:ring-4 focus-visible:ring-foreground/30";
 
+/**
+ * The header's back button: back in the app's history (the day you came from, the overview),
+ * or to `fallback` when the screen was opened directly (a deep link, a reload).
+ */
+export function BackButton({ fallback = "/", className }: { fallback?: "/"; className?: string }) {
+  const router = useRouter();
+  const canGoBack = useCanGoBack();
+  return (
+    <button
+      type="button"
+      onClick={() => (canGoBack ? router.history.back() : void router.navigate({ to: fallback }))}
+      className={cn(iconButtonClass, "-ml-1", className)}
+      aria-label="Back"
+    >
+      <ArrowLeft className="size-6" strokeWidth={2.5} />
+    </button>
+  );
+}
+
 /** Screens without a bottom slab end clear of the home indicator. */
 export function SafeBottom() {
   return <div className="h-[max(2rem,env(safe-area-inset-bottom))]" />;
@@ -147,6 +167,8 @@ export function Disclosure({
   title,
   meta,
   defaultOpen = false,
+  open: openProp,
+  onOpenChange,
   children,
   className,
   ...props
@@ -154,10 +176,18 @@ export function Disclosure({
   title: string;
   meta?: React.ReactNode;
   defaultOpen?: boolean;
+  /** Controlled: for a disclosure that must stay open across a remount of what holds it. */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
   children: React.ReactNode;
   className?: string;
 } & Omit<React.ComponentProps<"section">, "title">) {
-  const [open, setOpen] = useState(defaultOpen);
+  const [openState, setOpenState] = useState(defaultOpen);
+  const open = openProp ?? openState;
+  const setOpen = (v: boolean) => {
+    setOpenState(v);
+    onOpenChange?.(v);
+  };
   return (
     <section className={cn("border-border border-b", className)} {...props}>
       <button

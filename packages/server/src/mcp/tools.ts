@@ -1,5 +1,15 @@
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
-import { Confidence, type Food, FoodSource, isVoice, type MealRevisionView, Provenance } from "@yamt/shared";
+import {
+  Confidence,
+  dayProgress,
+  type Food,
+  FoodSource,
+  type Goal,
+  goalPeriods,
+  isVoice,
+  type MealRevisionView,
+  Provenance,
+} from "@yamt/shared";
 import { z } from "zod";
 import { toCapture } from "../db/repos/captures.ts";
 import { HttpError } from "../domain/errors.ts";
@@ -336,7 +346,7 @@ export function yamtTools(s: Services): Tool[] {
       name: "get_day_summary",
       scope: "interactive",
       description:
-        "The meals eaten on a day with their current analysis (title, status, totals) and the day's computed totals. Meals without an analysis are listed but count nothing.",
+        "The meals eaten on a day with their current analysis (title, status, totals), the day's computed totals, the goal in force that day with the progress against each target, and the weight measured that day. Meals without an analysis are listed but count nothing.",
       schema: z.object({
         date: z.iso.date().optional().describe("YYYY-MM-DD; default today."),
         timeZone: z
@@ -353,6 +363,7 @@ export function yamtTools(s: Services): Tool[] {
           throw new ToolError(`unknown time zone ${zone}`);
         }
         const day = s.revisions.day(date ?? localDate(Date.now(), zone), zone);
+        const goal = s.repos.goals.inForce(day.date);
         const at = (ms: number) => isoLocal(ms, zone);
         return {
           date: day.date,
@@ -374,10 +385,47 @@ export function yamtTools(s: Services): Tool[] {
           ),
           missing: day.totals.missing,
           unanalysedMeals: day.unanalysed,
+          goal: goal ? goalOut(goal) : null,
+          progress: goal ? dayProgress(day.totals.nutrients, goal.targets) : null,
+          weight: s.repos.weight
+            .list({ from: day.from, to: day.to, limit: 100 })
+            .map((w) => ({ kg: w.kg, measuredAt: at(w.measuredAt), note: w.note || null })),
         };
       },
     }),
+
+    tool({
+      name: "get_goals",
+      scope: "interactive",
+      description:
+        "The user's daily goals: targets for kcal, protein, fat, carbohydrate and fibre (grams), each from a local date until the next goal starts, newest first, and the one in force on a date. Use it to compare days with the targets that applied then.",
+      schema: z.object({
+        date: z.iso.date().optional().describe("YYYY-MM-DD for `inForce`; default today."),
+        timeZone: z.string().max(60).optional().describe("IANA zone for today; default the server's."),
+      }),
+      run({ date, timeZone }) {
+        const zone = timeZone ?? tz;
+        try {
+          assertTimeZone(zone);
+        } catch {
+          throw new ToolError(`unknown time zone ${zone}`);
+        }
+        const on = date ?? localDate(Date.now(), zone);
+        // each goal holds until the day before the next later one starts
+        const goals = goalPeriods(s.repos.goals.list()).map((g) => ({
+          ...goalOut(g),
+          until: g.until,
+          replacedSameDay: g.replaced,
+        }));
+        const inForce = s.repos.goals.inForce(on);
+        return { date: on, inForce: inForce ? goalOut(inForce) : null, goals };
+      },
+    }),
   ];
+}
+
+function goalOut(g: Goal) {
+  return { goalId: g.id, effectiveFrom: g.effectiveFrom, targets: g.targets, note: g.note || null };
 }
 
 function foodOut(f: Food, iso: (ms: number | null) => string | null) {

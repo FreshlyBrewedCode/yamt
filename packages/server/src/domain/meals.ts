@@ -383,7 +383,7 @@ export class MealService {
   }
 }
 
-const nutrientTotals = ({ grams, items, nutrients }: NutrientTotals): NutrientTotals => ({
+export const nutrientTotals = ({ grams, items, nutrients }: NutrientTotals): NutrientTotals => ({
   grams,
   items,
   nutrients,

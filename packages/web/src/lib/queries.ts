@@ -3,6 +3,12 @@
 import { QueryClient, useMutation, useQuery } from "@tanstack/react-query";
 import {
   apiPaths,
+  type CreateGoalBody,
+  type DayResponse,
+  type FixGoalBody,
+  type GoalResponse,
+  type GoalsResponse,
+  goalPaths,
   type HealthResponse,
   type MealDetailResponse,
   type MealResponse,
@@ -14,6 +20,9 @@ import {
   runPaths,
   type TranscribeResponse,
   type UpdateMealBody,
+  type WeightEntryResponse,
+  type WeightResponse,
+  weightPaths,
 } from "@yamt/shared";
 import { ApiError, api } from "./api";
 import { type ParsedTrace, parseTrace } from "./trace";
@@ -29,7 +38,15 @@ export const keys = {
   meal: (id: string) => ["meal", id] as const,
   revisions: (mealId: string) => ["meal", mealId, "revisions"] as const,
   trace: (runId: string) => ["run", runId, "trace"] as const,
+  /** Under "meals", so everything that refreshes the meals refreshes the day view too. */
+  day: (date: string, tz: string) => ["meals", "day", date, tz] as const,
+  goals: ["goals"] as const,
+  weight: ["weight"] as const,
+  weightRange: (from: number, to: number) => ["weight", { from, to }] as const,
 };
+
+/** The browser's zone: days are the phone's calendar days. */
+export const browserZone = (): string => Intl.DateTimeFormat().resolvedOptions().timeZone;
 
 /** While something is in motion on the server, the screen polls (no push channel needed). */
 const POLL_MS = 3000;
@@ -45,7 +62,7 @@ export function useHealth() {
 
 /** The overview: meals eaten in [from, to) and each day's totals, days reckoned in the browser's zone. */
 export function useMeals(from: number, to: number) {
-  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const tz = browserZone();
   return useQuery({
     queryKey: keys.mealsRange(from, to, tz),
     queryFn: () =>
@@ -140,5 +157,71 @@ export function useRetranscribe(mealId: string) {
   return useMutation({
     mutationFn: (captureId: string) => api.post<TranscribeResponse>(mealPaths.transcribe(captureId)),
     onSettled: () => void queryClient.invalidateQueries({ queryKey: keys.meal(mealId) }),
+  });
+}
+
+/**
+ * A calendar day (`YYYY-MM-DD`, the phone's zone): its meals, totals, the goal in force with the
+ * progress against it, and its weight. Polls while one of its meals is in motion.
+ */
+export function useDay(date: string) {
+  const tz = browserZone();
+  return useQuery({
+    queryKey: keys.day(date, tz),
+    queryFn: () => api.get<DayResponse>(`${goalPaths.day(date)}?tz=${encodeURIComponent(tz)}`),
+    placeholderData: (prev) => (prev?.date === date ? prev : undefined),
+    refetchInterval: (q) =>
+      q.state.data?.meals.some((m) => busy(m.status) || m.pendingTranscripts > 0) ? POLL_MS : false,
+  });
+}
+
+/** Every goal, newest first (a short list); `goalInForce` picks a day's. */
+export function useGoals() {
+  return useQuery({
+    queryKey: keys.goals,
+    queryFn: () => api.get<GoalsResponse>(goalPaths.goals),
+    staleTime: 60_000,
+  });
+}
+
+/** New targets from today (a new goal), or `fix` the latest one in place (a typo). */
+export function useSaveGoal() {
+  return useMutation({
+    mutationFn: (v: { body: CreateGoalBody } | { fix: string; body: FixGoalBody }) =>
+      "fix" in v
+        ? api.patch<GoalResponse>(goalPaths.goal(v.fix), v.body)
+        : api.post<GoalResponse>(goalPaths.goals, v.body),
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: keys.goals });
+      void queryClient.invalidateQueries({ queryKey: keys.meals });
+    },
+  });
+}
+
+/** Weight entries measured in [from, to), newest first. */
+export function useWeight(from: number, to: number) {
+  return useQuery({
+    queryKey: keys.weightRange(from, to),
+    queryFn: () => api.get<WeightResponse>(`${weightPaths.weight}?from=${from}&to=${to}&limit=1000`),
+  });
+}
+
+const weightChanged = () => {
+  void queryClient.invalidateQueries({ queryKey: keys.weight });
+  void queryClient.invalidateQueries({ queryKey: keys.meals });
+};
+
+export function useLogWeight() {
+  return useMutation({
+    mutationFn: (body: { kg: number; measuredAt?: number; note?: string }) =>
+      api.post<WeightEntryResponse>(weightPaths.weight, body),
+    onSettled: weightChanged,
+  });
+}
+
+export function useDeleteWeight() {
+  return useMutation({
+    mutationFn: (id: string) => api.delete(weightPaths.entry(id)),
+    onSettled: weightChanged,
   });
 }
