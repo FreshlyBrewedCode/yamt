@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import { type HarnessAdapter, type HarnessConfig, launchSpec } from "./adapters/index.ts";
+import { configStep, effortOption, modelOption } from "./config-options.ts";
 import type { McpSetup } from "./mcp.ts";
 import { AcpProcess, ExitError, raceExit, SpawnError, withTimeout } from "./process.ts";
 import * as acp from "./protocol.ts";
@@ -37,7 +38,16 @@ export type RunEvent =
   | { type: "process.start"; command: string; args: string[]; pid: number | undefined }
   | { type: "initialize"; response: acp.InitializeResponse }
   | { type: "session.new"; request: acp.NewSessionRequest; response: acp.NewSessionResponse }
-  | { type: "config"; configId: string; value: string; error: string | null }
+  | {
+      type: "config";
+      what: "model" | "effort";
+      configId: string | null;
+      value: string;
+      /** Why it didn't apply (not offered, the harness refused it); null when it did. */
+      error: string | null;
+      /** How it applied, when not through the option (Claude Code: an unlisted model via `_meta`). */
+      note?: string;
+    }
   | { type: "prompt"; prompt: acp.ContentBlock[] }
   | { type: "update"; update: acp.SessionUpdate }
   | {
@@ -74,7 +84,9 @@ export interface PromptRunOptions {
   /** Extra process env. */
   env?: Record<string, string>;
   systemPrompt: string;
+  /** Null: the harness's default. Set model first, then effort (see `configStep`). */
   model: string | null;
+  effort?: string | null;
   mcp: McpSetup;
   builtInTools?: string[] | null;
   isolated?: boolean;
@@ -102,9 +114,13 @@ export interface PromptRunResult {
   agentInfo: acp.Implementation | null;
   /**
    * The model that answered as the harness reports it (Claude Code: `_claude/model` on usage
-   * updates; custom harnesses: their model config option), else the one asked for.
+   * updates; others: their model config option), else the one asked for.
    */
   model: string | null;
+  /** The effort option's value when the prompt went out; null if the harness has none. */
+  effort: string | null;
+  /** What didn't apply as asked (a model or effort not offered, so the harness's default ran). */
+  configNotes: string[];
 }
 
 class Abandoned extends Error {}
@@ -129,6 +145,8 @@ export async function runPrompt(opts: PromptRunOptions): Promise<PromptRunResult
   let context: PromptRunResult["context"] = null;
   let agentInfo: acp.Implementation | null = null;
   let model = opts.model;
+  let effort: string | null = null;
+  const configNotes: string[] = [];
 
   let abandon!: (e: Error) => void;
   const abandoned = new Promise<never>((_, reject) => {
@@ -204,13 +222,17 @@ export async function runPrompt(opts: PromptRunOptions): Promise<PromptRunResult
     context,
     agentInfo,
     model,
+    effort,
+    configNotes,
     ...r,
   });
 
   try {
     if (opts.signal?.aborted) return result({ status: "cancelled", error: "cancelled before it started" });
     if (!existsSync(opts.cwd)) throw new Error(`working directory does not exist: ${opts.cwd}`);
-    const spec = launchSpec(opts.harness, opts.cwd, opts.env);
+    const prepared =
+      (await opts.adapter.prepareProcess?.({ cwd: opts.cwd, systemPrompt: opts.systemPrompt })) ?? {};
+    const spec = launchSpec(opts.harness, opts.cwd, { ...opts.env, ...prepared });
     proc = await Promise.race([AcpProcess.start(spec, handlers, { initTimeoutMs: t.initMs }), abandoned]);
     const p = proc;
     emit({ type: "process.start", command: spec.command, args: spec.args, pid: p.pid });
@@ -242,35 +264,52 @@ export async function runPrompt(opts: PromptRunOptions): Promise<PromptRunResult
     sessionId = session.sessionId;
     emit({ type: "session.new", request, response: session });
 
+    // model first, then effort: the model decides which efforts exist (and OpenCode resets the
+    // effort when it changes); each set answers the updated options
     let configOptions = session.configOptions ?? [];
-    const modelOpt = () =>
-      configOptions.find((o) => o.category === "model") ?? configOptions.find((o) => o.id === "model");
-    if (opts.adapter.modelViaConfigOption && opts.model) {
-      const opt = modelOpt();
-      if (opt && opt.type !== "boolean" && opt.currentValue !== opts.model && offers(opt, opts.model)) {
+    for (const what of ["model", "effort"] as const) {
+      const value = what === "model" ? opts.model : (opts.effort ?? null);
+      if (value === null) continue;
+      const step = configStep(configOptions, what, value);
+      if (step === null) continue;
+      if (step.kind === "set") {
         try {
           const r = await timed(
-            p.agent.request("session/set_config_option", { sessionId, configId: opt.id, value: opts.model }),
+            p.agent.request("session/set_config_option", { sessionId, configId: step.configId, value }),
             "session/set_config_option",
           );
           configOptions = r.configOptions;
-          emit({ type: "config", configId: opt.id, value: opts.model, error: null });
+          emit({ type: "config", what, configId: step.configId, value, error: null });
         } catch (e) {
           if (e instanceof Abandoned || e instanceof ExitError) throw e;
-          emit({ type: "config", configId: opt.id, value: opts.model, error: describeError(e) });
+          const error = describeError(e);
+          emit({ type: "config", what, configId: step.configId, value, error });
+          configNotes.push(`${what} ${value}: the harness refused it (${error}), so its default ran`);
         }
-      } else if (!opt || opt.currentValue !== opts.model) {
+      } else if (what === "model" && opts.adapter.modelViaMeta) {
+        // e.g. claude-opus-5-5, which Claude Code's list calls `opus`: it still applies
         emit({
           type: "config",
-          configId: opt?.id ?? "model",
-          value: opts.model,
-          error: "not offered by the harness",
+          what,
+          configId: step.configId,
+          value,
+          error: null,
+          note: "not in the harness's list; set through session/new instead",
         });
+      } else {
+        const error =
+          step.reason === "no option" ? `the harness has no ${what} option` : "not offered by the harness";
+        emit({ type: "config", what, configId: step.configId, value, error });
+        configNotes.push(
+          what === "model"
+            ? `model ${value} isn't offered by the harness, so its default model ran`
+            : `effort ${value} isn't offered${forModel(configOptions, opts.adapter.modelViaMeta ? opts.model : null)}, so the harness's default effort ran`,
+        );
       }
     }
-    const reported = modelOpt();
-    if (reported && reported.type !== "boolean" && opts.adapter.modelViaConfigOption)
-      model = reported.currentValue;
+    const reported = modelOption(configOptions);
+    if (reported && !opts.adapter.modelViaMeta) model = reported.currentValue;
+    effort = effortOption(configOptions)?.currentValue ?? null;
 
     const blocks: acp.ContentBlock[] = [];
     if (opts.adapter.needsPromptPreamble(ctx)) {
@@ -359,11 +398,10 @@ export function pickOption(options: acp.PermissionOption[], decision: "allow" | 
   return null;
 }
 
-function offers(opt: acp.SessionConfigOption, value: string): boolean {
-  if (opt.type === "boolean") return false;
-  return opt.options.some((entry) =>
-    "group" in entry ? entry.options.some((c) => c.value === value) : entry.value === value,
-  );
+/** " for sonnet": the model an effort was asked for, when known. */
+function forModel(options: readonly acp.SessionConfigOption[], viaMeta: string | null): string {
+  const m = viaMeta ?? modelOption(options)?.currentValue ?? null;
+  return m ? ` for ${m}` : "";
 }
 
 function failureOf(e: unknown): RunFailure {

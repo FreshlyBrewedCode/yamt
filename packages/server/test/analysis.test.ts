@@ -14,13 +14,9 @@ import { dataPaths } from "../src/config.ts";
 import { newId } from "../src/db/index.ts";
 import { dedupeKeys } from "../src/db/repos/jobs.ts";
 import { type AppServer, createServer } from "../src/server.ts";
-import { fixture, tempDir } from "./helpers.ts";
+import { fakeAgentConfig, fixture, tempDir } from "./helpers.ts";
 
-const FAKE_AGENT = join(import.meta.dir, "fake-agent.ts");
-const fakeHarness = (env: Record<string, string> = {}): AnalysisConfig => ({
-  harness: { kind: "custom", command: process.execPath, args: [FAKE_AGENT], env },
-  model: "fake-smart",
-});
+const fakeHarness = (env: Record<string, string> = {}): AnalysisConfig => fakeAgentConfig(env);
 
 function start(dataDir = join(tempDir(), "data"), env: Record<string, string> = { FAKE_ACP_IMAGES: "1" }) {
   return createServer({
@@ -403,6 +399,7 @@ describe("server lifecycle", () => {
       attempt: 1,
       harness: "custom",
       model: null,
+      effort: null,
       startedAt: Date.now(),
     });
     r1.meals.setStatus(m.id, "analysing");

@@ -4,7 +4,6 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import {
   analysisConfig,
-  DEFAULT_ANALYSIS_MODEL,
   DEFAULT_PUSH_SUBJECT,
   DEFAULT_STT_SETTINGS,
   dataPaths,
@@ -61,10 +60,7 @@ describe("loadConfig", () => {
     expect(loadConfig(tempDir(), {})).toEqual({
       login: null,
       fdcApiKey: null,
-      analysis: {
-        harness: { kind: "claude-code", command: "", args: [], env: {} },
-        model: DEFAULT_ANALYSIS_MODEL,
-      },
+      analysis: { env: {}, file: {}, commands: {}, processEnv: {} },
       transcription: {
         command: [STT_RUNNER, "transcribe"],
         ffmpeg: null,
@@ -138,27 +134,43 @@ describe("loadConfig", () => {
     expect(() => loadConfig(dir, { YAMT_STT_VAD: "maybe" })).toThrow("YAMT_STT_VAD");
   });
 
-  test("the analysis harness and model from config.json; env overrides them", () => {
+  test("the analysis agent from config.json and the env, as layers", () => {
     const dir = tempDir();
     writeFileSync(
       dataPaths(dir).config,
       JSON.stringify({
-        analysis: { harness: "custom", command: "my-agent", args: ["acp"], env: { A: "1" }, model: "m1" },
+        analysis: {
+          harness: "custom",
+          command: "my-agent",
+          args: ["acp"],
+          env: { A: "1" },
+          model: "m1",
+          effort: "high",
+        },
       }),
     );
     expect(loadConfig(dir, {}).analysis).toEqual({
-      harness: { kind: "custom", command: "my-agent", args: ["acp"], env: { A: "1" } },
-      model: "m1",
+      env: {},
+      file: { harness: "custom", model: "m1", effort: "high" },
+      commands: { custom: { command: "my-agent", args: ["acp"] } },
+      processEnv: { A: "1" },
     });
     expect(
-      loadConfig(dir, { YAMT_ANALYSIS_COMMAND: "bun  fake-agent.ts", YAMT_ANALYSIS_MODEL: "m2" }).analysis,
+      loadConfig(dir, {
+        YAMT_ANALYSIS_COMMAND: "bun  fake-agent.ts",
+        YAMT_ANALYSIS_MODEL: "m2",
+        YAMT_ANALYSIS_EFFORT: "low",
+      }).analysis,
     ).toEqual({
-      harness: { kind: "custom", command: "bun", args: ["fake-agent.ts"], env: { A: "1" } },
-      model: "m2",
+      env: { model: "m2", effort: "low" },
+      file: { harness: "custom", model: "m1", effort: "high" },
+      commands: { custom: { command: "bun", args: ["fake-agent.ts"] } },
+      processEnv: { A: "1" },
     });
-    expect(loadConfig(dir, { YAMT_ANALYSIS_HARNESS: "claude-code" }).analysis.harness.kind).toBe(
-      "claude-code",
-    );
+    // the command line belongs to the harness the env or config.json name
+    expect(loadConfig(dir, { YAMT_ANALYSIS_HARNESS: "opencode" }).analysis.commands).toEqual({
+      opencode: { command: "my-agent", args: ["acp"] },
+    });
     expect(() => loadConfig(dir, { YAMT_ANALYSIS_HARNESS: "codex" })).toThrow("YAMT_ANALYSIS_HARNESS");
     expect(() => analysisConfig({ harness: "custom" }, {})).toThrow("needs a command");
   });

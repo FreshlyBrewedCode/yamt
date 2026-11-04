@@ -8,6 +8,7 @@ import { ProfileRepo } from "./profile.ts";
 import { PushSubscriptionRepo } from "./push.ts";
 import { RevisionRepo } from "./revisions.ts";
 import { RunRepo } from "./runs.ts";
+import { SettingsRepo } from "./settings.ts";
 import { TranscriptRepo } from "./transcripts.ts";
 import { WeightRepo } from "./weight.ts";
 
@@ -28,5 +29,6 @@ export function createRepos(db: Db) {
     goals: new GoalRepo(db),
     profile: new ProfileRepo(db),
     pushSubscriptions: new PushSubscriptionRepo(db),
+    settings: new SettingsRepo(db),
   };
 }

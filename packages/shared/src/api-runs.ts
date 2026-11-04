@@ -36,9 +36,21 @@ export interface AnalysisRun {
   jobId: string | null;
   /** The job's attempt (1, 2, …): a failed run is retried with backoff. */
   attempt: number;
-  /** `claude-code` or `custom`. */
+  /** `claude-code`, `opencode` or `custom`. */
   harness: string;
+  /** The model the settings asked for (null: the harness's default). */
+  requestedModel: string | null;
+  /** The model that answered, as the harness reports it (else the one asked for). */
   model: string | null;
+  /** The effort the settings asked for (null: the harness's default). */
+  requestedEffort: string | null;
+  /** The effort the session ran with (the harness's effort option at the prompt), null if it has none. */
+  effort: string | null;
+  /**
+   * What didn't apply as asked, in a sentence: a model or effort the harness doesn't offer (any
+   * more), so its default ran. Null when everything applied.
+   */
+  configNote: string | null;
   status: RunStatus;
   startedAt: number;
   endedAt: number | null;

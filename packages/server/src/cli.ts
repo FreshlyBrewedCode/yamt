@@ -3,6 +3,7 @@ import { type ChildProcess, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
+import { describeAgent } from "./agent/settings.ts";
 import type { AuthMode } from "./auth/identity.ts";
 import { isBuildStale, type WebBuildSources, writeStamp } from "./build-stamp.ts";
 import {
@@ -42,9 +43,11 @@ Auth: requests must come through \`tailscale serve\` from the configured Tailsca
 (env YAMT_LOGIN, or "login" in <data-dir>/config.json). /mcp takes bearer tokens instead.
 
 Analysis: Claude Code via claude-agent-acp with ${DEFAULT_ANALYSIS_MODEL}, logged in with the
-\`claude\` CLI. "analysis" in <data-dir>/config.json ({"harness": "custom", "command": …, "args": […],
-"env": {…}, "model": …}) or env YAMT_ANALYSIS_HARNESS / YAMT_ANALYSIS_COMMAND / YAMT_ANALYSIS_MODEL
-pick another ACP agent or model.
+\`claude\` CLI. Pick the harness (Claude Code, OpenCode), model and effort in the app (Settings →
+Agent). "analysis" in <data-dir>/config.json ({"harness": "claude-code" | "opencode" | "custom",
+"command": …, "args": […], "env": {…}, "model": …, "effort": …}) sets them under the app's choice;
+env YAMT_ANALYSIS_HARNESS / YAMT_ANALYSIS_MODEL / YAMT_ANALYSIS_EFFORT fix them over it, and
+YAMT_ANALYSIS_COMMAND replaces the command line (a custom ACP agent's only from config or env).
 
 Transcription: voice memos are transcribed on this machine's CPU with faster-whisper
 large-v3-turbo (int8, German) by services/stt/run.sh, one short-lived process per batch; the
@@ -188,11 +191,10 @@ async function main(): Promise<number> {
     if (ts) console.log(`  Tailnet:  ${ts.url}`);
     console.log(`  Local:    http://localhost:${webPort}/${auth.kind === "off" ? "  (auth off)" : ""}`);
     console.log(`  MCP:      ${app.mcpUrl}  (bearer token: \`yamt mcp-token\`)`);
-    const a = config.analysis;
     console.log(
       values["no-worker"]
         ? "  Analysis: off (--no-worker)"
-        : `  Analysis: ${a.harness.kind}${a.harness.command ? ` (${a.harness.command})` : ""}, model ${a.model}`,
+        : `  Analysis: ${describeAgent(app.services.agent.effective())}; change it in Settings → Agent`,
     );
     if (app.transcription) {
       // found now rather than at the first memo: a missing ffmpeg fails transcripts (not analyses)

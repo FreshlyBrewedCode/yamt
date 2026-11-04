@@ -1,8 +1,8 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
+import { HarnessKind } from "@yamt/shared";
 import { z } from "zod";
-import type { HarnessConfig } from "./acp/adapters/index.ts";
 
 export const VERSION = "0.1.0";
 
@@ -34,6 +34,8 @@ export function dataPaths(dataDir: string) {
     models: join(dataDir, "models"),
     /** The VAPID key pair Web Push messages are signed with (0600), made at the first start. */
     vapid: join(dataDir, "vapid.json"),
+    /** The scratch cwd harnesses are started in to read their models and efforts (#28). */
+    discovery: join(dataDir, "discovery"),
   };
 }
 
@@ -70,13 +72,19 @@ export const DEFAULT_PUSH_SUBJECT = "https://github.com/FreshlyBrewedCode/yamt";
 
 const AnalysisConfigFile = z
   .object({
-    /** `claude-code` (claude-agent-acp, the default) or `custom` (any ACP agent: give `command`). */
-    harness: z.enum(["claude-code", "custom"]).optional(),
-    /** Overrides the preset's command line (custom: required). */
+    /**
+     * `claude-code` (claude-agent-acp, the default), `opencode` (`opencode acp`) or `custom` (any
+     * ACP agent: give `command`). The app's Agent setting overrides it unless the env fixes it.
+     */
+    harness: HarnessKind.optional(),
+    /** Overrides the harness's command line (custom: required). Config-file only, never the app. */
     command: z.string().trim().min(1).optional(),
     args: z.array(z.string()).optional(),
     env: z.record(z.string(), z.string()).optional(),
+    /** The model of `harness` (default for Claude Code: claude-opus-5-5; others: their own). */
     model: z.string().trim().min(1).optional(),
+    /** The reasoning effort of `harness`, a value of its effort option (default: the harness's). */
+    effort: z.string().trim().min(1).optional(),
   })
   .strict();
 
@@ -114,7 +122,7 @@ const PushConfigFile = z
 /** `<data>/config.json`. Every key is optional; env vars override the file. */
 export const AppConfigFile = z
   .object({
-    /** The analysis agent (#8); env YAMT_ANALYSIS_HARNESS, YAMT_ANALYSIS_COMMAND, YAMT_ANALYSIS_MODEL. */
+    /** The analysis agent (#8, #28); env YAMT_ANALYSIS_HARNESS, _COMMAND, _MODEL, _EFFORT. */
     analysis: AnalysisConfigFile.optional(),
     /** Speech-to-text of voice memos (#9); env YAMT_STT_* and YAMT_FFMPEG, see `transcriptionConfig`. */
     transcription: TranscriptionConfigFile.optional(),
@@ -127,10 +135,29 @@ export const AppConfigFile = z
   })
   .strict();
 
-/** Which agent analyses meals, and with which model. */
+/** One layer of the agent settings: what it says, where it says anything. */
+export interface AgentLayer {
+  harness?: HarnessKind;
+  model?: string;
+  effort?: string;
+}
+
+/**
+ * The analysis agent as config.json and the env describe it. The app's setting (#28) sits between
+ * the two; `agent/settings.ts` resolves the layers into the settings a run uses.
+ */
 export interface AnalysisConfig {
-  harness: HarnessConfig;
-  model: string;
+  /** YAMT_ANALYSIS_HARNESS / _MODEL / _EFFORT: fix their value (the app can't change it). */
+  env: AgentLayer;
+  /** config.json `analysis`: applies where neither the env nor the app say anything. */
+  file: AgentLayer;
+  /**
+   * Command lines that replace a harness's own (config.json `command`/`args` or
+   * YAMT_ANALYSIS_COMMAND, for the configured harness). `custom` is only offered with one.
+   */
+  commands: Partial<Record<HarnessKind, { command: string; args: string[] }>>;
+  /** Extra process env for the harness (config.json `analysis.env`). */
+  processEnv: Record<string, string>;
 }
 
 /** What the STT process is asked to do (the request's `settings`, see services/stt). */
@@ -258,21 +285,32 @@ export function transcriptionConfig(
 }
 
 /**
- * The analysis harness from config.json's `analysis` and the env: YAMT_ANALYSIS_HARNESS
- * (`claude-code` | `custom`), YAMT_ANALYSIS_COMMAND (a command line, split on spaces; replaces
- * `command` and `args`), YAMT_ANALYSIS_MODEL.
+ * The analysis agent from config.json's `analysis` and the env: YAMT_ANALYSIS_HARNESS
+ * (`claude-code` | `opencode` | `custom`), YAMT_ANALYSIS_COMMAND (a command line, split on spaces;
+ * replaces `command` and `args` of the configured harness), YAMT_ANALYSIS_MODEL,
+ * YAMT_ANALYSIS_EFFORT.
  */
 export function analysisConfig(
   file: z.infer<typeof AnalysisConfigFile>,
   env: Env = process.env,
 ): AnalysisConfig {
-  const kindEnv = env.YAMT_ANALYSIS_HARNESS?.trim();
-  if (kindEnv && kindEnv !== "claude-code" && kindEnv !== "custom") {
-    throw new Error(`YAMT_ANALYSIS_HARNESS: expected claude-code or custom, got ${kindEnv}`);
+  const e = (name: string) => env[name]?.trim() || undefined;
+  const kindEnv = e("YAMT_ANALYSIS_HARNESS");
+  if (kindEnv !== undefined && !HarnessKind.safeParse(kindEnv).success) {
+    throw new Error(
+      `YAMT_ANALYSIS_HARNESS: expected one of ${HarnessKind.options.join(", ")}, got ${kindEnv}`,
+    );
   }
-  const kind = (kindEnv as HarnessConfig["kind"] | undefined) || file.harness || "claude-code";
-  const commandLine = env.YAMT_ANALYSIS_COMMAND?.trim().split(/\s+/).filter(Boolean);
-  const command = commandLine?.[0] ?? file.command ?? "";
+  const envLayer = clean({
+    harness: kindEnv as HarnessKind | undefined,
+    model: e("YAMT_ANALYSIS_MODEL"),
+    effort: e("YAMT_ANALYSIS_EFFORT"),
+  });
+  const fileLayer = clean({ harness: file.harness, model: file.model, effort: file.effort });
+  // the command line belongs to the harness config.json (or the env) names
+  const kind = envLayer.harness ?? fileLayer.harness ?? "claude-code";
+  const commandLine = e("YAMT_ANALYSIS_COMMAND")?.split(/\s+/).filter(Boolean);
+  const command = commandLine?.[0] ?? file.command;
   const args = commandLine ? commandLine.slice(1) : (file.args ?? []);
   if (kind === "custom" && !command) {
     throw new Error(
@@ -280,7 +318,12 @@ export function analysisConfig(
     );
   }
   return {
-    harness: { kind, command, args, env: file.env ?? {} },
-    model: env.YAMT_ANALYSIS_MODEL?.trim() || file.model || DEFAULT_ANALYSIS_MODEL,
+    env: envLayer,
+    file: fileLayer,
+    commands: command ? { [kind]: { command, args } } : {},
+    processEnv: file.env ?? {},
   };
 }
+
+const clean = (l: AgentLayer): AgentLayer =>
+  Object.fromEntries(Object.entries(l).filter(([, v]) => v !== undefined)) as AgentLayer;

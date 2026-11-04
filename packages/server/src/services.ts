@@ -1,4 +1,6 @@
-import { DEFAULT_PUSH_SUBJECT, dataPaths } from "./config.ts";
+import { AgentDiscovery, type DiscoveryOptions } from "./agent/discovery.ts";
+import { AgentService } from "./agent/settings.ts";
+import { type AnalysisConfig, analysisConfig, DEFAULT_PUSH_SUBJECT, dataPaths } from "./config.ts";
 import type { Db } from "./db/index.ts";
 import { createRepos, type Repos } from "./db/repos/index.ts";
 import { FoodService } from "./domain/foods.ts";
@@ -35,6 +37,8 @@ export interface Services {
   timeZone: string;
   /** Web Push (#13): the VAPID key and delivery to the registered subscriptions. */
   push: PushSender;
+  /** The Agent setting (#28): harness, model and effort for the next run, and what harnesses offer. */
+  agent: AgentService;
   /** Pokes the job worker after an enqueue; the server wires it to its worker (a no-op without one). */
   queue: { wake: () => void };
 }
@@ -49,6 +53,10 @@ export interface ServicesOptions {
   /** Seam for tests: outbound HTTP. Defaults to the real fetch. */
   fetch?: Fetch;
   timeZone?: string;
+  /** The analysis agent from config.json and the env; default `analysisConfig({})`. */
+  analysis?: AnalysisConfig;
+  /** Seams for tests: discovering harness options, finding commands on PATH. */
+  agent?: { discovery?: Partial<DiscoveryOptions>; which?: (command: string) => string | null };
   /** Web Push: the VAPID subject (default: the project URL); seams for tests. */
   push?: {
     subject?: string;
@@ -86,6 +94,12 @@ export function createServices(opts: ServicesOptions): Services {
     fetch: fetchFn,
     timeZone,
     push,
+    agent: new AgentService({
+      config: opts.analysis ?? analysisConfig({}),
+      repo: repos.settings,
+      discovery: new AgentDiscovery({ dir: dataPaths(opts.dataDir).discovery, ...opts.agent?.discovery }),
+      which: opts.agent?.which,
+    }),
     queue,
   };
 }

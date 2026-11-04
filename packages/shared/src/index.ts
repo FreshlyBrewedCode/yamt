@@ -1,4 +1,5 @@
 export * from "./api.ts";
+export * from "./api-agent.ts";
 export * from "./api-goals.ts";
 export * from "./api-meals.ts";
 export * from "./api-nutrition.ts";

@@ -8,6 +8,10 @@ interface Row {
   attempt: number;
   harness: string;
   model: string | null;
+  requested_model: string | null;
+  requested_effort: string | null;
+  effort: string | null;
+  config_note: string | null;
   status: RunStatus;
   started_at: number;
   ended_at: number | null;
@@ -23,7 +27,11 @@ const toRun = (r: Row): AnalysisRun => ({
   jobId: r.job_id,
   attempt: r.attempt,
   harness: r.harness,
+  requestedModel: r.requested_model,
   model: r.model,
+  requestedEffort: r.requested_effort,
+  effort: r.effort,
+  configNote: r.config_note,
   status: r.status,
   startedAt: r.started_at,
   endedAt: r.ended_at,
@@ -39,7 +47,9 @@ export interface NewRun {
   jobId: string | null;
   attempt: number;
   harness: string;
+  /** What the settings ask for; `model` starts as the requested one until the harness reports its own. */
   model: string | null;
+  effort: string | null;
   startedAt: number;
 }
 
@@ -47,6 +57,8 @@ export interface RunEnd {
   status: Exclude<RunStatus, "running">;
   endedAt: number;
   model: string | null;
+  effort: string | null;
+  configNote: string | null;
   stopReason: string | null;
   usage: RunUsage | null;
   error: string | null;
@@ -60,10 +72,11 @@ export class RunRepo {
   insert(r: NewRun): AnalysisRun {
     this.db
       .query(
-        `INSERT INTO runs (id, meal_id, job_id, attempt, harness, model, status, started_at)
-         VALUES (?, ?, ?, ?, ?, ?, 'running', ?)`,
+        `INSERT INTO runs (id, meal_id, job_id, attempt, harness, model, requested_model, requested_effort,
+           status, started_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'running', ?)`,
       )
-      .run(r.id, r.mealId, r.jobId, r.attempt, r.harness, r.model, r.startedAt);
+      .run(r.id, r.mealId, r.jobId, r.attempt, r.harness, r.model, r.model, r.effort, r.startedAt);
     return this.get(r.id)!;
   }
 
@@ -83,13 +96,15 @@ export class RunRepo {
   finish(id: string, end: RunEnd): AnalysisRun | null {
     this.db
       .query(
-        `UPDATE runs SET status = ?, ended_at = ?, model = COALESCE(?, model), stop_reason = ?, usage = ?,
-           error = ?, revision_id = ? WHERE id = ? AND status = 'running'`,
+        `UPDATE runs SET status = ?, ended_at = ?, model = COALESCE(?, model), effort = ?, config_note = ?,
+           stop_reason = ?, usage = ?, error = ?, revision_id = ? WHERE id = ? AND status = 'running'`,
       )
       .run(
         end.status,
         end.endedAt,
         end.model,
+        end.effort,
+        end.configNote,
         end.stopReason,
         end.usage === null ? null : JSON.stringify(end.usage),
         end.error,
