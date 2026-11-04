@@ -2,7 +2,14 @@ import { describe, expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { dataPaths, ensureDataDir, loadConfig, resolveDataDir } from "../src/config.ts";
+import {
+  analysisConfig,
+  DEFAULT_ANALYSIS_MODEL,
+  dataPaths,
+  ensureDataDir,
+  loadConfig,
+  resolveDataDir,
+} from "../src/config.ts";
 import { tempDir } from "./helpers.ts";
 
 const mode = (p: string) => statSync(p).mode & 0o777;
@@ -47,8 +54,40 @@ describe("ensureDataDir", () => {
 });
 
 describe("loadConfig", () => {
-  test("no file, no env: no login, no FDC key", () => {
-    expect(loadConfig(tempDir(), {})).toEqual({ login: null, fdcApiKey: null });
+  test("no file, no env: no login, no FDC key, Claude Code with the default model", () => {
+    expect(loadConfig(tempDir(), {})).toEqual({
+      login: null,
+      fdcApiKey: null,
+      analysis: {
+        harness: { kind: "claude-code", command: "", args: [], env: {} },
+        model: DEFAULT_ANALYSIS_MODEL,
+      },
+    });
+  });
+
+  test("the analysis harness and model from config.json; env overrides them", () => {
+    const dir = tempDir();
+    writeFileSync(
+      dataPaths(dir).config,
+      JSON.stringify({
+        analysis: { harness: "custom", command: "my-agent", args: ["acp"], env: { A: "1" }, model: "m1" },
+      }),
+    );
+    expect(loadConfig(dir, {}).analysis).toEqual({
+      harness: { kind: "custom", command: "my-agent", args: ["acp"], env: { A: "1" } },
+      model: "m1",
+    });
+    expect(
+      loadConfig(dir, { YAMT_ANALYSIS_COMMAND: "bun  fake-agent.ts", YAMT_ANALYSIS_MODEL: "m2" }).analysis,
+    ).toEqual({
+      harness: { kind: "custom", command: "bun", args: ["fake-agent.ts"], env: { A: "1" } },
+      model: "m2",
+    });
+    expect(loadConfig(dir, { YAMT_ANALYSIS_HARNESS: "claude-code" }).analysis.harness.kind).toBe(
+      "claude-code",
+    );
+    expect(() => loadConfig(dir, { YAMT_ANALYSIS_HARNESS: "codex" })).toThrow("YAMT_ANALYSIS_HARNESS");
+    expect(() => analysisConfig({ harness: "custom" }, {})).toThrow("needs a command");
   });
 
   test("reads the login from config.json; YAMT_LOGIN overrides it", () => {

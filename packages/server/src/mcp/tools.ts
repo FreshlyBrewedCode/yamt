@@ -309,6 +309,14 @@ export function yamtTools(s: Services): Tool[] {
         questions: z.array(QuestionInput).max(MAX_QUESTIONS).default([]),
       }),
       run(args, ctx) {
+        if (ctx.principal.kind === "run") {
+          const saved = s.repos.revisions.forRun(ctx.principal.runId)[0];
+          if (saved) {
+            throw new ToolError(
+              `this run already saved revision ${saved.number}; a run saves exactly one revision, so it stays as saved`,
+            );
+          }
+        }
         const view = s.revisions.save({
           mealId: args.mealId,
           runId: ctx.principal.kind === "run" ? ctx.principal.runId : null,

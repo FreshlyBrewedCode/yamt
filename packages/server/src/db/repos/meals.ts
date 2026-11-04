@@ -7,6 +7,7 @@ interface Row {
   eaten_at: number;
   eaten_at_source: EatenAtSource;
   current_revision_id: string | null;
+  analysis_error: string | null;
   created_at: number;
   updated_at: number;
 }
@@ -17,6 +18,7 @@ const toMeal = (r: Row): Meal => ({
   eatenAt: r.eaten_at,
   eatenAtSource: r.eaten_at_source,
   currentRevisionId: r.current_revision_id,
+  analysisError: r.analysis_error,
   createdAt: r.created_at,
   updatedAt: r.updated_at,
 });
@@ -81,15 +83,20 @@ export class MealRepo {
     });
   }
 
-  setStatus(id: string, status: MealStatus, now = Date.now()): Meal | null {
-    this.db.query("UPDATE meals SET status = ?, updated_at = ? WHERE id = ?").run(status, now, id);
+  /** Sets the status; `error` is kept only with `failed` (why the analysis failed), else cleared. */
+  setStatus(id: string, status: MealStatus, now = Date.now(), error: string | null = null): Meal | null {
+    this.db
+      .query("UPDATE meals SET status = ?, analysis_error = ?, updated_at = ? WHERE id = ?")
+      .run(status, status === "failed" ? error : null, now, id);
     return this.get(id);
   }
 
   /** A new analysis revision is the meal's current one; the status follows it (see RevisionService). */
   setCurrentRevision(id: string, revisionId: string, status: MealStatus, now = Date.now()): Meal | null {
     this.db
-      .query("UPDATE meals SET current_revision_id = ?, status = ?, updated_at = ? WHERE id = ?")
+      .query(
+        "UPDATE meals SET current_revision_id = ?, status = ?, analysis_error = NULL, updated_at = ? WHERE id = ?",
+      )
       .run(revisionId, status, now, id);
     return this.get(id);
   }

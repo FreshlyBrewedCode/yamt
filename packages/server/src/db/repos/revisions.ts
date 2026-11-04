@@ -171,6 +171,14 @@ export class RevisionRepo {
     return r ? toRevision(r) : null;
   }
 
+  /** The revisions an analysis run saved (a run saves exactly one; the tool refuses a second). */
+  forRun(runId: string): MealRevision[] {
+    return this.db
+      .query<RevisionRow, [string]>("SELECT * FROM meal_revisions WHERE run_id = ? ORDER BY number")
+      .all(runId)
+      .map(toRevision);
+  }
+
   /** Every revision of a meal, oldest first. */
   listForMeal(mealId: string): MealRevision[] {
     return this.db

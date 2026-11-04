@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { MealRevisionView } from "./api-nutrition.ts";
+import type { AnalysisRun } from "./api-runs.ts";
 
 /**
  * Meals and their captures (#6). Times are epoch milliseconds throughout. Captures are immutable
@@ -50,6 +51,8 @@ export interface Meal {
   eatenAtSource: EatenAtSource;
   /** The latest analysis revision (#7); null until the first analysis. */
   currentRevisionId: string | null;
+  /** Why the analysis failed for good (status `failed`); null otherwise. */
+  analysisError: string | null;
   createdAt: number;
   updatedAt: number;
 }
@@ -133,14 +136,16 @@ export interface MealsResponse {
 }
 
 /**
- * `GET /api/meals/:id`: every capture (retracted ones included, flagged), the transcripts, and
- * the current analysis revision with its items, questions and computed totals.
+ * `GET /api/meals/:id`: every capture (retracted ones included, flagged), the transcripts, the
+ * current analysis revision with its items, questions and computed totals, and the analysis runs
+ * (newest first; a revision's `runId` names its run).
  */
 export interface MealDetailResponse {
   meal: Meal;
   captures: Capture[];
   transcripts: Transcript[];
   revision: MealRevisionView | null;
+  runs: AnalysisRun[];
 }
 
 const captureText = z.string().trim().min(1).max(20_000);
@@ -188,7 +193,10 @@ export interface CaptureResponse {
   meal: Meal;
 }
 
-/** `POST /api/meals/:id/analyse`: the meal (now `queued`) and the analyse job. */
+/**
+ * `POST /api/meals/:id/analyse`: the meal (now `queued`) and the analyse job. Also the retry of a
+ * `failed` meal.
+ */
 export interface AnalyseResponse {
   meal: Meal;
   jobId: string;

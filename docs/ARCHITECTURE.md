@@ -1,7 +1,8 @@
 # yamt: architecture
 
-What exists today (the scaffold, #3, the meal backend, #6, and the nutrition layer with the yamt
-MCP server, #7), how it fits together, and where wave 1 goes next. Why it is built this way: [ADR 0001](adr/0001-wave-1-architecture.md).
+What exists today (the scaffold, #3, the meal backend, #6, the nutrition layer with the yamt
+MCP server, #7, and the analysis job over ACP, #8), how it fits together, and where wave 1 goes
+next. Why it is built this way: [ADR 0001](adr/0001-wave-1-architecture.md).
 Commands and conventions: [AGENTS.md](../AGENTS.md).
 
 ## Components
@@ -17,12 +18,15 @@ yamt start   (one Bun process, binds 127.0.0.1:7890 only)
   ├─ MCP server      /mcp     bearer tokens (agent runs, interactive Claude Code sessions),
   │                           loopback callers only; the agent's only way to read and write
   ├─ SPA             /*       packages/web/dist   (dev: Vite on 7891 proxies /api)
+  ├─ job worker      drains the `jobs` table: `analyse` (one at a time), `transcribe` (#9)
+  │    └─ analysis run: one harness process per run, ACP over stdio, cwd ~/.yamt/runs/<run>/
+  │         claude-agent-acp (node) → `claude` │ custom ACP command
+  │         └─ MCP over HTTP back to 127.0.0.1:7890/mcp with a per-run token
   └─ SQLite          ~/.yamt/yamt.db   (WAL, foreign keys, 0600)
      data dir        ~/.yamt/  (0700): yamt.db, media/, runs/, config.json, mcp-token
-     job queue       the `jobs` table; the worker loop that drains it arrives with #8/#9
         │
         └─ outbound: Open Food Facts, USDA FoodData Central, recipe pages (timeouts, size caps,
-                     rate limits; results cached in `foods`)
+                     rate limits; results cached in `foods`); the model API, via the harness
 ```
 
 ## Layout
@@ -33,17 +37,25 @@ packages/shared/src/      contracts shared by server and web (no runtime deps bu
   api-meals.ts            meals, captures, transcripts, media: `mealPaths`, enums, bodies, types
   api-weight.ts           weight entries: `weightPaths`, body, types
   api-nutrition.ts        foods, revisions, items, questions, totals: enums and types
+  api-runs.ts             analysis runs and trace lines: `runPaths`, `AnalysisRun`, `TraceEntry`
 packages/server/src/
-  cli.ts                  `yamt start` (flags: --data-dir --port --https-port --local --no-auth --dev --no-build),
-                          `yamt mcp-token [--rotate]`
-  server.ts               composition root: data dir, DB, services, API, static; the mount points
+  cli.ts                  `yamt start` (flags: --data-dir --port --https-port --local --no-auth --dev --no-build
+                          --no-worker), `yamt mcp-token [--rotate]`
+  server.ts               composition root: data dir, DB, services, API, static, the job worker
   services.ts             createServices: repositories + domain services, what HTTP talks to
-  config.ts               data dir resolution and setup, config.json, ports, version
+  config.ts               data dir resolution and setup, config.json (login, FDC key, analysis), ports
+  procs.ts                stopGroup: SIGTERM, then SIGKILL, to a whole process group
+  acp/                    the ACP layer (no DB, no HTTP): protocol.ts (the SDK entrypoint), process.ts
+                          (AcpProcess), run.ts (runPrompt: one session, one turn), mcp.ts, adapters/
+                          (claude-code, custom)
+  jobs/worker.ts          JobWorker: the in-process loop over `jobs`, handlers by type
+  analysis/               job.ts (the `analyse` handler), prompt.ts (prompt and photos), permissions.ts
+                          (the policy), skill.ts (loads log-meal), trace.ts (TraceWriter)
   tailscale.ts            `tailscale serve --https=<port>` in the foreground
   build-stamp.ts          rebuild packages/web/dist when its sources changed
   auth/identity.ts        requireTailnetIdentity: the Tailscale-User-Login check, dev bypass
   auth/bearer.ts          requireBearer: token auth for machine clients (/mcp)
-  http/                   api.ts (mounts), meals.ts and weight.ts (routes), file-response.ts
+  http/                   api.ts (mounts), meals.ts, runs.ts and weight.ts (routes), file-response.ts
                           (media, ranges), middleware.ts (sameOrigin, errors, readJson),
                           origin.ts, static.ts
   domain/                 errors.ts (HttpError), meals.ts (MealService: captures, retract, analyse),
@@ -55,13 +67,14 @@ packages/server/src/
   mcp/                    endpoint.ts (/mcp: auth, stateless transport), tools.ts (the tools,
                           scopes, instructions), tokens.ts (interactive and per-run tokens)
   media/                  store.ts (write-once files), detect.ts (type sniffing), exif.ts,
-                          heic.ts (HEIC → JPEG)
+                          heic.ts (HEIC → JPEG), downscale.ts (JPEG → ≤ 1600 px, upright)
   db/                     index.ts (open, pragmas, migration runner, newId), migrations/*.sql,
                           repos/ (one per aggregate: meals, captures, transcripts, jobs, weight,
-                          foods, revisions)
+                          foods, revisions, runs)
 packages/server/test/     bun tests, temp dirs only; fixtures/ holds made-up images and, in
                           nutrition/, recorded OFF/FDC answers and a trimmed recipe page
-                          (record.ts re-records them; the gate never hits the network)
+                          (record.ts re-records them; the gate never hits the network);
+                          fake-agent.ts is a scripted ACP agent (tests never start a real harness)
 packages/web/src/
   main.tsx                router + query client
   routes/                 TanStack file routes (__root.tsx, index.tsx); routeTree.gen.ts is generated
@@ -70,6 +83,8 @@ packages/web/src/
   index.css               Tailwind 4 + the theme tokens (light/dark)
 e2e/                      Playwright specs (phone viewport)
 docs/adr/                 architecture decision records
+.agents/skills/log-meal/  SKILL.md: how to analyse a meal (the job's system prompt, and a skill for
+                          interactive sessions through the `.claude/skills` link)
 ```
 
 ## Hosting
@@ -109,8 +124,9 @@ docs/adr/                 architecture decision records
 ## Data
 
 - `~/.yamt/` (`--data-dir`, `YAMT_DATA_DIR`), created and kept at 0700 together with `media/`
-  (raw captures) and `runs/` (agent traces); `mcp-token` (0600) holds the interactive MCP token,
-  `config.json` the optional `login` and `fdcApiKey`. Nothing personal is ever inside the repo;
+  (raw captures) and `runs/` (one dir per analysis run: the harness's cwd and `trace.ndjson`);
+  `mcp-token` (0600) holds the interactive MCP token, `config.json` the optional `login`,
+  `fdcApiKey` and `analysis` (see [Analysis](#analysis-8)). Nothing personal is ever inside the repo;
   the `.gitignore` blocks `*.db` and data dirs as a second line of defence.
 - `yamt.db`: `bun:sqlite`, `journal_mode=WAL`, `synchronous=NORMAL`, `foreign_keys=ON`,
   `busy_timeout=5000`; the file and its -wal/-shm are chmod 0600 on open.
@@ -130,7 +146,8 @@ docs/adr/                 architecture decision records
 Enum-like columns are validated in code (the zod enums in `@yamt/shared`), not with `CHECK`, so a
 new value never needs a table rebuild.
 
-- **meals**: `status` `draft` → `queued` → `analysing` → `analysed` | `needs_input` | `failed`;
+- **meals**: `status` `draft` → `queued` → `analysing` → `analysed` | `needs_input` | `failed`,
+  with `analysis_error` (why it failed; kept only while `failed`, cleared by any other status);
   `eaten_at` with `eaten_at_source`: `created` (no capture yet: the creation time), `capture` (the
   earliest live capture), `user` (given on create), `agent` (refined by the analysis, #8). Only
   `created`/`capture` follow the captures: adding or retracting one recomputes it from
@@ -150,6 +167,11 @@ new value never needs a table rebuild.
   `done` with text, model, language, duration and `segments` (JSON `[{startMs, endMs, text}]`), or
   `failed` with an error. Derived, so replaceable: `upsertPending` resets it for a new run.
 - **jobs**: see the queue below.
+- **runs**: one per analysis attempt: `meal_id`, `job_id`, `attempt`, `harness`, `model` (the one
+  that answered, as the harness reports it), `status` (`running` → `succeeded` | `failed` |
+  `cancelled`), `started_at`/`ended_at`, `stop_reason` (ACP), `usage` (JSON: the turn's tokens and
+  the last context report with cost), `error`, `revision_id`. The full event stream is the trace
+  file. A revision's `run_id` points back.
 - **weight_entries**: `measured_at`, `kg`, `note`, `source` (`manual`). User data, not raw
   captures, so they can be deleted.
 - **foods**: the food cache. `source` (`off`, `fdc`, `label`, `custom`) and `source_ref`
@@ -210,6 +232,18 @@ new value never needs a table rebuild.
 - Producers: an audio capture enqueues `transcribe` (with its pending transcript, in the same
   transaction); `POST /api/meals/:id/analyse` sets the meal `queued` and enqueues `analyse`. Adding
   captures to an `analysed`/`needs_input` meal does not queue it; the client calls analyse again.
+  Both poke the worker (`services.queue.wake`) so it doesn't wait for its next poll.
+
+**The worker loop** (`jobs/worker.ts`, `JobWorker`): one per server process, started by
+`createServer({worker: true})` (`yamt start` does, unless `--no-worker`; tests and tools that
+only need the API don't, so they never spawn an agent). Handlers register by job type with their
+own concurrency (`analyse`: 1; #9 registers `transcribe` on the same worker, running alongside).
+Every poll (1 s, or at once after `wake()`) fills each type's lane with `claim({types: [type]})`;
+the queue already keeps two jobs with the same key (one meal) from running together. A handler
+returns `done`, `failed` (`retryable: false` fails at once) or `reschedule` (no attempt spent);
+throwing counts as a retryable failure. `settled(job)` then sees the job as it ended up (`done`,
+`queued`, `failed`, `cancelled`). `stop()` (server shutdown) aborts the running handlers' signal
+and waits for them; the analysis requeues itself without spending an attempt.
 
 ## Nutrition layer (#7)
 
@@ -309,7 +343,112 @@ sessions' only way to read and write yamt data.
   - *Per run:* `mintRun({runId, mealId, ttlMs})` → a token scoped to one meal, in memory only
     (runs don't outlive the server), revoked by `revokeRun(runId)` and expiring after 2 h
     regardless. A run token sees `get_meal`/`save_meal_revision` for its meal only, the food tools,
-    and not `get_day_summary`; revisions it saves record its `run_id`.
+    and not `get_day_summary`; the revision it saves records its `run_id`, and a second
+    `save_meal_revision` with the same run token is refused (a run saves exactly one).
+
+## Analysis (#8)
+
+Pressing **Analyse** queues an `analyse` job; the worker runs it as one **analysis run**: an agent
+harness driven over ACP through the meal, which reads with the yamt MCP tools and ends with one
+saved revision. ADR 0001 (6–8) has the why.
+
+### The `analyse` job (`analysis/job.ts`)
+
+1. **Transcripts first.** If a live audio capture's transcript is still `pending`, the job is
+   rescheduled 15 s later without spending an attempt, until #9's worker has filled it. A `failed`
+   transcript doesn't block: the prompt names it and the skill says to note it.
+2. **The run.** A `runs` row (`running`), `<data>/runs/<run id>/` (0700; the harness's cwd and its
+   trace), meal → `analysing`, and a run token (`mintRun`, scoped to the meal).
+3. **The turn** (`runPrompt`, below): the configured harness and model, the skill as the appended
+   system prompt, the yamt MCP server at `http://127.0.0.1:<port>/mcp` with the run token, and the
+   prompt (meal id, re-analysis note, photos, failed transcripts). The token is revoked afterwards
+   whatever happened.
+4. **The verdict.** The run succeeded if it saved its revision (`revisions.forRun`); the revision
+   already set the meal's status (`analysed`, `needs_input`, or `queued` when another analysis is
+   waiting). Otherwise the attempt failed with the reason: the turn ended without
+   `save_meal_revision` (with the agent's last words), the harness crashed (exit code and stderr
+   tail), a timeout, a spawn or login problem (not retried: they don't fix themselves). The queue
+   retries after 30 s and 2 min (3 attempts); the meal is `queued` in between and `failed` with
+   `analysis_error` after the last one (unless another analysis is queued). A server stop cancels
+   the run (`cancelled`) and requeues the job without spending an attempt; after a crash the next
+   start fails the interrupted run and requeues or fails its meal (`settleMeal`).
+5. **Retry:** `POST /api/meals/:id/analyse` on a `failed` meal queues a fresh job (fresh attempts)
+   and clears the error.
+
+**Configuration** (`config.ts`, `<data>/config.json`, env wins): `analysis.harness`
+(`claude-code`, the default, or `custom`), `command`/`args` (required for `custom`; override the
+preset's otherwise), `env`, `model` (default `claude-opus-5-5`); `YAMT_ANALYSIS_HARNESS`,
+`YAMT_ANALYSIS_COMMAND` (a command line, split on spaces), `YAMT_ANALYSIS_MODEL`. The e2e server
+runs the fake agent this way.
+
+**Photos** (`analysis/prompt.ts`, `media/downscale.ts`): each live photo becomes a JPEG of at most
+1600 px on the long side, upright (EXIF orientation applied; the copy has no EXIF), from the
+original JPEG or a HEIC's JPEG derivative, with `jpeg-js` and an area-averaging resize in plain JS.
+The copy is cached next to the original as `<capture id>.1600.jpg` (written once like all media;
+originals are never touched); small upright JPEGs are used as they are, other formats (PNG) as
+they are up to 4 MB. If `initialize` reports `promptCapabilities.image`, up to 8 go along as ACP
+`image` blocks, each after a line with its capture id; otherwise (or beyond 8) the prompt lists
+their paths, which the agent may open with its read tool. A HEIC without a derivative is named as
+not viewable.
+
+**Permissions** (`analysis/permissions.ts`): decided on the spot, by tool: the yamt tools
+(`mcp__yamt__*`) and web fetch/search are allowed; reading a file only for the meal's photo copies
+and the run dir; everything else (shell, edits, writes, other files) is rejected. The answer is
+the request's option of that kind (`allow_once` before `allow_always`, `reject_once` before
+`reject_always`), or `cancelled` if it has none; a request is never left pending. With Claude
+Code the allowed tools are pre-allowed anyway (`allowedTools`), so requests are rare.
+
+### The ACP layer (`acp/`)
+
+Ported from vibe-center's `packages/server/src/acp/` and trimmed to job use. It knows nothing
+about the database or HTTP.
+
+- `protocol.ts`: the only import of `@agentclientprotocol/sdk` (2.1.0, its `unstable` surface for
+  the spec `systemPrompt` and turn `usage`).
+- `process.ts` / **`AcpProcess`**: spawns the harness in its own process group, `initialize`s it
+  (no client fs or terminal capabilities) and wires `session/update`, permission requests and
+  extension notifications. `close()` stops the whole group (`procs.ts`); a harness that exits by
+  itself takes its group with it; `raceExit` turns a crash into an error with the stderr tail.
+- `run.ts` / **`runPrompt`**: spawn, `initialize`, one fresh `session/new` (no resume), the model
+  through `session/set_config_option` for adapters that use it, one `session/prompt`, close.
+  Timeouts: `initialize` 30 s, session setup 60 s, **idle** 3 min without any update (5 min while
+  a tool call is open), a **hard cap** of 10 min on the turn. A timeout or an abort sends
+  `session/cancel` and kills the group 5 s later if the harness ignores it. Every event
+  (`process.start`, `initialize`, `session.new`, `config`, `prompt`, `update`, `permission`,
+  `cancel`, `prompt.end`, `notification`, `process.exit`) goes to `onEvent`; the result has status,
+  stop reason, error with a failure class, usage, last context report, and the model that answered
+  (Claude Code reports it on usage updates; its model config option can be stale).
+- `adapters/`: **Claude Code** (`node <claude-agent-acp>/dist/index.js`, 0.100.0; Bun if there is
+  no node): skill via the spec `systemPrompt` (`append`), else `_meta.systemPrompt.append`;
+  `_meta.claudeCode.options`: `model`, `allowedTools` (`mcp__yamt`, `WebFetch`, `WebSearch`),
+  `tools` (built-ins offered: `Read`, `WebFetch`, `WebSearch`), `settingSources: []` (none of the
+  user's own settings, hooks, plugins or CLAUDE.md; the `claude` login still applies),
+  `promptSuggestions: false`, env `ENABLE_TOOL_SEARCH=false` (else each MCP tool costs an extra
+  model call on first use). claude-agent-acp puts MCP servers on the `claude` command line
+  (readable in /proc), so the header says `Bearer ${YAMT_MCP_TOKEN}` and the token goes in the
+  session env. **Custom**: any ACP agent; spec `systemPrompt` if advertised, else a
+  `<system-instructions>` preamble block; the model via its `model` config option if offered.
+
+### The `log-meal` skill
+
+`.agents/skills/log-meal/SKILL.md` is the single description of how to analyse a meal. The job
+reads it at the start of every run (frontmatter stripped) and appends it to the harness's system
+prompt; interactive Claude Code sessions in the repo find it as a skill (`.claude/skills` links to
+`.agents/skills`). It covers reading every capture, re-analysis from the previous revision,
+splitting into items, the grounding order (history → barcode/label on photos → Open Food Facts →
+USDA → estimate), amounts (weighed > package > household measures > visual), cooked vs raw,
+fats and oils as the most-missed macro, provenance/confidence/assumptions, the question rule (at
+most two, only for roughly ≥ 100 kcal), title and summary in the captures' language, and exactly
+one `save_meal_revision`. Changing the analysis's behaviour means editing this file.
+
+### Traces
+
+Every run appends its events to `<data>/runs/<run id>/trace.ndjson` (0600), one JSON object per
+line: `t` (ms since the run started), `at`, `kind` (`run.start` with harness, model and the skill
+text and hash, then the ACP events above, `run.end` with the verdict, usage and duration). Lines
+are written synchronously, so a crash keeps everything up to it. The run token is redacted
+wherever it appears and image data is replaced by its size. `GET /api/runs/:id/trace` serves the
+file as `application/x-ndjson` (not cached; it grows while the run runs); the UI (#11) renders it.
 
 ## API
 
@@ -324,7 +463,9 @@ All behind the identity check, writes also same-origin; paths in `mealPaths` / `
   (optional `questionId`: a question of the meal's current revision, else 400).
   A `capturedAt` more than an hour ahead of the server is refused.
 - `POST /api/captures/:id/retract` (idempotent), `POST /api/meals/:id/analyse` (409 without a live
-  capture), `GET /api/media/:captureId[/jpeg]`.
+  capture; on a `failed` meal, the retry), `GET /api/media/:captureId[/jpeg]`.
+- `GET /api/meals/:id` also lists the meal's analysis runs (`runs`, newest first); a revision's
+  `runId` names its run. `GET /api/runs/:id` (the run), `GET /api/runs/:id/trace` (NDJSON).
 - `POST /api/weight` (`{kg, measuredAt?, note?}`), `GET /api/weight?from&to&limit`,
   `DELETE /api/weight/:id`.
 
@@ -353,10 +494,10 @@ All behind the identity check, writes also same-origin; paths in `mealPaths` / `
 
 ## Planned (epic #2)
 
-Meals, captures, media storage, the job queue and weight entries (#6), and the nutrition layer
-with the MCP server (#7) are in. Still to come, in stack order: the ACP runtime and the meal
-analysis job, with the worker loop draining `jobs` and minting per-run MCP tokens (#8); the transcription worker
-(#9); the PWA shell and meal capture (#10); meal detail, questions and corrections (#11); the day
+Meals, captures, media storage, the job queue and weight entries (#6), the nutrition layer
+with the MCP server (#7), and the ACP runtime with the analysis job and worker loop (#8) are in.
+Still to come, in stack order: the transcription worker, a `transcribe` handler on the same
+worker (#9); the PWA shell and meal capture (#10); meal detail, questions and corrections (#11); the day
 view, goals and weight (#12); Web Push (#13). Spikes #4 (speech-to-text, CPU vs GPU) and #5
 (design directions; the result becomes `docs/design/design.md` and replaces the neutral theme
 tokens) run alongside. See the epic for the decisions each one builds on.

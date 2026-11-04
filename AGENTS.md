@@ -16,7 +16,7 @@ bun run start          # yamt start: http://localhost:7890 + https://<host>.<tai
 bun run dev            # same with Vite HMR (web on port+1, proxying /api)
 bun run format         # biome --write
 # local only, no Tailscale, no auth, scratch data (what agents and the design work use):
-bun packages/server/src/cli.ts start --local --no-auth --data-dir /tmp/yamt-dev [--dev]
+bun packages/server/src/cli.ts start --local --no-auth --data-dir /tmp/yamt-dev [--dev] [--no-worker]
 bun packages/server/src/cli.ts mcp-token [--rotate] [--data-dir …]   # print the interactive MCP token
 ```
 
@@ -31,6 +31,14 @@ bun packages/server/src/cli.ts mcp-token [--rotate] [--data-dir …]   # print t
 - Data lives in `~/.yamt/` (`--data-dir` / `YAMT_DATA_DIR`): `yamt.db`, `media/`, `runs/`,
   `config.json`, `mcp-token`. Tests use temp dirs. Never point a test or a scratch run at the
   real one.
+- Meal analysis: `start` runs the job worker, which analyses queued meals with Claude Code
+  (claude-agent-acp, model `claude-opus-5-5`, logged in with the `claude` CLI). Pick another
+  harness or model with `"analysis": {"harness": "custom", "command": …, "args": […], "model": …}`
+  in `<data>/config.json` or `YAMT_ANALYSIS_HARNESS` / `YAMT_ANALYSIS_COMMAND` /
+  `YAMT_ANALYSIS_MODEL`; `--no-worker` runs nothing. Each run leaves `<data>/runs/<run id>/
+  trace.ndjson`. Real runs cost money and quota: try changes against the fake agent
+  (`YAMT_ANALYSIS_COMMAND="bun $PWD/packages/server/test/fake-agent.ts"`, scripted by a
+  `fake:<script>` text capture, see its header) and keep live runs few.
 - Food data: Open Food Facts needs nothing; USDA FoodData Central needs a key (`FDC_API_KEY`, or
   `{"fdcApiKey": "…"}` in `<data>/config.json`; free at https://fdc.nal.usda.gov/api-key-signup).
   Without one, searches skip FDC and say so. Never commit a key; tests use recorded fixtures
@@ -83,6 +91,11 @@ API, auth, SQLite), `packages/web` (Vite + React + TanStack Router/Query + Tailw
   (USDA, US labels) are mapped by subtracting it (`nutrition/nutrients.ts`). New MCP tools go into
   `mcp/tools.ts` with a zod schema and a scope (`meal`, `food`, `interactive`), and get a test in
   `mcp.test.ts` through the SDK client. Tests never hit the network (`fixtureFetch`).
+- Analysis: how the agent analyses a meal lives in one place, `.agents/skills/log-meal/SKILL.md`
+  (the job's appended system prompt and the interactive skill); change behaviour there, not in the
+  prompt code. `acp/` stays free of DB and HTTP (it reports events; `analysis/` stores them). A run
+  succeeds only by saving exactly one revision. Tests never start a real harness: they run
+  `test/fake-agent.ts` as a custom harness; `createServer` runs no worker unless `worker` is set.
 - Database: `bun:sqlite`, no ORM. SQL lives in repositories (`db/repos/<entity>.ts`, one per
   aggregate, taking a `Db` and returning shared types). Ids are UUIDv7 (`newId()`). Migrations:
   a new `db/migrations/<YYYYMMDDHHmm>_<what>.sql`; never edit an applied one (the runner checks

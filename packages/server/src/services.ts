@@ -25,6 +25,8 @@ export interface Services {
   fetch: Fetch;
   /** Days and local times are reckoned in this zone (the server's). */
   timeZone: string;
+  /** Pokes the job worker after an enqueue; the server wires it to its worker (a no-op without one). */
+  queue: { wake: () => void };
 }
 
 export interface ServicesOptions {
@@ -44,15 +46,17 @@ export function createServices(opts: ServicesOptions): Services {
   const media = new MediaStore(opts.dataDir);
   const fetchFn: Fetch = opts.fetch ?? ((input, init) => fetch(input, init));
   const revisions = new RevisionService(repos);
+  const queue = { wake: () => {} };
   return {
     dataDir: opts.dataDir,
     repos,
     media,
-    meals: new MealService(repos, media, revisions, opts.heicToJpeg),
+    meals: new MealService(repos, media, revisions, opts.heicToJpeg, () => queue.wake()),
     foods: new FoodService(repos, new OffClient(fetchFn), new FdcClient(fetchFn, opts.fdcApiKey ?? null)),
     revisions,
     mcpTokens: new McpTokens(dataPaths(opts.dataDir).mcpToken),
     fetch: fetchFn,
     timeZone: opts.timeZone ?? localTimeZone(),
+    queue,
   };
 }

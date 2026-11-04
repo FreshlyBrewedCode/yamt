@@ -6,6 +6,7 @@ import { parseArgs } from "node:util";
 import type { AuthMode } from "./auth/identity.ts";
 import { isBuildStale, type WebBuildSources, writeStamp } from "./build-stamp.ts";
 import {
+  DEFAULT_ANALYSIS_MODEL,
   DEFAULT_HTTPS_PORT,
   DEFAULT_PORT,
   dataPaths,
@@ -34,9 +35,15 @@ Options:
   --no-auth            Skip the Tailscale identity check (only with --local; for development)
   --dev                Serve the web app from Vite with HMR (on port+1)
   --no-build           Don't check for or rebuild a stale web build
+  --no-worker          Don't run queued jobs (meal analysis); they wait for the next start
 
 Auth: requests must come through \`tailscale serve\` from the configured Tailscale login
 (env YAMT_LOGIN, or "login" in <data-dir>/config.json). /mcp takes bearer tokens instead.
+
+Analysis: Claude Code via claude-agent-acp with ${DEFAULT_ANALYSIS_MODEL}, logged in with the
+\`claude\` CLI. "analysis" in <data-dir>/config.json ({"harness": "custom", "command": …, "args": […],
+"env": {…}, "model": …}) or env YAMT_ANALYSIS_HARNESS / YAMT_ANALYSIS_COMMAND / YAMT_ANALYSIS_MODEL
+pick another ACP agent or model.
 
 Food data: USDA FoodData Central needs an API key (env FDC_API_KEY, or "fdcApiKey" in
 <data-dir>/config.json); without one, searches use history and Open Food Facts only.
@@ -71,6 +78,7 @@ async function main(): Promise<number> {
       "no-auth": { type: "boolean", default: false },
       dev: { type: "boolean", default: false },
       "no-build": { type: "boolean", default: false },
+      "no-worker": { type: "boolean", default: false },
       rotate: { type: "boolean", default: false },
       help: { type: "boolean", short: "h", default: false },
     },
@@ -138,6 +146,8 @@ async function main(): Promise<number> {
       webDist: values.dev ? null : WEB_DIST,
       auth,
       fdcApiKey: config.fdcApiKey,
+      worker: !values["no-worker"],
+      analysis: { config: config.analysis },
     });
     cleanups.push(() => app.stop());
 
@@ -163,6 +173,12 @@ async function main(): Promise<number> {
     if (ts) console.log(`  Tailnet:  ${ts.url}`);
     console.log(`  Local:    http://localhost:${webPort}/${auth.kind === "off" ? "  (auth off)" : ""}`);
     console.log(`  MCP:      ${app.mcpUrl}  (bearer token: \`yamt mcp-token\`)`);
+    const a = config.analysis;
+    console.log(
+      values["no-worker"]
+        ? "  Analysis: off (--no-worker)"
+        : `  Analysis: ${a.harness.kind}${a.harness.command ? ` (${a.harness.command})` : ""}, model ${a.model}`,
+    );
     if (!config.fdcApiKey) console.log("  Food data: no FDC_API_KEY, USDA FoodData Central is off");
     console.log("Ctrl+C to stop.\n");
   } catch (e) {
