@@ -3,8 +3,8 @@
 What exists today (the scaffold, #3, the meal backend, #6, the nutrition layer with the yamt
 MCP server, #7, the analysis job over ACP, #8, the transcription worker, #9, the PWA with
 meal capture, #10, the meal detail with questions and corrections, #11, the day view with
-goals and weight, #12, Web Push notifications, #13, the guided goal setup, #24, and paste and
-the iOS Shortcut share target, #26), how it
+goals and weight, #12, Web Push notifications, #13, the guided goal setup, #24, paste and
+the iOS Shortcut share target, #26, and the agent settings, #28), how it
 fits together, and what comes after wave 1. Why it is built this way:
 [ADR 0001](adr/0001-wave-1-architecture.md). Commands and conventions: [AGENTS.md](../AGENTS.md).
 The design: [design/design.md](design/design.md).
@@ -27,7 +27,8 @@ yamt start   (one Bun process, binds 127.0.0.1:7890 only)
   ├─ job worker      drains the `jobs` table: `analyse` (one at a time), `transcribe` (one batch
   │    │             at a time, alongside)
   │    ├─ analysis run: one harness process per run, ACP over stdio, cwd ~/.yamt/runs/<run>/
-  │    │    claude-agent-acp (node) → `claude` │ custom ACP command
+  │    │    claude-agent-acp (node) → `claude` │ `opencode acp` │ custom ACP command
+  │    │    (harness, model and effort: Settings → Agent, see Agent settings)
   │    │    └─ MCP over HTTP back to 127.0.0.1:7890/mcp with a per-run token
   │    ├─ transcription batch: ffmpeg per memo → 16 kHz WAV in a temp dir, then one
   │    │    services/stt process (uv, Python, faster-whisper on the CPU) for the batch
@@ -57,6 +58,8 @@ packages/shared/src/      contracts shared by server and web (no runtime deps bu
   api-runs.ts             analysis runs and trace lines: `runPaths`, `AnalysisRun`, `TraceEntry`
   api-push.ts             Web Push: `pushPaths`, `PUSH_EVENTS`, `SubscribeBody`, `PushEventsBody`,
                           `PushPayload` (what the service worker receives)
+  api-agent.ts            agent settings (#28): `agentPaths`, `HarnessKind`, `AgentSettingsBody`, `AgentResponse`
+                          (values with their sources), `AgentOptionsResponse` (discovered models and efforts)
   api-share.ts            the share target: `sharePaths`, `ShareFields`, `ShareResponse`,
                           `SHARE_DRAFT_WINDOW_MS`, `singleUrl` (one URL alone → a link; paste uses it too)
 packages/server/src/
@@ -67,8 +70,12 @@ packages/server/src/
   config.ts               data dir resolution and setup, config.json (login, FDC key, analysis), ports
   procs.ts                stopGroup: SIGTERM, then SIGKILL, to a whole process group
   acp/                    the ACP layer (no DB, no HTTP): protocol.ts (the SDK entrypoint), process.ts
-                          (AcpProcess), run.ts (runPrompt: one session, one turn), mcp.ts, adapters/
-                          (claude-code, custom)
+                          (AcpProcess), run.ts (runPrompt: one session, one turn), config-options.ts
+                          (model and effort options, generically), discover.ts (what a harness offers,
+                          without a prompt), mcp.ts, adapters/ (claude-code, opencode, custom)
+  agent/                  agent settings (#28): settings.ts (resolveAgent: the precedence; AgentService:
+                          harnesses found here, save checked against the options), discovery.ts
+                          (AgentDiscovery: one harness at a time, cached an hour)
   jobs/worker.ts          JobWorker: the in-process loop over `jobs`, handlers by type (single or batch)
   analysis/               job.ts (the `analyse` handler), prompt.ts (prompt and photos), permissions.ts
                           (the policy), skill.ts (loads log-meal), trace.ts (TraceWriter)
@@ -80,7 +87,7 @@ packages/server/src/
   build-stamp.ts          rebuild packages/web/dist when its sources changed
   auth/identity.ts        requireTailnetIdentity: the Tailscale-User-Login check, dev bypass
   auth/bearer.ts          requireBearer: token auth for machine clients (/mcp)
-  http/                   api.ts (mounts), meals.ts, runs.ts, weight.ts, goals.ts, push.ts and share.ts (routes), file-response.ts
+  http/                   api.ts (mounts), meals.ts, runs.ts, weight.ts, goals.ts, push.ts, share.ts and agent.ts (routes), file-response.ts
                           (media, ranges), middleware.ts (sameOrigin, errors, readJson),
                           origin.ts (originAllowed, publicOrigin), static.ts
   domain/                 errors.ts (HttpError), meals.ts (MealService: captures, retract, analyse,
@@ -98,7 +105,7 @@ packages/server/src/
                           heic.ts (HEIC → JPEG), downscale.ts (JPEG → ≤ 1600 px, upright)
   db/                     index.ts (open, pragmas, migration runner, newId), migrations/*.sql,
                           repos/ (one per aggregate: meals, captures, transcripts, jobs, weight,
-                          foods, revisions, runs, goals, profile, push)
+                          foods, revisions, runs, goals, profile, push, settings)
   push/                   vapid.ts (the key pair in vapid.json), sender.ts (PushSender: encrypt, sign,
                           deliver, 404/410 cleanup), messages.ts (what a meal's notification says,
                           notifyMeal)
@@ -120,7 +127,7 @@ packages/web/src/
   routes/                 TanStack file routes: __root.tsx, index.tsx (the overview),
                           meals.$mealId.tsx (a meal: its detail or its capture view), days.$date.tsx
                           (the day view), goals.tsx (goals and weight), goals_.guided.tsx (the guided
-                          setup, /goals/guided), settings.tsx (notifications);
+                          setup, /goals/guided), settings.tsx (notifications, the agent, sharing);
                           routeTree.gen.ts
                           is generated
   lib/api.ts, queries.ts  the fetch client and every TanStack Query hook
@@ -138,7 +145,8 @@ packages/web/src/
                           stepper, the slider, the split bar), goal-explanation,
                           add-strip (photo/note/link/audio/paste, the paste sheet), capture-list (+ useCaptureRows),
                           meal-detail (the detail screen), items-list (provenance, confidence,
-                          source), revision-history, trace-view; ui/ (shadcn: button, input, sheet)
+                          source), revision-history, trace-view, agent-settings (Settings → Agent, the
+                          model picker); ui/ (shadcn: button, input, sheet)
   index.css               Tailwind 4 + the D · Slab theme tokens (light/dark)
 e2e/                      Playwright specs (phone viewport)
 docs/adr/                 architecture decision records
@@ -200,6 +208,7 @@ services/stt/             the speech-to-text process, a uv project (Python 3.12,
 - `~/.yamt/` (`--data-dir`, `YAMT_DATA_DIR`), created and kept at 0700 together with `media/`
   (raw captures), `runs/` (one dir per analysis run: the harness's cwd and `trace.ndjson`) and
   `models/` (the speech model's Hugging Face cache, downloaded on first use);
+  `discovery/` (0700: the scratch cwd harnesses are started in to read their options, #28),
   `mcp-token` (0600) holds the interactive MCP token, `vapid.json` (0600) the Web Push key pair,
   `config.json` the optional `login`, `fdcApiKey`, `analysis` (see [Analysis](#analysis-8)),
   `transcription` (see [Transcription](#transcription-9)) and `push` (see
@@ -249,7 +258,10 @@ new value never needs a table rebuild.
   run (`POST /api/captures/:id/transcribe`).
 - **jobs**: see the queue below.
 - **runs**: one per analysis attempt: `meal_id`, `job_id`, `attempt`, `harness`, `model` (the one
-  that answered, as the harness reports it), `status` (`running` → `succeeded` | `failed` |
+  that answered, as the harness reports it), `requested_model` (what the settings asked for; null:
+  the harness's default), `requested_effort` and `effort` (asked for, and the harness's effort option
+  when the prompt went out; null without one), `config_note` (#28: what didn't apply as asked, e.g.
+  "Effort max isn't offered for haiku, so the harness's default effort ran."), `status` (`running` → `succeeded` | `failed` |
   `cancelled`), `started_at`/`ended_at`, `stop_reason` (ACP), `usage` (JSON: the turn's tokens and
   the last context report with cost), `error`, `revision_id`. The full event stream is the trace
   file. A revision's `run_id` points back.
@@ -279,6 +291,9 @@ new value never needs a table rebuild.
   `events` (JSON toggles `{"analysed": true, "needs_input": true, "failed": true}`; a missing key
   counts as on), `last_sent_at`, `last_error`. Deleted when the push service answers 404/410 or
   the device turns notifications off.
+- **settings** (#28): app settings as `key` → JSON `value`, `updated_at`. `agent`: `{harness,
+  model, effort}` (null model or effort: not set here). Never secrets: those stay in config.json and
+  the env.
 - **foods**: the food cache. `source` (`off`, `fdc`, `label`, `custom`) and `source_ref`
   (barcode or FDC id; unique per source, so a refetch updates the row), `name`, `brand`, the core
   set per 100 g as columns (`energy_kcal`, `protein_g`, `fat_g`, `saturated_fat_g`,
@@ -471,7 +486,8 @@ saved revision. ADR 0001 (6–8) has the why.
    names it and the skill says to note it.
 2. **The run.** A `runs` row (`running`), `<data>/runs/<run id>/` (0700; the harness's cwd and its
    trace), meal → `analysing`, and a run token (`mintRun`, scoped to the meal).
-3. **The turn** (`runPrompt`, below): the configured harness and model, the skill as the appended
+3. **The turn** (`runPrompt`, below): the harness, model and effort in force (read per run, see
+   [Agent settings](#agent-settings-28)), the skill as the appended
    system prompt, the yamt MCP server at `http://127.0.0.1:<port>/mcp` with the run token, and the
    prompt (meal id, re-analysis note, photos, failed transcripts). The token is revoked afterwards
    whatever happened.
@@ -487,11 +503,8 @@ saved revision. ADR 0001 (6–8) has the why.
 5. **Retry:** `POST /api/meals/:id/analyse` on a `failed` meal queues a fresh job (fresh attempts)
    and clears the error.
 
-**Configuration** (`config.ts`, `<data>/config.json`, env wins): `analysis.harness`
-(`claude-code`, the default, or `custom`), `command`/`args` (required for `custom`; override the
-preset's otherwise), `env`, `model` (default `claude-opus-5-5`); `YAMT_ANALYSIS_HARNESS`,
-`YAMT_ANALYSIS_COMMAND` (a command line, split on spaces), `YAMT_ANALYSIS_MODEL`. The e2e server
-runs the fake agent this way.
+**Configuration**: see [Agent settings](#agent-settings-28): the app's choice between config.json's
+`analysis` and the env. The e2e server runs the fake agent as the custom harness, fixed by the env.
 
 **Photos** (`analysis/prompt.ts`, `media/downscale.ts`): each live photo becomes a JPEG of at most
 1600 px on the long side, upright (EXIF orientation applied; the copy has no EXIF), from the
@@ -521,25 +534,84 @@ about the database or HTTP.
   (no client fs or terminal capabilities) and wires `session/update`, permission requests and
   extension notifications. `close()` stops the whole group (`procs.ts`); a harness that exits by
   itself takes its group with it; `raceExit` turns a crash into an error with the stderr tail.
-- `run.ts` / **`runPrompt`**: spawn, `initialize`, one fresh `session/new` (no resume), the model
-  through `session/set_config_option` for adapters that use it, one `session/prompt`, close.
+- `run.ts` / **`runPrompt`**: spawn (with the adapter's `prepareProcess` env), `initialize`, one
+  fresh `session/new` (no resume), then the model and the effort through
+  `session/set_config_option` (model first, each on the options the last call answered with; values
+  not offered are skipped and noted, see [Agent settings](#agent-settings-28)), one
+  `session/prompt`, close.
   Timeouts: `initialize` 30 s, session setup 60 s, **idle** 3 min without any update (5 min while
   a tool call is open), a **hard cap** of 10 min on the turn. A timeout or an abort sends
   `session/cancel` and kills the group 5 s later if the harness ignores it. Every event
   (`process.start`, `initialize`, `session.new`, `config`, `prompt`, `update`, `permission`,
   `cancel`, `prompt.end`, `notification`, `process.exit`) goes to `onEvent`; the result has status,
-  stop reason, error with a failure class, usage, last context report, and the model that answered
-  (Claude Code reports it on usage updates; its model config option can be stale).
+  stop reason, error with a failure class, usage, last context report, the model that answered
+  (Claude Code reports it on usage updates; its model config option can be stale), the effort it
+  ran with and the config notes. A cancel is trusted over the stop reason the harness answers with
+  (OpenCode answers `end_turn`).
 - `adapters/`: **Claude Code** (`node <claude-agent-acp>/dist/index.js`, 0.100.0; Bun if there is
   no node): skill via the spec `systemPrompt` (`append`), else `_meta.systemPrompt.append`;
   `_meta.claudeCode.options`: `model`, `allowedTools` (`mcp__yamt`, `WebFetch`, `WebSearch`),
   `tools` (built-ins offered: `Read`, `WebFetch`, `WebSearch`), `settingSources: []` (none of the
   user's own settings, hooks, plugins or CLAUDE.md; the `claude` login still applies),
   `promptSuggestions: false`, env `ENABLE_TOOL_SEARCH=false` (else each MCP tool costs an extra
-  model call on first use). claude-agent-acp puts MCP servers on the `claude` command line
+  model call on first use). The model also goes through its `model` config option when listed;
+  `_meta` covers ids its list doesn't have (yamt's default `claude-opus-5-5`; the list says `opus`). claude-agent-acp puts MCP servers on the `claude` command line
   (readable in /proc), so the header says `Bearer ${YAMT_MCP_TOKEN}` and the token goes in the
   session env. **Custom**: any ACP agent; spec `systemPrompt` if advertised, else a
-  `<system-instructions>` preamble block; the model via its `model` config option if offered.
+  `<system-instructions>` preamble block; model and effort via config options. **OpenCode**
+  (`opencode acp`, ported from vibe-center): no ACP system prompt, so the skill goes into
+  `<run dir>/opencode-instructions.md`, named in `OPENCODE_CONFIG_CONTENT` (`instructions`), which
+  OpenCode merges over the user's config (providers and logins stay). Its default permissions
+  allow everything, so the same env carries job rules (last match wins): `*` ask, `yamt_*`,
+  webfetch, websearch and todowrite allow, bash, edit, task, skill, lsp, question and doom_loop
+  deny; reads ask, and the job's policy answers. Its MCP tools are named `yamt_<tool>`. Quirks:
+  it can hang on provider errors (the idle timeout cancels), answers a cancel with `end_turn`,
+  and may ignore it (killed after the grace period); every run is a fresh process anyway.
+
+### Agent settings (#28)
+
+Which harness runs yamt's agent work (today the analysis), which model and which reasoning
+effort. Settings → Agent sets them; nothing about the options is hard-coded.
+
+- **Discovery** (`acp/discover.ts`, `agent/discovery.ts`): the server starts the harness in
+  `<data>/discovery/` (one scratch dir: harnesses keep per-directory state), `initialize`,
+  `session/new` without MCP servers (Claude Code with the job's isolated options), selects the
+  model if one is asked for (efforts depend on it), reads `configOptions`, stops it. No prompt, so
+  no tokens; about 0.5–2 s. A not-logged-in Claude Code (`_auth/status_update` kind `none`) or an
+  ACP auth error is `auth`, a missing command `not_installed`. Results are cached per harness and
+  model for an hour, one discovery at a time, concurrent asks share one; Refresh drops the
+  harness's entries. Failures aren't cached.
+- **Options, generically** (`acp/config-options.ts`): the model is the select in category `model`
+  (else id `model`); the effort the select in category `thought_level`, else one with id `effort`,
+  `thinking`, `reasoning_effort`, `reasoning` or `thought_level`. Found in Nov 2026:
+
+  | | Claude Code (claude-agent-acp 0.100.0) | OpenCode 1.18.31 |
+  |---|---|---|
+  | model | `model`/`model`: 13 values (`default`, `opus`, `fable`, `sonnet`, `haiku`, dated ids); current value stale (`haiku` while `_meta` says otherwise) | `model`/`model`: ~585, `provider/model` named "Provider/Model", no groups (the app groups by provider); default `opencode/big-pickle` |
+  | effort | `effort`/`thought_level`: default, low, medium, high, xhigh, max; kept across a model switch | `effort`/`thought_level`, per model (GLM-5.3 low/high/max/default, Kimi K3 max/default, none for big-pickle); reset to the model's default on a switch |
+  | other | `mode` (mode), `ultracode` (model_config) | `mode` (build/plan) |
+
+- **Precedence** (`resolveAgent`), per value: env (`YAMT_ANALYSIS_HARNESS`, `_MODEL`, `_EFFORT`) >
+  the app's setting (`settings.agent`) > config.json `analysis` (`harness`, `model`, `effort`) >
+  built-in defaults (Claude Code; `claude-opus-5-5` for it; otherwise the harness's own model and
+  effort). A model or effort from the app or config.json counts only for the harness it was set
+  for (config.json's for its `harness`, default Claude Code); the env's always. `command`/`args`
+  (or `YAMT_ANALYSIS_COMMAND`) replace the command line of config.json's harness; the custom
+  harness is only offered with one, and the app never edits a command line.
+- **Harnesses found here**: Claude Code when its adapter resolves (node or Bun), OpenCode when
+  `opencode` is on PATH, custom when configured; the others are listed as not available.
+- **API**: `GET /api/agent` (the three values with `source` `env` | `app` | `config` | `default`
+  and the env var, plus the harnesses), `GET /api/agent/options?harness&model&refresh=1`
+  (discovered models and efforts, flattened with labels; 503 with `hint` `not_installed` | `auth` |
+  `error`), `PUT /api/agent` (`{harness, model, effort}`: the harness must be here, the model
+  offered, the effort offered for the model that will run; what the env fixes is kept as it was).
+- **Applying**: every run reads the settings afresh (a change applies to the next run), sets the
+  model, then the effort. A saved value the harness doesn't offer any more is skipped: the
+  harness's default runs and the run's `config_note` says so (Claude Code's unlisted models still
+  apply through `_meta`). The trace's `run.start` carries model and effort, `config` lines what
+  was set.
+
+
 
 ### The `log-meal` skill
 
@@ -703,6 +775,9 @@ All behind the identity check, writes also same-origin; paths in `mealPaths` / `
   (`ShareResponse`: meal, `newMeal`, captures, `summary`, the meal's `url` on the request's
   origin) when `Accept` names `application/json`, else the summary as `text/plain` ("Added 1
   voice memo to Untitled meal, 19:10"), refusals as "Not added: …". No Origin needed (see Auth).
+
+- **Agent** (#28, `agentPaths`): `GET /api/agent`, `GET /api/agent/options`, `PUT /api/agent`, see
+  [Agent settings](#agent-settings-28).
 
 - **Push** (#13, `pushPaths`): `GET /api/push` (the VAPID public key and every subscription,
   without keys), `POST /api/push/subscriptions` (a `PushSubscription.toJSON()` plus optional
@@ -953,8 +1028,9 @@ square corners. The tokens are in `index.css` (shadcn's names mapped onto the pa
   entry), disabled with a hint while questions are open, **Add to this meal** (tint) otherwise.
   The screen stays put while it re-analyses and polls like the overview.
 - **Trace viewer** (`components/trace-view.tsx`, `lib/trace.ts`): fetched only when its row is
-  opened (polled while the run runs). The run's facts (model, harness, start and attempt, how
-  long, outcome, stop reason, tokens, cost when the harness reports it), then the trace as a list:
+  opened (polled while the run runs). The run's facts (the model that answered and, when it
+  differs, the one asked for, the effort, harness, start and attempt, how long, outcome, stop
+  reason, tokens, cost when the harness reports it; the run's config note under them), then the trace as a list:
   tool calls (name without `mcp__yamt__`, a one-line input summary per known tool, a result
   summary, the duration from the call to its completed/failed update; a tap shows the full input
   and output), the agent's messages and thoughts (chunks joined, clamped until tapped),
@@ -963,7 +1039,14 @@ square corners. The tokens are in `index.css` (shadcn's names mapped onto the pa
 - **Settings** (`/settings`, the cog in the overview's header): notifications for this device
   (see [Notifications](#notifications-13)), then "Share from other apps" (#26): what the Shortcut
   does, its URL (`location.origin` + `/api/share`) with a copy button, the five steps to build it
-  in the Shortcuts app, and the paste route.
+  in the Shortcuts app, and the paste route. In between, **Agent** (#28,
+  `components/agent-settings.tsx`): the harness as choice rows (the running agent's name and
+  version on the chosen one), the model as one row opening a top sheet of the harness's models by
+  label (grouped by provider, a search field above 15), the effort as preset chips of the
+  discovered values, each heading with where its value comes from ("Set here", "From
+  config.json", "Default", "Fixed by YAMT_ANALYSIS_…"; fixed controls are greyed out), Refresh
+  ("Read 4 min ago"), loading and failure (orange, with how to fix it) states. A harness switch
+  clears model and effort; a model switch keeps the effort only if the new model offers it.
 - **Live status:** the overview polls `GET /api/meals` every 3 s while a meal is
   queued, analysing or has a pending transcript, the meal screen polls its meal likewise. A push
   arriving while the app is open refreshes the meals at once.
@@ -1030,6 +1113,6 @@ Meals, captures, media storage, the job queue and weight entries (#6), the nutri
 with the MCP server (#7), the ACP runtime with the analysis job and worker loop (#8), and the
 transcription worker (#9), the PWA with meal capture (#10), the meal detail with questions and
 corrections (#11), the day view with goals and weight (#12) and Web Push notifications (#13)
-are in: wave 1 is complete. On top of it, the guided goal setup (#24) and paste with the iOS
-Shortcut share target (#26). Spike #4 (speech-to-text) decided ADR 0002; spike #5's chosen design is
+are in: wave 1 is complete. On top of it, the guided goal setup (#24), paste with the iOS
+Shortcut share target (#26) and the agent settings (#28). Spike #4 (speech-to-text) decided ADR 0002; spike #5's chosen design is
 [design/design.md](design/design.md). See the epic for the decisions each one builds on.

@@ -32,16 +32,23 @@ bun packages/server/src/cli.ts mcp-token [--rotate] [--data-dir …]   # print t
 - `start` rebuilds the web app when its sources are newer than the last build (`--no-build`
   skips the check); `--dev` uses Vite and never needs it.
 - Data lives in `~/.yamt/` (`--data-dir` / `YAMT_DATA_DIR`): `yamt.db`, `media/`, `runs/`,
-  `models/`, `config.json`, `mcp-token`, `vapid.json`. Tests use temp dirs. Never point a test or a scratch run at the
+  `models/`, `discovery/` (the scratch dir harnesses are asked in), `config.json`, `mcp-token`,
+  `vapid.json`. Tests use temp dirs. Never point a test or a scratch run at the
   real one.
 - Meal analysis: `start` runs the job worker, which analyses queued meals with Claude Code
-  (claude-agent-acp, model `claude-opus-5-5`, logged in with the `claude` CLI). Pick another
-  harness or model with `"analysis": {"harness": "custom", "command": …, "args": […], "model": …}`
-  in `<data>/config.json` or `YAMT_ANALYSIS_HARNESS` / `YAMT_ANALYSIS_COMMAND` /
-  `YAMT_ANALYSIS_MODEL`; `--no-worker` runs nothing. Each run leaves `<data>/runs/<run id>/
+  (claude-agent-acp, model `claude-opus-5-5`, logged in with the `claude` CLI) unless the app's
+  **Settings → Agent** picks another harness (Claude Code, or OpenCode via `opencode acp` with its
+  own `opencode auth login`), model or reasoning effort, from what the harness itself offers
+  (discovered by starting it without a prompt, cached an hour). Under the app's choice:
+  `"analysis": {"harness": "claude-code" | "opencode" | "custom", "command": …, "args": […],
+  "model": …, "effort": …}` in `<data>/config.json`; over it (fixed, greyed out in the app):
+  `YAMT_ANALYSIS_HARNESS` / `YAMT_ANALYSIS_MODEL` / `YAMT_ANALYSIS_EFFORT`. A `custom` ACP agent's
+  command line comes only from config.json or `YAMT_ANALYSIS_COMMAND`, never from the app;
+  `--no-worker` runs nothing. Each run leaves `<data>/runs/<run id>/
   trace.ndjson`. Real runs cost money and quota: try changes against the fake agent
   (`YAMT_ANALYSIS_COMMAND="bun $PWD/packages/server/test/fake-agent.ts"`, scripted by a
-  `fake:<script>` text capture, see its header) and keep live runs few.
+  `fake:<script>` text capture, with config options like a real harness, see its header) and keep
+  live runs few.
 - Transcription: the worker transcribes voice memos on the CPU with faster-whisper
   large-v3-turbo (int8, German) by running `services/stt/run.sh transcribe` once per batch (a uv
   project; Python 3.12 comes from uv). Tools, on this NixOS VM neither is on PATH: **uv** from PATH,
@@ -120,6 +127,9 @@ API, auth, SQLite), `packages/web` (Vite + React + TanStack Router/Query + Tailw
   prompt code. `acp/` stays free of DB and HTTP (it reports events; `analysis/` stores them). A run
   succeeds only by saving exactly one revision. Tests never start a real harness: they run
   `test/fake-agent.ts` as a custom harness; `createServer` runs no worker unless `worker` is set.
+  Harness options (model, effort) are never hard-coded: read them from the session's
+  `configOptions` (`acp/config-options.ts`: model by category `model`, effort by `thought_level`
+  then known ids) and set the model before the effort.
 - Transcription: the STT backend sits behind `SttBackend` (`transcription/backend.ts`); the
   Python side speaks the NDJSON protocol in `services/stt/yamt_stt/protocol.py`, so change both
   sides together. Python follows vibe-center's services: exact pins in `pyproject.toml`,

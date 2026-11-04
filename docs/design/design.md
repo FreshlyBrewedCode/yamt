@@ -289,6 +289,26 @@ Units sit next to numbers smaller and muted (`28g`, `72 /160`).
   tint (number tiles on the page colour, like the Add to Home Screen steps; the Shortcuts app's
   labels in bold, its ⓘ as the lucide info icon), then the paste route as a plain line with the
   clipboard icon.
+- **Agent** (#28, Settings, between notifications and sharing): a strip "Agent" (meta "meal
+  analysis"), one plain paragraph, then three parts, each headed by a micro-label with where its
+  value comes from on the right ("Set here", "From config.json", "Default", "Fixed by
+  YAMT_ANALYSIS_MODEL"): **Harness** as choice rows (the chosen one names the running agent and
+  its version; one that isn't installed is muted and says why; all disabled with the chosen
+  check kept when the env fixes it), **Model** as one 72 px plain row (the model's label in bold
+  17 px, its description or "… own default" muted, the number of models and a chevron) that opens
+  the model picker, **Effort** as preset chips of the harness's values (more than five wrap into
+  two rows of equal cells; "Fake Tiny has no effort setting." as a muted line when there are none).
+  Then a plain Refresh row (the icon, "Refresh options", "Read 4 min ago" as a micro-label).
+  Loading is one muted line ("Asking Claude Code for its models…"); a harness that can't be asked
+  is an orange band with the reason in bold and how to fix it. Changing anything saves at once:
+  there is no bottom slab for it.
+- **Model picker** (#28): the top sheet ("Claude Code · 13 models", "Model"), with a search field
+  (tint, lime-soft while focused, focused at once) only above 15 models, then choice rows by label
+  with the description or id muted; groups (OpenCode's providers) get a tint micro-label row
+  above their rows and drop the provider from each name. At most 80 rows render, with "N more:
+  search to narrow them down." under them. A tap picks and closes.
+- **Choice rows fixed elsewhere** (#28): a disabled row keeps its check square if it is the chosen
+  one; disabled preset chips keep the chosen fill and mute the rest.
 - **Icons:** lucide, stroke width 2.5, 20–28 px.
 
 ## Do / don't
