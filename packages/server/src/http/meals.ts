@@ -6,10 +6,12 @@ import {
   JsonCaptureBody,
   type MealDetailResponse,
   type MealResponse,
+  type MealRevisionsResponse,
   MealsQuery,
   type MealsResponse,
   type RetractResponse,
   type TranscribeResponse,
+  UpdateMealBody,
   UploadCaptureFields,
 } from "@yamt/shared";
 import { Hono } from "hono";
@@ -32,6 +34,14 @@ export function mealRoutes(s: Services): Hono<IdentityEnv> {
 
   r.get("/meals/:id", (c) => c.json<MealDetailResponse>(s.meals.detail(c.req.param("id"))));
 
+  r.patch("/meals/:id", async (c) =>
+    c.json<MealResponse>({
+      meal: s.meals.update(c.req.param("id"), UpdateMealBody.parse(await readJson(c))),
+    }),
+  );
+
+  r.get("/meals/:id/revisions", (c) => c.json<MealRevisionsResponse>(s.meals.revisions(c.req.param("id"))));
+
   r.post("/meals/:id/captures", async (c) => {
     const mealId = c.req.param("id");
     const type = c.req.header("content-type")?.toLowerCase() ?? "";
@@ -45,6 +55,7 @@ export function mealRoutes(s: Services): Hono<IdentityEnv> {
         id: textField(form, "id"),
         kind: textField(form, "kind"),
         capturedAt: textField(form, "capturedAt"),
+        questionId: textField(form, "questionId"),
       });
       const { created, ...res } = await s.meals.addUpload(mealId, file, fields);
       return c.json<CaptureResponse>(res, created ? 201 : 200);

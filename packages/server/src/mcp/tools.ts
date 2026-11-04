@@ -1,5 +1,5 @@
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
-import { Confidence, type Food, FoodSource, type MealRevisionView, Provenance } from "@yamt/shared";
+import { Confidence, type Food, FoodSource, isVoice, type MealRevisionView, Provenance } from "@yamt/shared";
 import { z } from "zod";
 import { toCapture } from "../db/repos/captures.ts";
 import { HttpError } from "../domain/errors.ts";
@@ -138,12 +138,12 @@ export function yamtTools(s: Services): Tool[] {
             if (c.text) out.text = c.text;
             if (c.url) out.url = c.url;
             if (c.questionId) out.answersQuestionId = c.questionId;
-            if (c.kind === "audio") {
+            if (isVoice(c)) {
               const t = transcripts.get(c.id);
               out.transcript = t ? { status: t.status, text: t.text } : null;
             }
             const path = rec.jpegPath ?? rec.mediaPath;
-            if (path && c.kind !== "audio") {
+            if (path && !isVoice(c)) {
               out.media = {
                 mimeType: rec.jpegPath ? "image/jpeg" : c.mimeType,
                 fileName: c.fileName,

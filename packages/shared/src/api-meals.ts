@@ -9,7 +9,10 @@ import type { AnalysisRun } from "./api-runs.ts";
 
 export const mealPaths = {
   meals: "/api/meals",
+  /** GET the detail; PATCH `eatenAt` (`UpdateMealBody`). */
   meal: (id: string) => `/api/meals/${id}`,
+  /** Every analysis revision of the meal with its computed totals, newest first. */
+  revisions: (mealId: string) => `/api/meals/${mealId}/revisions`,
   captures: (mealId: string) => `/api/meals/${mealId}/captures`,
   analyse: (mealId: string) => `/api/meals/${mealId}/analyse`,
   retract: (captureId: string) => `/api/captures/${captureId}/retract`,
@@ -42,6 +45,20 @@ export type CaptureKind = z.infer<typeof CaptureKind>;
 /** Kinds that arrive as a multipart upload; the rest are JSON. */
 export const UploadCaptureKind = z.enum(["audio", "image", "file"]);
 export type UploadCaptureKind = z.infer<typeof UploadCaptureKind>;
+
+/**
+ * Answers and corrections can be spoken too: uploaded as audio with this kind, they are stored
+ * as `answer` / `correction` captures with the recording as their media and get a transcript.
+ */
+export const VoiceCaptureKind = z.enum(["answer", "correction"]);
+export type VoiceCaptureKind = z.infer<typeof VoiceCaptureKind>;
+
+/**
+ * Whether a capture carries speech that gets a transcript: audio captures, and answers and
+ * corrections that were recorded rather than typed.
+ */
+export const isVoice = (c: { kind: CaptureKind; mimeType: string | null }): boolean =>
+  c.kind === "audio" || ((c.kind === "answer" || c.kind === "correction") && c.mimeType !== null);
 
 export const TranscriptStatus = z.enum(["pending", "done", "failed"]);
 export type TranscriptStatus = z.infer<typeof TranscriptStatus>;
@@ -162,6 +179,13 @@ export const CreateMealBody = z.object({ id: clientId, eatenAt: epochMs.optional
 export type CreateMealBody = z.infer<typeof CreateMealBody>;
 
 /**
+ * `PATCH /api/meals/:id`: when it was eaten. A time pins it (source `user`: neither captures
+ * nor the analysis move it again); `null` unpins it, so it follows the captures again.
+ */
+export const UpdateMealBody = z.object({ eatenAt: epochMs.nullable() }).strict();
+export type UpdateMealBody = z.infer<typeof UpdateMealBody>;
+
+/**
  * `GET /api/meals?from&to&limit&tz`: meals whose `eatenAt` is in [from, to), newest first, and
  * the totals of each day they fall on, reckoned in `tz` (an IANA zone; the server's by default).
  */
@@ -196,6 +220,14 @@ export interface MealDetailResponse {
   transcripts: Transcript[];
   revision: MealRevisionView | null;
   runs: AnalysisRun[];
+}
+
+/**
+ * `GET /api/meals/:id/revisions`: every revision of the meal, newest first, each with its items,
+ * questions (and answers) and totals computed from its items, so a correction's effect shows.
+ */
+export interface MealRevisionsResponse {
+  revisions: MealRevisionView[];
 }
 
 const captureText = z.string().trim().min(1).max(20_000);
@@ -233,13 +265,15 @@ export type JsonCaptureBody = z.infer<typeof JsonCaptureBody>;
 
 /**
  * `POST /api/meals/:id/captures` as `multipart/form-data`: the bytes in `file`, plus these text
- * fields. Without `kind` it follows the content (image/*, audio/*, else file).
+ * fields. Without `kind` it follows the content (image/*, audio/*, else file). `answer` and
+ * `correction` take a recording (audio only); an answer may name its `questionId` as in JSON.
  */
 export const UploadCaptureFields = z.object({
   /** Idempotency, as for JSON captures. */
   id: clientId,
-  kind: UploadCaptureKind.optional(),
+  kind: z.enum([...UploadCaptureKind.options, ...VoiceCaptureKind.options]).optional(),
   capturedAt: z.coerce.number().int().nonnegative().optional(),
+  questionId: z.uuid().optional(),
 });
 export type UploadCaptureFields = z.infer<typeof UploadCaptureFields>;
 

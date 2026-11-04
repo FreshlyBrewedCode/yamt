@@ -2,15 +2,22 @@
 
 export type PendingCapture =
   | {
-      kind: "audio" | "image" | "file";
+      /** `answer` and `correction` uploads are spoken ones (recorded in place on the meal detail). */
+      kind: "audio" | "image" | "file" | "answer" | "correction";
       blob: Blob;
       fileName: string;
       mimeType: string;
       /** In-app recordings know their length; files don't until the server transcribes them. */
       durationMs?: number;
+      /** For a spoken answer: the question it answers. */
+      questionId?: string;
     }
   | { kind: "text"; text: string }
-  | { kind: "link"; url: string; text?: string };
+  | { kind: "link"; url: string; text?: string }
+  /** The agent asked; this answers (a question of the meal's current revision). */
+  | { kind: "answer"; text: string; questionId?: string }
+  /** "It was 2 eggs, not 3": the user's word beats the analysis. */
+  | { kind: "correction"; text: string };
 
 interface EntryBase {
   /** The capture's id (also the server's), or the analyse request's own id. A UUIDv7. */

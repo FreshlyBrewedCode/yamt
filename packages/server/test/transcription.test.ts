@@ -409,6 +409,33 @@ describe("transcription in the server", () => {
     expect(transcribeJobs(memo)).toMatchObject([{ status: "done", attempts: 1 }]);
   });
 
+  test("a spoken answer is transcribed like a memo; the re-analysis waits for it and reads it", async () => {
+    const mealId = meal("fake:question");
+    s.meals.analyse(mealId);
+    await waitFor("needs input", () => s.repos.meals.get(mealId)!.status === "needs_input");
+    const question = s.revisions.current(s.repos.meals.get(mealId)!)!.questions[0]!;
+    const form = new FormData();
+    form.set("file", new Blob([MEMO], { type: "audio/mp4" }), "voice-memo.m4a");
+    form.set("kind", "answer");
+    form.set("questionId", question.id);
+    const res = await api<CaptureResponse>("POST", mealPaths.captures(mealId), form);
+    expect(res.body.capture).toMatchObject({ kind: "answer", questionId: question.id });
+    s.meals.analyse(mealId);
+    await settled(res.body.capture.id, "done");
+    // the agent writes its record after save_meal_revision returns: read it once the run has ended
+    const [run] = await waitFor("the re-analysis ended", () => {
+      const ended = s.repos.runs.listForMeal(mealId).filter((r) => r.status !== "running");
+      return ended.length === 2 && ended;
+    });
+    expect(run!.status).toBe("succeeded");
+    expect(s.repos.meals.get(mealId)!.status).toBe("needs_input");
+    const agent = JSON.parse(readFileSync(join(dataPaths(dataDir).runs, run!.id, "fake-agent.json"), "utf8"));
+    expect(agent.captureKinds).toEqual(["text", "answer"]);
+    expect(agent.transcripts).toEqual([
+      { status: "done", text: "Zum Frühstück achtzig Gramm Haferflocken mit Milch." },
+    ]);
+  });
+
   test("failures retry with backoff while the transcript stays pending; then failed, and the analysis goes on", async () => {
     writeFileSync(scriptFile, "fail");
     const mealId = meal("fake:save");

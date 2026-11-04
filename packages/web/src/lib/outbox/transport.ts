@@ -24,8 +24,16 @@ export const httpTransport: OutboxTransport = {
         ...(c.text ? { text: c.text } : {}),
         capturedAt: e.capturedAt,
       });
-    } else {
+    } else if ("blob" in c) {
       await upload(e, onProgress);
+    } else {
+      await json("POST", mealPaths.captures(e.mealId), {
+        id: e.id,
+        kind: c.kind,
+        text: c.text,
+        ...(c.kind === "answer" && c.questionId ? { questionId: c.questionId } : {}),
+        capturedAt: e.capturedAt,
+      });
     }
   },
 
@@ -58,6 +66,7 @@ function upload(e: CaptureEntry, onProgress: (fraction: number) => void): Promis
   form.set("id", e.id);
   form.set("kind", c.kind);
   form.set("capturedAt", String(e.capturedAt));
+  if (c.questionId) form.set("questionId", c.questionId);
   form.set("file", c.blob, c.fileName);
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();

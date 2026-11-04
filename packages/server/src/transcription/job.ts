@@ -1,6 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { isVoice } from "@yamt/shared";
 import type { Repos } from "../db/repos/index.ts";
 import { dedupeKeys, type Job } from "../db/repos/jobs.ts";
 import type { JobContext, JobHandler, JobOf, JobOutcome } from "../jobs/worker.ts";
@@ -75,8 +76,8 @@ export class TranscribeJob implements JobHandler<"transcribe"> {
         const c = repos.captures.get(captureId);
         const refuse = !c
           ? `capture ${captureId} not found`
-          : c.kind !== "audio" || !c.mediaPath
-            ? `capture ${captureId} is not an audio capture`
+          : !isVoice(c) || !c.mediaPath
+            ? `capture ${captureId} is not a voice capture`
             : c.retractedAt !== null
               ? "the capture was retracted"
               : null;

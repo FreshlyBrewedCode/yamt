@@ -5,12 +5,18 @@ import {
   apiPaths,
   type HealthResponse,
   type MealDetailResponse,
+  type MealResponse,
+  type MealRevisionsResponse,
   type MealStatus,
   type MealsResponse,
   mealPaths,
   type RetractResponse,
+  runPaths,
+  type TranscribeResponse,
+  type UpdateMealBody,
 } from "@yamt/shared";
 import { ApiError, api } from "./api";
+import { type ParsedTrace, parseTrace } from "./trace";
 
 export const queryClient = new QueryClient({
   defaultOptions: { queries: { staleTime: 10_000, retry: 1 } },
@@ -21,6 +27,8 @@ export const keys = {
   meals: ["meals"] as const,
   mealsRange: (from: number, to: number, tz: string) => ["meals", { from, to, tz }] as const,
   meal: (id: string) => ["meal", id] as const,
+  revisions: (mealId: string) => ["meal", mealId, "revisions"] as const,
+  trace: (runId: string) => ["run", runId, "trace"] as const,
 };
 
 /** While something is in motion on the server, the screen polls (no push channel needed). */
@@ -80,5 +88,57 @@ export function useRetract(mealId: string) {
       void queryClient.invalidateQueries({ queryKey: keys.meal(mealId) });
       void queryClient.invalidateQueries({ queryKey: keys.meals });
     },
+  });
+}
+
+/**
+ * Every revision of a meal with its totals, newest first. Only fetched when `enabled` (the
+ * history is opened); refreshed with the meal (its key sits under the meal's).
+ */
+export function useRevisions(mealId: string, enabled: boolean) {
+  return useQuery({
+    queryKey: keys.revisions(mealId),
+    queryFn: () => api.get<MealRevisionsResponse>(mealPaths.revisions(mealId)),
+    enabled,
+  });
+}
+
+/**
+ * A run's trace, parsed (`lib/trace.ts`). Fetched only when opened; a running run's trace grows,
+ * so it is polled until the run has ended.
+ */
+export function useTrace(runId: string, enabled: boolean, running: boolean) {
+  return useQuery<ParsedTrace>({
+    queryKey: keys.trace(runId),
+    queryFn: async () => {
+      const res = await fetch(runPaths.trace(runId), { credentials: "same-origin" });
+      if (!res.ok) {
+        const err = (await res.json().catch(() => null)) as { error?: string } | null;
+        throw new ApiError(res.status, err?.error ?? `${res.status} ${res.statusText}`);
+      }
+      return parseTrace(await res.text());
+    },
+    enabled,
+    staleTime: running ? 0 : Number.POSITIVE_INFINITY,
+    refetchInterval: running ? POLL_MS : false,
+  });
+}
+
+/** When the meal was eaten: a time pins it, `null` lets the captures decide again. */
+export function useUpdateMeal(mealId: string) {
+  return useMutation({
+    mutationFn: (body: UpdateMealBody) => api.patch<MealResponse>(mealPaths.meal(mealId), body),
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: keys.meal(mealId) });
+      void queryClient.invalidateQueries({ queryKey: keys.meals });
+    },
+  });
+}
+
+/** Transcribe a voice capture again (after a failure). */
+export function useRetranscribe(mealId: string) {
+  return useMutation({
+    mutationFn: (captureId: string) => api.post<TranscribeResponse>(mealPaths.transcribe(captureId)),
+    onSettled: () => void queryClient.invalidateQueries({ queryKey: keys.meal(mealId) }),
   });
 }

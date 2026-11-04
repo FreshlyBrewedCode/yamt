@@ -132,7 +132,7 @@ export interface MealItemView extends MealItem {
 }
 
 export interface MealQuestionView extends MealQuestion {
-  /** The text of the answer capture, if answered. */
+  /** The answer: its text, or a spoken answer's transcript (null while that is pending). */
   answer: string | null;
 }
 
