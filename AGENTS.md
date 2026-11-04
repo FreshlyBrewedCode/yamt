@@ -13,7 +13,8 @@ wave 1 is epic #2.
 bun install
 bun run check          # biome lint + strict tsc (every package + e2e) + bun test. Must pass before every commit
 bun run e2e            # builds the web app, runs Playwright (phone viewport) against a throwaway server
-                       # (port 7898, temp data dir, auth bypassed; YAMT_E2E_PORT=… if taken)
+                       # (port 7898, temp data dir, auth bypassed; YAMT_E2E_PORT=… if taken; the calendar
+                       # spec gets its own on YAMT_E2E_PORT − 1, or YAMT_E2E_CALENDAR_PORT)
 bun run start          # yamt start: http://localhost:7890 + https://<host>.<tailnet>.ts.net:7444
 bun run dev            # same with Vite HMR (web on port+1, proxying /api)
 bun run format         # biome --write

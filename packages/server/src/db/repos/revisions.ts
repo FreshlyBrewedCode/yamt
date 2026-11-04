@@ -198,6 +198,20 @@ export class RevisionRepo {
       .map(toRevision);
   }
 
+  /**
+   * The items of the current revisions of every meal eaten in [from, to), with their meal, in one
+   * query (the calendar's month, #33).
+   */
+  currentItemsBetween(from: number, to: number): { mealId: string; item: MealItem }[] {
+    return this.db
+      .query<ItemRow & { meal_id: string }, [number, number]>(
+        `SELECT i.*, m.id AS meal_id FROM meal_items i JOIN meals m ON m.current_revision_id = i.revision_id
+         WHERE m.eaten_at >= ? AND m.eaten_at < ? ORDER BY m.eaten_at, m.id, i.position`,
+      )
+      .all(from, to)
+      .map((r) => ({ mealId: r.meal_id, item: toItem(r) }));
+  }
+
   items(revisionId: string): MealItem[] {
     return this.db
       .query<ItemRow, [string]>("SELECT * FROM meal_items WHERE revision_id = ? ORDER BY position")

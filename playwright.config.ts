@@ -4,10 +4,13 @@ import { join, resolve } from "node:path";
 import { defineConfig, devices } from "@playwright/test";
 import { writeFakeMic } from "./e2e/fake-mic.ts";
 
-// One throwaway server per run: temp data dir, localhost only, the dev auth bypass (there is no
+// One throwaway server per run (and one for the calendar spec): temp data dir, localhost only, the dev auth bypass (there is no
 // `tailscale serve` in front of it to add the identity header).
 process.env.YAMT_E2E_DATA_DIR ??= mkdtempSync(join(tmpdir(), "yamt-e2e-"));
+process.env.YAMT_E2E_CALENDAR_DATA_DIR ??= mkdtempSync(join(tmpdir(), "yamt-e2e-calendar-"));
 const port = Number(process.env.YAMT_E2E_PORT ?? 7898);
+/** The calendar spec's server (`e2e/api.ts` has the same default). */
+const calendarPort = Number(process.env.YAMT_E2E_CALENDAR_PORT ?? port - 1);
 // Chromium records from a fake microphone playing a made-up tone (the capture spec)
 const fakeMic = writeFakeMic(join(process.env.YAMT_E2E_DATA_DIR, "fake-mic.wav"));
 // Playwright's downloaded browsers don't run on NixOS: use a nix chromium if one is linked
@@ -47,12 +50,22 @@ export default defineConfig({
       },
     },
   ],
-  webServer: {
-    command: `bun packages/server/src/cli.ts start --local --no-auth --no-build --port ${port} --data-dir ${process.env.YAMT_E2E_DATA_DIR}`,
+  webServer: [
+    server(port, process.env.YAMT_E2E_DATA_DIR),
+    // the calendar spec (#33) seeds goals months back, which would change every other spec's days:
+    // it gets a store of its own
+    server(calendarPort, process.env.YAMT_E2E_CALENDAR_DATA_DIR),
+  ],
+});
+
+/** A throwaway yamt on `port` over `dataDir`. */
+function server(port: number, dataDir: string | undefined) {
+  return {
+    command: `bun packages/server/src/cli.ts start --local --no-auth --no-build --port ${port} --data-dir ${dataDir}`,
     url: `http://localhost:${port}/api/health`,
     reuseExistingServer: false,
-    stdout: "pipe",
-    gracefulShutdown: { signal: "SIGTERM", timeout: 5000 },
+    stdout: "pipe" as const,
+    gracefulShutdown: { signal: "SIGTERM" as const, timeout: 5000 },
     // analyses run against the scripted fake agent, never a real Claude; transcription against the
     // fake STT process (no model download), after the real ffmpeg (PATH, or linked from nixpkgs)
     env: {
@@ -64,5 +77,5 @@ export default defineConfig({
       YAMT_ANALYSIS_COMMAND: `bun ${resolve("packages/server/test/fake-agent.ts")}`,
       YAMT_STT_COMMAND: `bun ${resolve("packages/server/test/fake-stt.ts")}`,
     },
-  },
-});
+  };
+}

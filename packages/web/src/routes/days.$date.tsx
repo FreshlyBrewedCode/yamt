@@ -1,16 +1,17 @@
 import { createFileRoute, Link, redirect, useNavigate } from "@tanstack/react-router";
 import { addDays, goalLabel, LocalDate } from "@yamt/shared";
 import { cn } from "cn";
-import { ArrowRight, ChevronLeft, ChevronRight, Scale, Square } from "lucide-react";
+import { ArrowRight, CalendarDays, ChevronLeft, ChevronRight, Scale, Square } from "lucide-react";
 import { useMemo } from "react";
 import { groupByDay, MealRow } from "@/components/meal-row";
-import { BackButton, Band, BottomSlab, Label, Strip } from "@/components/slab";
+import { BackButton, Band, BottomSlab, iconButtonClass, Label, Strip } from "@/components/slab";
 import { TotalsSlab } from "@/components/totals-slab";
 import {
   dateStart,
   dayLabel,
   formatKg,
   formatLongDate,
+  formatMonth,
   formatShortDate,
   formatTime,
   localDate,
@@ -60,13 +61,20 @@ function DayView() {
       <header className="px-5 pt-5 pb-4">
         <div className="flex items-center justify-between">
           <BackButton />
-          <Link
-            to="/goals"
-            className="flex size-12 items-center justify-center bg-tint"
-            aria-label="Goals and weight"
-          >
-            <Scale className="size-6" strokeWidth={2.5} />
-          </Link>
+          <div className="flex gap-2">
+            <Link
+              to="/calendar"
+              search={{ month: date.slice(0, 7), day: date }}
+              className={iconButtonClass}
+              aria-label={`${formatMonth(date.slice(0, 7))} in the calendar`}
+              data-testid="day-calendar"
+            >
+              <CalendarDays className="size-6" strokeWidth={2.5} />
+            </Link>
+            <Link to="/goals" className={iconButtonClass} aria-label="Goals and weight">
+              <Scale className="size-6" strokeWidth={2.5} />
+            </Link>
+          </div>
         </div>
         <Label className="mt-4 text-muted-foreground">{formatLongDate(start)}</Label>
         <h1 className="display mt-1 text-[36px]" data-testid="day-title">

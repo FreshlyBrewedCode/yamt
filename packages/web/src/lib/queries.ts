@@ -8,6 +8,7 @@ import {
   agentPaths,
   apiPaths,
   type CreateGoalBody,
+  calendarPaths,
   type DayResponse,
   type FixGoalBody,
   type GoalResponse,
@@ -20,6 +21,7 @@ import {
   type MealRevisionsResponse,
   type MealStatus,
   type MealsResponse,
+  type MonthResponse,
   mealPaths,
   type ProfileResponse,
   type PushEvents,
@@ -57,6 +59,8 @@ export const keys = {
   trace: (runId: string) => ["run", runId, "trace"] as const,
   /** Under "meals", so everything that refreshes the meals refreshes the day view too. */
   day: (date: string, tz: string) => ["meals", "day", date, tz] as const,
+  /** Under "meals" too (and goals and weight refresh "meals" as well): the calendar's month. */
+  month: (month: string, tz: string) => ["meals", "month", month, tz] as const,
   goals: ["goals"] as const,
   weight: ["weight"] as const,
   weightRange: (from: number, to: number) => ["weight", { from, to }] as const,
@@ -232,6 +236,18 @@ export function useDay(date: string) {
     placeholderData: (prev) => (prev?.date === date ? prev : undefined),
     refetchInterval: (q) =>
       q.state.data?.meals.some((m) => busy(m.status) || m.pendingTranscripts > 0) ? POLL_MS : false,
+  });
+}
+
+/**
+ * A calendar month (`YYYY-MM`, the phone's zone, #33): every day against the goal in force that
+ * day, the weeks' classifier inputs, the summary and the weight's 7-day average.
+ */
+export function useMonth(month: string) {
+  const tz = browserZone();
+  return useQuery({
+    queryKey: keys.month(month, tz),
+    queryFn: () => api.get<MonthResponse>(`${calendarPaths.month(month)}?tz=${encodeURIComponent(tz)}`),
   });
 }
 

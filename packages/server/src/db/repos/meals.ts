@@ -167,6 +167,32 @@ export class MealRepo {
       .map(toMeal);
   }
 
+  /**
+   * The calendar's pass over meals eaten in [from, to) (#33): one row per meal with its time,
+   * current revision and live captures, in one query.
+   */
+  tallyBetween(
+    from: number,
+    to: number,
+  ): { id: string; eatenAt: number; currentRevisionId: string | null; captures: number }[] {
+    return this.db
+      .query<
+        { id: string; eaten_at: number; current_revision_id: string | null; captures: number },
+        [number, number]
+      >(
+        `SELECT m.id, m.eaten_at, m.current_revision_id,
+           (SELECT count(*) FROM captures c WHERE c.meal_id = m.id AND c.retracted_at IS NULL) AS captures
+         FROM meals m WHERE m.eaten_at >= ? AND m.eaten_at < ? ORDER BY m.eaten_at, m.id`,
+      )
+      .all(from, to)
+      .map((r) => ({
+        id: r.id,
+        eatenAt: r.eaten_at,
+        currentRevisionId: r.current_revision_id,
+        captures: r.captures,
+      }));
+  }
+
   /** Pins `eatenAt` (user or agent); captures no longer move it. */
   setEatenAt(id: string, eatenAt: number, source: "user" | "agent", now = Date.now()): Meal | null {
     this.db

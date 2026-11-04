@@ -107,3 +107,11 @@ export function formatShortDate(date: string, now = Date.now()): string {
 
 /** Kilograms with one decimal: "81.2". */
 export const formatKg = (kg: number): string => kg.toFixed(1);
+
+const monthLong = new Intl.DateTimeFormat("en-GB", { month: "long" });
+
+/** "October" for `2026-10`. */
+export const formatMonth = (month: string): string => monthLong.format(dateStart(`${month}-01`));
+
+/** `YYYY-MM` of a `YYYY-MM-DD` date. */
+export const monthOf = (date: string): string => date.slice(0, 7);

@@ -3,6 +3,7 @@ import { AgentService } from "./agent/settings.ts";
 import { type AnalysisConfig, analysisConfig, DEFAULT_PUSH_SUBJECT, dataPaths } from "./config.ts";
 import type { Db } from "./db/index.ts";
 import { createRepos, type Repos } from "./db/repos/index.ts";
+import { CalendarService } from "./domain/calendar.ts";
 import { FoodService } from "./domain/foods.ts";
 import { GoalService } from "./domain/goals.ts";
 import { MealService } from "./domain/meals.ts";
@@ -29,6 +30,8 @@ export interface Services {
   share: ShareService;
   /** Daily goals and the day view (#12). */
   goals: GoalService;
+  /** The calendar's months (#33). */
+  calendar: CalendarService;
   /** Bearer tokens for /mcp: the interactive one and per-run ones (#8 mints and revokes). */
   mcpTokens: McpTokens;
   /** Outbound fetch (food databases, recipe pages); a fixture-backed fake in tests. */
@@ -90,6 +93,7 @@ export function createServices(opts: ServicesOptions): Services {
     revisions,
     share: new ShareService(repos, meals, timeZone),
     goals: new GoalService(repos, meals, timeZone),
+    calendar: new CalendarService(repos, timeZone),
     mcpTokens: new McpTokens(dataPaths(opts.dataDir).mcpToken),
     fetch: fetchFn,
     timeZone,

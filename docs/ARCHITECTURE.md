@@ -4,7 +4,8 @@ What exists today (the scaffold, #3, the meal backend, #6, the nutrition layer w
 MCP server, #7, the analysis job over ACP, #8, the transcription worker, #9, the PWA with
 meal capture, #10, the meal detail with questions and corrections, #11, the day view with
 goals and weight, #12, Web Push notifications, #13, the guided goal setup, #24, paste and
-the iOS Shortcut share target, #26, the agent settings, #28, and logging a meal again, #30), how it
+the iOS Shortcut share target, #26, the agent settings, #28, logging a meal again, #30, and the
+calendar, #33), how it
 fits together, and what comes after wave 1. Why it is built this way:
 [ADR 0001](adr/0001-wave-1-architecture.md). Commands and conventions: [AGENTS.md](../AGENTS.md).
 The design: [design/design.md](design/design.md).
@@ -18,7 +19,7 @@ iPhone (Safari / home-screen PWA), on the tailnet
   ▼
 yamt start   (one Bun process, binds 127.0.0.1:7890 only)
   ├─ Hono JSON API   /api/*   identity-header auth (except /api/health), same-origin writes,
-  │                           zod-validated bodies; meals, captures, media, weight, goals, days,
+  │                           zod-validated bodies; meals, captures, media, weight, goals, days, months,
   │                           push subscriptions, the share target (/api/share: an iOS Shortcut)
   ├─ MCP server      /mcp     bearer tokens (agent runs, interactive Claude Code sessions),
   │                           loopback callers only; the agent's only way to read and write
@@ -49,7 +50,12 @@ packages/shared/src/      contracts shared by server and web (no runtime deps bu
   api.ts                  API paths, request schemas, response types (health, me)
   api-meals.ts            meals, captures, transcripts, media: `mealPaths`, enums, bodies, types; logging a
                           meal again (#30): `RepeatMealBody`, `REPEAT_FACTORS`, `RepeatableQuery`
-  api-weight.ts           weight entries: `weightPaths`, body, types
+  api-weight.ts           weight entries: `weightPaths`, body, types; `dailyWeights` (the 7-day average's core)
+  api-calendar.ts         the calendar (#33): `calendarPaths`, `LocalMonth`, `MonthQuery`, `MonthResponse` (days,
+                          weeks, summary, weight), `PlanGoal`; `monthDays`, `addMonths`, `weekdayIndex`
+  plan.ts                 the calendar's classifier (#33): `classifyDay`, `classifyWeek`, the thresholds as named
+                          constants (`ON_PLAN`, `FAR_OFF`, `DEAD_ZONE`, `TOO_LOW_ON_CUT`, `WEEK_FULL_DAYS`),
+                          `goalPlan` (a goal's kind, label and floor), `dayInput`, `planWords`, `rangeWords`
   api-goals.ts            goals and days: `goalPaths`, bodies, `DayResponse`, `goalInForce`, `goalPeriods`,
                           `dayProgress`, `addDays`, `goalLabel` (shared by server and web)
   goal-calc.ts            guided goals (#24): `calculateGoal` (the algorithm, `ALGORITHM_VERSION`), its
@@ -95,7 +101,7 @@ packages/server/src/
                           eaten-at, revision history, repeat and repeatable: logging a meal again),
                           revisions.ts (RevisionService: save, views, day summary), foods.ts
                           (FoodService: search, barcode, create), goals.ts (GoalService: goals and the
-                          day view), share.ts (ShareService: the share target), time.ts (days and local
+                          day view), calendar.ts (CalendarService: a month, #33), share.ts (ShareService: the share target), time.ts (days and local
                           times)
   nutrition/              nutrients.ts (OFF/FDC → core set), totals.ts (the only totals), ranking.ts,
                           off.ts / fdc.ts (clients), http.ts (timeouts, size caps, rate limits,
@@ -116,7 +122,8 @@ packages/server/test/     bun tests, temp dirs only; fixtures/ holds made-up ima
                           fake-agent.ts is a scripted ACP agent (tests never start a real harness),
                           fake-stt.ts a scripted STT process and fake-ffmpeg.ts an ffmpeg stand-in
                           (tests never load a speech model); fixtures/memo-de.m4a is synthetic speech
-packages/shared/test/     bun tests: goal-calc (the fixture, equations, caps, floors, rounding, defaults)
+packages/shared/test/     bun tests: goal-calc (the fixture, equations, caps, floors, rounding, defaults),
+                          plan (the calendar's classifier, goal plans, the weight average, month arithmetic)
 packages/web/
   index.html              iOS/PWA metas, manifest and icon links, the dark-mode switch
   public/                 manifest.webmanifest, icons/ (rendered by scripts/icons.ts)
@@ -127,7 +134,7 @@ packages/web/src/
   main.tsx                router + query client, starts the upload queue, registers the worker
   routes/                 TanStack file routes: __root.tsx, index.tsx (the overview),
                           meals.$mealId.tsx (a meal: its detail or its capture view), days.$date.tsx
-                          (the day view), goals.tsx (goals and weight), goals_.guided.tsx (the guided
+                          (the day view), calendar.tsx (the calendar, #33), goals.tsx (goals and weight), goals_.guided.tsx (the guided
                           setup, /goals/guided), settings.tsx (notifications, the agent, sharing);
                           routeTree.gen.ts
                           is generated
@@ -147,10 +154,12 @@ packages/web/src/
                           add-strip (photo/note/link/audio/paste, the paste sheet), capture-list (+ useCaptureRows),
                           meal-detail (the detail screen), items-list (provenance, confidence,
                           source), revision-history, trace-view, agent-settings (Settings → Agent, the
-                          model picker), log-again (the Log again sheet, the "Again?" list); ui/ (shadcn:
+                          model picker), log-again (the Log again sheet, the "Again?" list), calendar (the
+                          month grid, the selected day, the summary, the legend, #33); ui/ (shadcn:
                           button, input, sheet)
   index.css               Tailwind 4 + the D · Slab theme tokens (light/dark)
-e2e/                      Playwright specs (phone viewport)
+e2e/                      Playwright specs (phone viewport); calendar-seed.ts makes four made-up months for the
+                          calendar spec, which runs against a server of its own (YAMT_E2E_PORT − 1)
 docs/adr/                 architecture decision records
 .agents/skills/log-meal/  SKILL.md: how to analyse a meal (the job's system prompt, and a skill for
                           interactive sessions through the `.claude/skills` link)
@@ -169,8 +178,8 @@ services/stt/             the speech-to-text process, a uv project (Python 3.12,
 - In dev (`--dev`), Vite serves the SPA on port+1 with HMR and proxies `/api` to the server;
   `tailscale serve` then points at Vite. The proxy keeps the request headers, so auth and the
   same-origin check behave as in production.
-- Ports: 7890 (HTTP), 7891 (Vite in dev), 7444 (tailnet HTTPS), 7898 (e2e). Neighbouring
-  projects on the host use 7880/7443/7899 and 443/8443.
+- Ports: 7890 (HTTP), 7891 (Vite in dev), 7444 (tailnet HTTPS), 7898 (e2e), 7897 (the e2e's
+  calendar server). Neighbouring projects on the host use 7880/7443/7899 and 443/8443.
 
 ## Auth
 
@@ -768,6 +777,8 @@ All behind the identity check, writes also same-origin; paths in `mealPaths` / `
   without an analysis are counted in `unanalysed`, not in the totals), the goal in force,
   `progress` per target (`dayProgress`: eaten, target, left, over) and the weight entries
   measured that day.
+- `GET /api/months/:month?tz` (#33, `calendarPaths`; `YYYY-MM`, else 400): see
+  [Calendar](#calendar-33).
 
 - **Profile and guided goals** (#24, `profilePaths`): `GET /api/profile` (`{profile}`, null before
   the first guided setup), `PUT /api/profile` (`ProfileBody`), `POST /api/goals/guided`
@@ -903,6 +914,42 @@ at a new time. "The model reads, code computes" holds trivially: no model is inv
   grouped by title (case and spacing aside), each title's latest meal with its totals and how often
   the title was logged (copies count), the most often first, then the most recent.
 
+## Calendar (#33)
+
+A month at a glance: which days were tracked and how each day and week sat against the goal in
+force. Design: spike #31's direction D · Plan ([design.md](design/design.md#component-patterns)).
+
+- **The classifier** (`plan.ts` in `@yamt/shared`, pure, tested there): a day's kcal against the
+  kcal target in force that day. The **on-plan range** depends on the goal's kind, asymmetric so
+  the helpful direction has more room: cut −15 % … +5 %, maintain ±10 %, bulk −5 % … +15 %
+  (`ON_PLAN`). Outside it a day is **just off** within ±25 % (`FAR_OFF`), else **far off**. The
+  **direction** (over / under) is a fact outside a ±5 % dead zone (`DEAD_ZONE`). **Too low**: under
+  the goal's calorie floor, or on a cut more than 25 % under (`TOO_LOW_ON_CUT`). A **week** is the
+  mean of its counted days' shares of their own targets (so a goal change mid-week averages
+  cleanly), judged by the goal in force on its last counted day; it shows its count below four
+  days (`WEEK_FULL_DAYS`). Days without a goal, or a goal without a kcal target, aren't classified.
+  Every threshold is a named constant, to be tuned later.
+- **A goal's kind, label and floor** (`goalPlan`): a guided goal (#24) takes its kind from the
+  derivation's choice and its floor from the calculation (`result.kcal.floor`: 1,500 / 1,200 kcal,
+  and for a cut at least the resting energy). Targets set by hand have no kind: they are read with
+  the maintain range, labelled "Manual targets" (or their note), and take the floor yamt would set
+  for the profile's sex; without a profile there is no too-low mark from a floor.
+- **`GET /api/months/:month?tz`** (`CalendarService`, `domain/calendar.ts`): the month's days in
+  the phone's zone, plus the days of the neighbouring months that complete its first and last
+  week (Monday first). One pass per month: the meals (`MealRepo.tallyBetween`: time, current
+  revision, live captures), their current revisions' items (`RevisionRepo.currentItemsBetween`),
+  the weight entries from a week before the 1st, the goals and the profile, each read once. Per
+  day (as the day view counts, #12): `meals` (a draft with nothing captured is no meal; a copy,
+  #30, is one), `unanalysed`, `totals` over the analysed meals by `computeTotals` (null when none
+  counts), the goal in force as a `PlanGoal` (targets, kind, label, floor) and the day's mean
+  weight. Per week its seven classifier inputs (`dayInput`: null for a day with nothing counted
+  or after today). The summary over the days so far: days tracked, the mean kcal and protein over
+  the days with totals, the mean kcal share of each day's own target, the goal in force on the
+  last day. The weight: per day with entries the day's mean and the 7-day average
+  (`dailyWeights`, the same as the goals screen's trend).
+- **The screen** (`/calendar?month&day`): see [Screens](#screens-10-11-12-13-24-30-33). The web
+  app classifies with the same shared functions; the server sends inputs, not verdicts.
+
 ## Notifications (#13)
 
 Web Push to the home-screen app: the phone hears when an analysis is done, needs input or
@@ -985,7 +1032,7 @@ square corners. The tokens are in `index.css` (shadcn's names mapped onto the pa
 `ink`, `lime`, `lime-soft`, `tint`, `orange` and their foregrounds); the primitives (`Band`,
 `Strip`, `Label`, `SlabButton`, `BottomSlab`, `StatusLabel`) in `components/slab.tsx`.
 
-### Screens (#10, #11, #12, #13, #24, #30)
+### Screens (#10, #11, #12, #13, #24, #30, #33)
 
 - **Overview** (`/`): today's totals as the ink slab against the goal in force today (kcal,
   protein, fat, carbs, fibre with what's left; "N meals not counted yet" for those without an
@@ -996,16 +1043,28 @@ square corners. The tokens are in `index.css` (shadcn's names mapped onto the pa
   meal logged again (#30) has no captures and says "Logged again" instead.
   Meals that exist only on this phone so far (started offline) are listed from the upload queue;
   drafts with nothing captured are left out. "Earlier days" opens the day before the 14, from
-  where the day view steps back as far as needed. The header's scale opens goals and weight.
+  where the day view steps back as far as needed. The header's calendar opens the calendar on the
+  current month (#33), the scale goals and weight.
   **Log meal** is the sticky lime slab. Goals come from `GET /api/goals` (`useGoals`), resolved
   per day with `goalInForce`.
 - **Day view** (`/days/:date`, `useDay` → `GET /api/days/:date?tz=<the phone's zone>`): the
   totals slab with the day's goal and per-target "left" / "over", the meals not counted yet, a
   goal row (since when, its note; to the goals screen), the meals (the server's plus the upload
   queue's for that day), the weight entries of the day; the bottom slab steps to the previous and
-  next day (replacing the history entry; not past today). Its query key sits under `meals`, so
+  next day (replacing the history entry; not past today); the header's calendar opens the day's
+  month with the day selected. Its query key sits under `meals`, so
   everything that refreshes the meals refreshes it, and it polls while a meal is in motion. A
   malformed date redirects to today.
+- **Calendar** (#33, `/calendar?month=YYYY-MM&day=YYYY-MM-DD`, `useMonth` → `GET /api/months/:month?tz`,
+  key under `meals`): header with back and the month steps (not past the current month); the month
+  as the ink slab, 7 day columns (≥ 44 px wide at 390) and the week column; the selected day
+  continuing the ink (a row with its name, goal label and meals, to the day view; the totals slab
+  with left / over, the meals not counted yet and the plan reading); the month so far on tint
+  (days tracked, % of the kcal target, average kcal and protein, the 7-day weight average); the
+  legend in words, its ranges from the goals in force that month; **Open <day>** as the tint
+  bottom slab. Every state has a URL: the month defaults to the day's (or the current one), the
+  day to today in the current month and to the last day of a past one. Picking days and stepping
+  months replace the history entry, so Back leaves the calendar.
 - **Goals** (`/goals`): the weight entry (lime: kg with a dot or comma, now or a chosen time, Undo
   right after), the trend (`lib/weight.ts`: per calendar day the mean of its entries, the 7-day
   moving average over the days with entries; six weeks shown, a week more fetched so the average
@@ -1164,5 +1223,6 @@ with the MCP server (#7), the ACP runtime with the analysis job and worker loop 
 transcription worker (#9), the PWA with meal capture (#10), the meal detail with questions and
 corrections (#11), the day view with goals and weight (#12) and Web Push notifications (#13)
 are in: wave 1 is complete. On top of it, the guided goal setup (#24), paste with the iOS
-Shortcut share target (#26), the agent settings (#28) and logging a meal again (#30). Spike #4 (speech-to-text) decided ADR 0002; spike #5's chosen design is
+Shortcut share target (#26), the agent settings (#28), logging a meal again (#30) and the calendar (#33,
+from spike #31). Spike #4 (speech-to-text) decided ADR 0002; spike #5's chosen design is
 [design/design.md](design/design.md). See the epic for the decisions each one builds on.
