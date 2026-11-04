@@ -209,6 +209,48 @@ Units sit next to numbers smaller and muted (`28g`, `72 /160`).
   day"); the day's meals; its weight. The bottom slab is two tint halves stepping to the day
   before and after (the thumb's job on this screen); the next day is disabled on today. Steps
   replace the history entry, so Back leaves the day view.
+- **Calendar** (#33, spike #31's D · Plan): back and the month steps (‹ ›, › disabled on the
+  current month) in the header, "Calendar · 2026" and the month as the page title. The month is
+  the screen's ink slab and the selected day continues it on the same ink, so the screen reads as
+  one ink element: a day row (the day's name, "4 Nov" muted when within the week; "Cut, standard
+  pace · 3 meals" as a micro-label; "Open day →"), then the totals slab with left / over per
+  target, "■ 1 meal not counted yet" and the day's plan reading ("Far off, over") in its note.
+  Then the month so far on tint ("So far this month" / the month's name, "12 of 18 days"; % of
+  the kcal target, average kcal "/2,100", average protein "/160" in display 26 px; the 7-day weight
+  average as a small line, the days' weights as 4 px squares, "82.6 → 81.4 kg"), the legend on the
+  plain page, and **Open <day>** as a tint bottom slab (it doesn't want the user).
+- **Month grid** (#33): weekday micro-labels, seven day columns and an 8th week column ("Wk")
+  after a 4 px extra gap; 4 px gaps, 12 px side padding, so the day squares are 44 px wide at 390
+  (48 px tall) and the week column 24 px. A day square shows its number (13 px bold) top left in
+  a 22 px chip; today's chip is filled in the slab's foreground. Days of the neighbouring months
+  are blank; the future is the "nothing logged" fill with a faded number and can't be tapped.
+  The selected day gets a 3 px inset frame in the slab's foreground (its caps move inside it).
+  The week square isn't tappable.
+- **Plan fades** (#33): how a day sat against the goal in force: full **lime** on plan (the
+  range per goal kind: cut −15 % … +5 %, maintain and targets set by hand ±10 %, bulk
+  −5 % … +15 %), **lime at 55 %** just off (outside the range, within ±25 %), **lime at 25 %**
+  (35 % in dark) far off. Lime here is the reading, not a call to act: the squares are the
+  slab's content, and the fades keep the helpful direction lime longer. No yellow-to-red, no
+  orange: a single day's ±10–20 % estimation error doesn't deserve an alarm. Days without a goal
+  (or a kcal target) are `ink-line` grey with the kcal in thousands bottom right ("2.4k", muted);
+  meals not analysed yet add an 8 px square bottom right on the same grey (or on the fade, when
+  part of the day counts); nothing logged is `ink-line` at 40 %.
+- **Caps** (#33): the direction as a 4 px bar in the slab's foreground across the square, on top
+  for over and at the bottom for under, only outside ±5 %. **Too low** (under the goal's calorie
+  floor, or more than 25 % under on a cut) is a hollow 7 px bottom cap (a 2 px outline), never a
+  colour. The words say the same ("on plan", "just off", "far off", "over", "under", "too low");
+  no streaks, no judgement.
+- **Week column** (#33): the week (Monday to Sunday, neighbouring months' days included) in the
+  same fades and caps, from the mean of its counted days' shares of their own targets, judged by
+  the goal in force on its last counted day; its count (11 px bold) in the middle while fewer than
+  four days counted; blank for weeks wholly in the future.
+- **Legend** (#33, "Reading the month", display 22 px on the plain page): the ranges in force
+  that month as bold sentences generated from the goals ("From 14 Oct: Cut, standard pace, on plan
+  from 15 % under to 5 % over the kcal target."; "Until 6 Sept: no goal, kcal only."; "No goal this
+  month: the squares show kcal only."), then one row per mark: a 28 px swatch cut from the ink slab
+  (so it looks like a square) and a muted 14 px line. The plan rows show only when a goal with a
+  kcal target applied that month, the kcal-only row only when a day had none; the numbers come from
+  the classifier's constants.
 - **Meal row without numbers** (#12): the muted "—" gets a "not counted" micro-label.
 - **Weight entry** (lime, #12): "Weight today" and the last entry as micro-labels, one 72 px
   field on the page colour (display 40 px, `inputMode="decimal"`, a comma works, the last weight
@@ -277,8 +319,9 @@ Units sit next to numbers smaller and muted (`28g`, `72 /160`).
 - **Capture row**: 48 px tile (photo thumbnail, or an icon on tint), bold title, micro-label
   status, a 44 px remove action. Removing asks once inline ("Remove?") because captures can't be
   un-retracted.
-- **Icon buttons** in headers: 48 px tint squares (close ✕, back ←, the scale for goals and
-  weight on the overview and the day view, the cog for settings on the overview). Back goes back in the app's history, or to the
+- **Icon buttons** in headers: 48 px tint squares (close ✕, back ←, the calendar on the overview
+  and the day view (#33), the scale for goals and weight on the overview and the day view, the
+  cog for settings on the overview; the calendar's ‹ › month steps). Back goes back in the app's history, or to the
   overview when the screen was opened directly.
 - **Settings** (#13): back and the page title, then the notification state as the ink slab (the
   bell, "Notifications", the state in display 40 px: On / Off / Blocked / Not installed / Not
