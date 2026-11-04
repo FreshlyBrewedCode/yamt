@@ -16,6 +16,11 @@ import {
   type MealStatus,
   type MealsResponse,
   mealPaths,
+  type PushEvents,
+  type PushResponse,
+  type PushSubscriptionResponse,
+  type PushTestResponse,
+  pushPaths,
   type RetractResponse,
   runPaths,
   type TranscribeResponse,
@@ -25,6 +30,7 @@ import {
   weightPaths,
 } from "@yamt/shared";
 import { ApiError, api } from "./api";
+import { pushDevice, subscribeDevice, unsubscribeDevice } from "./push";
 import { type ParsedTrace, parseTrace } from "./trace";
 
 export const queryClient = new QueryClient({
@@ -43,6 +49,9 @@ export const keys = {
   goals: ["goals"] as const,
   weight: ["weight"] as const,
   weightRange: (from: number, to: number) => ["weight", { from, to }] as const,
+  push: ["push"] as const,
+  /** This browser's support, permission and subscription (not server state, kept here with it). */
+  pushDevice: ["push", "device"] as const,
 };
 
 /** The browser's zone: days are the phone's calendar days. */
@@ -223,5 +232,84 @@ export function useDeleteWeight() {
   return useMutation({
     mutationFn: (id: string) => api.delete(weightPaths.entry(id)),
     onSettled: weightChanged,
+  });
+}
+
+// ---- Web Push (#13) -----------------------------------------------------------------------------
+
+/** The server's VAPID key and every registered subscription. */
+export function usePush() {
+  return useQuery({ queryKey: keys.push, queryFn: () => api.get<PushResponse>(pushPaths.push) });
+}
+
+/** This device: push support, permission, subscription. Rechecked when the app comes back (iOS Settings). */
+export function usePushDevice() {
+  return useQuery({
+    queryKey: keys.pushDevice,
+    queryFn: pushDevice,
+    staleTime: 0,
+    refetchOnWindowFocus: true,
+  });
+}
+
+const pushChanged = () => queryClient.invalidateQueries({ queryKey: keys.push });
+
+/**
+ * Turns notifications on for this device: `permission` is the promise of
+ * `Notification.requestPermission()`, started in the tap itself (iOS asks only from a gesture).
+ * Then a fresh subscription for the server's key, registered with the server.
+ */
+export function useTurnOnPush() {
+  return useMutation({
+    mutationFn: async (v: { permission: Promise<NotificationPermission>; publicKey: string }) => {
+      if ((await v.permission) !== "granted") return null;
+      const body = await subscribeDevice(v.publicKey);
+      return (await api.post<PushSubscriptionResponse>(pushPaths.subscriptions, body)).subscription;
+    },
+    onSettled: pushChanged,
+  });
+}
+
+/** Turns them off here: the server forgets the subscription, the browser drops it. */
+export function useTurnOffPush() {
+  return useMutation({
+    mutationFn: async (id: string) => {
+      await api.delete(pushPaths.subscription(id)).catch((e: unknown) => {
+        if (!(e instanceof ApiError && e.status === 404)) throw e;
+      });
+      await unsubscribeDevice();
+    },
+    onSettled: pushChanged,
+  });
+}
+
+/** Which events this subscription hears about; shown at once, undone if the server refuses. */
+export function useSetPushEvents() {
+  return useMutation({
+    mutationFn: (v: { id: string; events: PushEvents }) =>
+      api.patch<PushSubscriptionResponse>(pushPaths.subscription(v.id), v.events),
+    onMutate: async (v) => {
+      await queryClient.cancelQueries({ queryKey: keys.push, exact: true });
+      const before = queryClient.getQueryData<PushResponse>(keys.push);
+      if (before) {
+        queryClient.setQueryData<PushResponse>(keys.push, {
+          ...before,
+          subscriptions: before.subscriptions.map((s) => (s.id === v.id ? { ...s, events: v.events } : s)),
+        });
+      }
+      return { before };
+    },
+    onError: (_e, _v, ctx) => {
+      if (ctx?.before) queryClient.setQueryData(keys.push, ctx.before);
+    },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: keys.push, exact: true }),
+  });
+}
+
+export function useTestPush() {
+  return useMutation({
+    mutationFn: (id: string) => api.post<PushTestResponse>(pushPaths.test(id)),
+    // a gone subscription was removed on the server
+    onSuccess: (r) => (r.delivery === "gone" ? pushChanged() : undefined),
   });
 }

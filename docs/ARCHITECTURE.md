@@ -2,9 +2,9 @@
 
 What exists today (the scaffold, #3, the meal backend, #6, the nutrition layer with the yamt
 MCP server, #7, the analysis job over ACP, #8, the transcription worker, #9, the PWA with
-meal capture, #10, the meal detail with questions and corrections, #11, and the day view with
-goals and weight, #12), how it fits
-together, and where wave 1 goes next. Why it is built this way:
+meal capture, #10, the meal detail with questions and corrections, #11, the day view with
+goals and weight, #12, and Web Push notifications, #13), how it fits together, and what comes
+after wave 1. Why it is built this way:
 [ADR 0001](adr/0001-wave-1-architecture.md). Commands and conventions: [AGENTS.md](../AGENTS.md).
 The design: [design/design.md](design/design.md).
 
@@ -17,23 +17,27 @@ iPhone (Safari / home-screen PWA), on the tailnet
   ▼
 yamt start   (one Bun process, binds 127.0.0.1:7890 only)
   ├─ Hono JSON API   /api/*   identity-header auth (except /api/health), same-origin writes,
-  │                           zod-validated bodies; meals, captures, media, weight, goals, days
+  │                           zod-validated bodies; meals, captures, media, weight, goals, days,
+  │                           push subscriptions
   ├─ MCP server      /mcp     bearer tokens (agent runs, interactive Claude Code sessions),
   │                           loopback callers only; the agent's only way to read and write
   ├─ SPA             /*       packages/web/dist   (dev: Vite on 7891 proxies /api); the PWA:
-  │                           manifest, icons, /sw.js (app shell only)
+  │                           manifest, icons, /sw.js (app shell, push and notification taps)
   ├─ job worker      drains the `jobs` table: `analyse` (one at a time), `transcribe` (one batch
   │    │             at a time, alongside)
   │    ├─ analysis run: one harness process per run, ACP over stdio, cwd ~/.yamt/runs/<run>/
   │    │    claude-agent-acp (node) → `claude` │ custom ACP command
   │    │    └─ MCP over HTTP back to 127.0.0.1:7890/mcp with a per-run token
-  │    └─ transcription batch: ffmpeg per memo → 16 kHz WAV in a temp dir, then one
-  │         services/stt process (uv, Python, faster-whisper on the CPU) for the batch
+  │    ├─ transcription batch: ffmpeg per memo → 16 kHz WAV in a temp dir, then one
+  │    │    services/stt process (uv, Python, faster-whisper on the CPU) for the batch
+  │    └─ a settled analysis → Web Push (web-push: aes128gcm + VAPID) to each subscription
   └─ SQLite          ~/.yamt/yamt.db   (WAL, foreign keys, 0600)
-     data dir        ~/.yamt/  (0700): yamt.db, media/, runs/, models/, config.json, mcp-token
+     data dir        ~/.yamt/  (0700): yamt.db, media/, runs/, models/, config.json, mcp-token,
+                               vapid.json
         │
         └─ outbound: Open Food Facts, USDA FoodData Central, recipe pages (timeouts, size caps,
-                     rate limits; results cached in `foods`); the model API, via the harness
+                     rate limits; results cached in `foods`); the model API, via the harness;
+                     push services (Apple, Google, Mozilla) with encrypted notifications
 ```
 
 ## Layout
@@ -47,6 +51,8 @@ packages/shared/src/      contracts shared by server and web (no runtime deps bu
                           `dayProgress`, `addDays` (shared by server and web)
   api-nutrition.ts        foods, revisions, items, questions, totals: enums and types
   api-runs.ts             analysis runs and trace lines: `runPaths`, `AnalysisRun`, `TraceEntry`
+  api-push.ts             Web Push: `pushPaths`, `PUSH_EVENTS`, `SubscribeBody`, `PushEventsBody`,
+                          `PushPayload` (what the service worker receives)
 packages/server/src/
   cli.ts                  `yamt start` (flags: --data-dir --port --https-port --local --no-auth --dev --no-build
                           --no-worker), `yamt mcp-token [--rotate]`
@@ -68,7 +74,7 @@ packages/server/src/
   build-stamp.ts          rebuild packages/web/dist when its sources changed
   auth/identity.ts        requireTailnetIdentity: the Tailscale-User-Login check, dev bypass
   auth/bearer.ts          requireBearer: token auth for machine clients (/mcp)
-  http/                   api.ts (mounts), meals.ts, runs.ts, weight.ts and goals.ts (routes), file-response.ts
+  http/                   api.ts (mounts), meals.ts, runs.ts, weight.ts, goals.ts and push.ts (routes), file-response.ts
                           (media, ranges), middleware.ts (sameOrigin, errors, readJson),
                           origin.ts, static.ts
   domain/                 errors.ts (HttpError), meals.ts (MealService: captures, retract, analyse,
@@ -85,7 +91,10 @@ packages/server/src/
                           heic.ts (HEIC → JPEG), downscale.ts (JPEG → ≤ 1600 px, upright)
   db/                     index.ts (open, pragmas, migration runner, newId), migrations/*.sql,
                           repos/ (one per aggregate: meals, captures, transcripts, jobs, weight,
-                          foods, revisions, runs, goals)
+                          foods, revisions, runs, goals, push)
+  push/                   vapid.ts (the key pair in vapid.json), sender.ts (PushSender: encrypt, sign,
+                          deliver, 404/410 cleanup), messages.ts (what a meal's notification says,
+                          notifyMeal)
 packages/server/test/     bun tests, temp dirs only; fixtures/ holds made-up images and, in
                           nutrition/, recorded OFF/FDC answers and a trimmed recipe page
                           (record.ts re-records them; the gate never hits the network);
@@ -102,7 +111,8 @@ packages/web/src/
   main.tsx                router + query client, starts the upload queue, registers the worker
   routes/                 TanStack file routes: __root.tsx, index.tsx (the overview),
                           meals.$mealId.tsx (a meal: its detail or its capture view), days.$date.tsx
-                          (the day view), goals.tsx (goals and weight); routeTree.gen.ts
+                          (the day view), goals.tsx (goals and weight), settings.tsx (notifications);
+                          routeTree.gen.ts
                           is generated
   lib/api.ts, queries.ts  the fetch client and every TanStack Query hook
   lib/outbox/             the upload queue: outbox.ts (Outbox), store.ts (IndexedDB), transport.ts
@@ -110,7 +120,8 @@ packages/web/src/
   lib/recorder.ts         the recorder's state machine and helpers; hooks/use-recorder.ts wires it
   lib/trace.ts            a run's NDJSON trace → run metadata and a readable list (parseTrace)
   lib/weight.ts           the weight trend: raw points and the 7-day moving average (weightTrend), kgTicks
-  lib/sw.ts, ids.ts, format.ts  worker registration, client UUIDv7s, number/date formatting
+  lib/sw.ts, ids.ts, format.ts  worker registration and its messages, client UUIDv7s, number/date formatting
+  lib/push.ts             this browser's push support, permission and subscription (subscribeDevice)
   components/             slab.tsx (the design's primitives), totals-slab (+ TargetBar), meal-row (+ groupByDay),
                           weight-entry, weight-trend, recorder-band,
                           add-strip (photo/note/link/audio), capture-list (+ useCaptureRows),
@@ -166,9 +177,10 @@ services/stt/             the speech-to-text process, a uv project (Python 3.12,
 - `~/.yamt/` (`--data-dir`, `YAMT_DATA_DIR`), created and kept at 0700 together with `media/`
   (raw captures), `runs/` (one dir per analysis run: the harness's cwd and `trace.ndjson`) and
   `models/` (the speech model's Hugging Face cache, downloaded on first use);
-  `mcp-token` (0600) holds the interactive MCP token, `config.json` the optional `login`,
-  `fdcApiKey`, `analysis` (see [Analysis](#analysis-8)) and `transcription` (see
-  [Transcription](#transcription-9)). Nothing personal is ever inside the repo;
+  `mcp-token` (0600) holds the interactive MCP token, `vapid.json` (0600) the Web Push key pair,
+  `config.json` the optional `login`, `fdcApiKey`, `analysis` (see [Analysis](#analysis-8)),
+  `transcription` (see [Transcription](#transcription-9)) and `push` (see
+  [Notifications](#notifications-13)). Nothing personal is ever inside the repo;
   the `.gitignore` blocks `*.db` and data dirs as a second line of defence.
 - `yamt.db`: `bun:sqlite`, `journal_mode=WAL`, `synchronous=NORMAL`, `foreign_keys=ON`,
   `busy_timeout=5000`; the file and its -wal/-shm are chmod 0600 on open.
@@ -228,6 +240,11 @@ new value never needs a table rebuild.
   every past day keeps the targets it had; only the latest row can be changed in place (a typo
   fix). Goals are never deleted. Dates rather than times because a goal is about calendar days:
   the same reckoning as the overview's day totals.
+- **push_subscriptions** (#13): one per device and browser that turned notifications on:
+  `endpoint` (unique; the push service's URL for it), the browser's keys `p256dh` and `auth`,
+  `events` (JSON toggles `{"analysed": true, "needs_input": true, "failed": true}`; a missing key
+  counts as on), `last_sent_at`, `last_error`. Deleted when the push service answers 404/410 or
+  the device turns notifications off.
 - **foods**: the food cache. `source` (`off`, `fdc`, `label`, `custom`) and `source_ref`
   (barcode or FDC id; unique per source, so a refetch updates the row), `name`, `brand`, the core
   set per 100 g as columns (`energy_kcal`, `protein_g`, `fat_g`, `saturated_fat_g`,
@@ -636,6 +653,60 @@ All behind the identity check, writes also same-origin; paths in `mealPaths` / `
   `progress` per target (`dayProgress`: eaten, target, left, over) and the weight entries
   measured that day.
 
+- **Push** (#13, `pushPaths`): `GET /api/push` (the VAPID public key and every subscription,
+  without keys), `POST /api/push/subscriptions` (a `PushSubscription.toJSON()` plus optional
+  `events`; https endpoints on public hosts only; the same endpoint again updates its keys and
+  keeps its toggles: 201 new, 200 known), `PATCH /api/push/subscriptions/:id` (the toggles),
+  `DELETE /api/push/subscriptions/:id`, `POST /api/push/subscriptions/:id/test` (a test
+  notification to that one, whatever its toggles: `{delivery: sent | gone | failed, error}`).
+
+## Notifications (#13)
+
+Web Push to the home-screen app: the phone hears when an analysis is done, needs input or
+failed, and a tap opens the meal.
+
+- **Keys:** a VAPID key pair (P-256) is made at the first start and kept in `<data>/vapid.json`
+  (0600); every subscription is bound to its public key, so it never changes on its own (a broken
+  file stops the start instead of being replaced). The JWT's subject is `push.subject` in
+  `config.json` or `YAMT_PUSH_SUBJECT` (`mailto:` or `https:`), by default the project URL, so no
+  personal address is needed.
+- **Sending** (`push/sender.ts`, `PushSender`): `web-push` 3.6.7 (works under Bun) encrypts the
+  payload for the subscription (RFC 8291, `aes128gcm`) and signs the VAPID JWT (RFC 8292); the
+  request goes out through an injectable `fetch` (a recording fake in tests, which decrypt the
+  body themselves per the RFCs). TTL 12 h, urgency high for meal events, `Topic` = the meal id,
+  so a newer message about a meal replaces one the phone hasn't fetched yet. 2xx records
+  `last_sent_at`; **404/410 delete the subscription**; anything else (or a network error) is kept
+  with `last_error`. The log names the push service's host and the status, never the payload or
+  the endpoint's path.
+- **When:** `AnalysisJob.settled` calls `notifyMeal` once the job is `done` or `failed` for good
+  (not on a retry or a wait). It notifies only if the meal ended `analysed`, `needs_input` or
+  `failed`: a meal left `queued` because another analysis of it is waiting sends nothing, so
+  only the final state of the latest run is notified. The message is built from the meal at that
+  moment and sent to every subscription whose toggle for the event is on. An analysis that failed
+  for good while no server ran (`releaseInterrupted` at the start) is notified too. Interactive
+  sessions saving a revision over MCP don't notify.
+- **What it says** (`push/messages.ts`; personal data only inside the encrypted payload):
+  analysed "<title> · <kcal> kcal" with "Protein · Fat · Carbs" (from the revision view, i.e.
+  `computeTotals`); needs input "<title> · needs input" with the first question ("(+1 more)");
+  failed "<title> · failed" (or "Meal at HH:MM" in the server's zone without a revision) with the
+  error's first clause and "Tap to retry.". The payload (`PushPayload`) carries `url`
+  (`/meals/<id>`, `#questions` for needs input) and `tag` (`meal-<id>`: one notification per meal).
+- **Service worker** (`sw.js`): `push` always shows a notification (iOS revokes subscriptions
+  that receive pushes silently) with the tag (`renotify`), and tells open windows to refresh;
+  `notificationclick` focuses an open window of the app and posts it the URL, which the router
+  follows (`onWorkerMessage` in `main.tsx`), or opens a new window. The meal detail scrolls to
+  `#questions`. In dev, Vite serves the same worker without a file list: no shell cache, push
+  only, so push works with `--dev` too.
+- **The phone** (`routes/settings.tsx`, `lib/push.ts`): iOS has push only in the home-screen app
+  (16.4+), and asks for permission only from a gesture. The settings screen shows this device's
+  state: **on** (its subscription is registered: a toggle per event, stored per subscription on
+  the server, "Send test notification", "Turn off on this device"), **off** ("Turn on
+  notifications": `Notification.requestPermission()` first thing in the tap, then a fresh
+  `pushManager.subscribe` with the server's key, registered with the server), **blocked**
+  (permission denied: where to allow it), **not installed** (Safari in a tab, `navigator.standalone`
+  false and no `PushManager`: the Add to Home Screen steps) or **not available**. A browser
+  subscription the server doesn't know (expired, removed) shows as off; turning on replaces it.
+
 ## Request flow
 
 1. The iPhone opens `https://<host>.<tailnet>.ts.net:7444/`; `tailscale serve` terminates TLS
@@ -671,7 +742,7 @@ square corners. The tokens are in `index.css` (shadcn's names mapped onto the pa
 `ink`, `lime`, `lime-soft`, `tint`, `orange` and their foregrounds); the primitives (`Band`,
 `Strip`, `Label`, `SlabButton`, `BottomSlab`, `StatusLabel`) in `components/slab.tsx`.
 
-### Screens (#10, #11, #12)
+### Screens (#10, #11, #12, #13)
 
 - **Overview** (`/`): today's totals as the ink slab against the goal in force today (kcal,
   protein, fat, carbs, fibre with what's left; "N meals not counted yet" for those without an
@@ -742,8 +813,11 @@ square corners. The tokens are in `index.css` (shadcn's names mapped onto the pa
   and output), the agent's messages and thoughts (chunks joined, clamped until tapped),
   permission decisions, notes (a config option the harness lacks, the harness being stopped) and
   errors (orange: a failed run, a crashed harness).
-- **Live status:** no push channel; the overview polls `GET /api/meals` every 3 s while a meal is
-  queued, analysing or has a pending transcript, the meal screen polls its meal likewise.
+- **Settings** (`/settings`, the cog in the overview's header): notifications for this device
+  (see [Notifications](#notifications-13)).
+- **Live status:** the overview polls `GET /api/meals` every 3 s while a meal is
+  queued, analysing or has a pending transcript, the meal screen polls its meal likewise. A push
+  arriving while the app is open refreshes the meals at once.
 
 ### Recording
 
@@ -797,14 +871,15 @@ The screens merge the queue's entries (`useMealOutbox`) with the server's captur
   handles `/api` or `/mcp`. It takes over at once (`skipWaiting`, `clients.claim`) and drops older
   shell caches; a page that then misses an old lazy chunk gets a 404 (the static handler no longer
   answers a missing `/assets/*` with `index.html`) and reloads itself (`vite:preloadError`).
-  `lib/sw.ts` registers it and exports `serviceWorkerReady`, which #13 awaits to subscribe to push;
-  #13 adds its `push` and `notificationclick` handlers to `sw.js`.
+  `lib/sw.ts` registers it (dev too, see below) and exports `serviceWorkerReady` (the active
+  registration) and `onWorkerMessage`; the worker's `push` and `notificationclick` handlers are
+  described under [Notifications](#notifications-13).
 
 ## Planned (epic #2)
 
 Meals, captures, media storage, the job queue and weight entries (#6), the nutrition layer
 with the MCP server (#7), the ACP runtime with the analysis job and worker loop (#8), and the
 transcription worker (#9), the PWA with meal capture (#10), the meal detail with questions and
-corrections (#11) and the day view with goals and weight (#12) are in. Still to come: Web Push
-(#13). Spike #4 (speech-to-text) decided ADR 0002; spike #5's chosen design is
+corrections (#11), the day view with goals and weight (#12) and Web Push notifications (#13)
+are in: wave 1 is complete. Spike #4 (speech-to-text) decided ADR 0002; spike #5's chosen design is
 [design/design.md](design/design.md). See the epic for the decisions each one builds on.

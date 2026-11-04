@@ -1,6 +1,6 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { type DayTotals, goalInForce } from "@yamt/shared";
-import { ChevronRight, CloudOff, Plus, Scale, Square } from "lucide-react";
+import { ChevronRight, CloudOff, Plus, Scale, Settings, Square } from "lucide-react";
 import { useMemo } from "react";
 import { groupByDay, MealRow, type MealRowData } from "@/components/meal-row";
 import { BottomSlab, iconButtonClass, Label, SlabButton, Strip } from "@/components/slab";
@@ -18,7 +18,8 @@ const DAYS = 14;
 /**
  * Home: today's totals against today's goal (a tap opens the day view), then the last two weeks'
  * meals by day (each day header opens that day, with its kcal against its own goal), and Log
- * meal at the bottom. The scale in the header opens goals and weight.
+ * meal at the bottom. The scale in the header opens goals and weight, the cog the settings
+ * (notifications).
  */
 function Overview() {
   const navigate = useNavigate();
@@ -58,6 +59,9 @@ function Overview() {
           )}
           <Link to="/goals" className={iconButtonClass} aria-label="Goals and weight">
             <Scale className="size-6" strokeWidth={2.5} />
+          </Link>
+          <Link to="/settings" className={iconButtonClass} aria-label="Settings">
+            <Settings className="size-6" strokeWidth={2.5} />
           </Link>
         </div>
       </header>

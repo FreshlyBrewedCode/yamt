@@ -16,7 +16,8 @@ import { staticHandler, WEB_DIST } from "./http/static.ts";
 import { JobWorker } from "./jobs/worker.ts";
 import { createMcpApp, MCP_PATH } from "./mcp/endpoint.ts";
 import type { Fetch } from "./nutrition/http.ts";
-import { createServices, type Services } from "./services.ts";
+import { notifyMeal } from "./push/messages.ts";
+import { createServices, type Services, type ServicesOptions } from "./services.ts";
 import type { SttBackend } from "./transcription/backend.ts";
 import { settleTranscript, TranscribeJob } from "./transcription/job.ts";
 import { LocalWhisperBackend } from "./transcription/local.ts";
@@ -39,6 +40,8 @@ export interface ServerOptions {
   fetch?: Fetch;
   /** Override for tests: the zone days are reckoned in (default: the server's). */
   timeZone?: string;
+  /** Web Push: the VAPID subject; for tests, the fetch to push services and the log. */
+  push?: ServicesOptions["push"];
   /**
    * Run the job worker (meal analysis, transcription). Off unless asked for, so tests and tools
    * that only need the API never spawn an agent or an STT process; `yamt start` turns it on.
@@ -88,6 +91,7 @@ export function createServer(opts: ServerOptions): AppServer {
     fdcApiKey: opts.fdcApiKey,
     fetch: opts.fetch,
     timeZone: opts.timeZone,
+    push: opts.push,
   });
   // one process owns the queue: whatever an earlier one left running was interrupted (a failed
   // attempt), and so were its runs; their meals go back to queued, or failed after the last try
@@ -96,9 +100,14 @@ export function createServer(opts: ServerOptions): AppServer {
   for (const job of released) {
     settleMeal(services.repos, job);
     settleTranscript(services.repos, job);
+    // an analysis that failed for good while no server ran: say so
+    if (job.type === "analyse" && job.status === "failed") {
+      void notifyMeal(services, job.payload.mealId).catch(() => {});
+    }
   }
-  // the interactive MCP token exists from the first start on (`yamt mcp-token` prints it)
+  // the interactive MCP token and the VAPID keys exist from the first start on
   services.mcpTokens.interactiveToken();
+  services.push.publicKey();
 
   const app = new Hono();
   app.route("/api", createApi({ db, auth: opts.auth, services }));

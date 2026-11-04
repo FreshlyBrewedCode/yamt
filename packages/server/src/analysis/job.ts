@@ -11,6 +11,7 @@ import type { Repos } from "../db/repos/index.ts";
 import { dedupeKeys, type Job } from "../db/repos/jobs.ts";
 import type { JobContext, JobHandler, JobOf, JobOutcome } from "../jobs/worker.ts";
 import { MCP_SERVER_NAME } from "../mcp/endpoint.ts";
+import { notifyMeal } from "../push/messages.ts";
 import type { Services } from "../services.ts";
 import { analysisPermissions, isInside, WEB_TOOLS } from "./permissions.ts";
 import { agentPhoto, buildPrompt, failedTranscripts } from "./prompt.ts";
@@ -200,6 +201,13 @@ export class AnalysisJob implements JobHandler<"analyse"> {
 
   settled(job: JobOf<"analyse">): void {
     settleMeal(this.s.repos, job, this.now());
+    // done or failed for good: the meal's final state, unless another analysis waits (it stays
+    // queued, and notifyMeal sends nothing); a retry or a reschedule is not the end
+    if (job.status === "done" || job.status === "failed") {
+      void notifyMeal(this.s, job.payload.mealId).catch((e: unknown) =>
+        console.warn(`push: notifying failed: ${(e as Error).message}`),
+      );
+    }
   }
 }
 

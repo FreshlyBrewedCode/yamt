@@ -59,6 +59,14 @@ export function MealDetail({ detail }: { detail: MealDetailResponse }) {
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [skipped, setSkipped] = useState<ReadonlySet<string>>(new Set());
   const [correction, setCorrection] = useState("");
+  const hasQuestions = (view?.questions.length ?? 0) > 0;
+
+  // a "needs input" notification links to #questions: bring the question into view once
+  useEffect(() => {
+    if (hasQuestions && window.location.hash === "#questions") {
+      document.getElementById("questions")?.scrollIntoView({ block: "start" });
+    }
+  }, [hasQuestions]);
 
   const save = async (capture: PendingCapture, capturedAt?: number) => {
     setProblem(null);
@@ -162,6 +170,7 @@ export function MealDetail({ detail }: { detail: MealDetailResponse }) {
           <Band
             tone={meal.status === "needs_input" ? "lime" : "tint"}
             className="px-5 pt-4 pb-5"
+            id="questions"
             data-testid="questions"
           >
             <Label className={meal.status === "needs_input" ? "text-lime-muted" : "text-muted-foreground"}>
