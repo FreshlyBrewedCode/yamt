@@ -247,7 +247,11 @@ const app = acp
           media?: { path: string };
           transcript?: { status: string; text: string | null } | null;
         }[];
+        currentRevision: { number: number; kind: string } | null;
       };
+      s.record.currentRevision = data.currentRevision
+        ? { number: data.currentRevision.number, kind: data.currentRevision.kind }
+        : null;
       s.record.captureKinds = data.captures.map((x) => x.kind);
       s.record.transcripts = data.captures.flatMap((x) => (x.transcript ? [x.transcript] : []));
       const directive =

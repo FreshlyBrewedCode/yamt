@@ -10,6 +10,8 @@ import {
   type MealRevisionsResponse,
   type MealsResponse,
   mealPaths,
+  type RepeatableResponse,
+  type RepeatMealResponse,
   type RetractResponse,
   type WeightEntryResponse,
   type WeightResponse,
@@ -88,7 +90,14 @@ describe("meals", () => {
     const meal = await newMeal();
     expect(meal).toMatchObject({ status: "draft", eatenAtSource: "created", currentRevisionId: null });
     const detail = await call<MealDetailResponse>("GET", mealPaths.meal(meal.id));
-    expect(detail.body).toEqual({ meal, captures: [], transcripts: [], revision: null, runs: [] });
+    expect(detail.body).toEqual({
+      meal,
+      captures: [],
+      transcripts: [],
+      revision: null,
+      runs: [],
+      source: null,
+    });
     expect((await call("GET", mealPaths.meal("nope"))).status).toBe(404);
   });
 
@@ -689,6 +698,229 @@ describe("spoken answers and corrections", () => {
     const jpeg = new Blob([fixture("gradient.jpg")], { type: "image/jpeg" });
     expect((await post({ kind: "answer" }, jpeg)).status).toBe(400);
     expect((await post({ kind: "correction" }, jpeg)).status).toBe(400);
+  });
+});
+
+describe("log again (#30)", () => {
+  /** An analysed cappuccino: milk from a (made-up) OFF product, an estimated espresso. */
+  const cappuccino = async (title = "Cappuccino", eatenAt = Date.now() - 86_400_000) => {
+    const meal = await newMeal({ eatenAt });
+    await call("POST", mealPaths.captures(meal.id), { kind: "text", text: "Cappuccino mit Vollmilch" });
+    const milk = app.services.repos.foods.save({
+      source: "off",
+      sourceRef: "4000000000017",
+      data: {
+        name: "Vollmilch 3,5 %",
+        brand: "Testhof",
+        per100g: {
+          energyKcal: 64,
+          protein: 3.3,
+          fat: 3.5,
+          saturatedFat: 2.3,
+          carbohydrate: 4.8,
+          sugars: 4.8,
+          fiber: 0,
+          salt: 0.1,
+        },
+        nutrients: {},
+        portions: [],
+      },
+      raw: null,
+      fetchedAt: Date.now(),
+    });
+    const view = app.services.revisions.save({
+      mealId: meal.id,
+      runId: null,
+      title,
+      summary: "Ein Cappuccino.",
+      eatenAt: null,
+      assumptions: ["Große Tasse"],
+      items: [
+        {
+          foodId: milk.id,
+          description: "Vollmilch",
+          grams: 150,
+          provenance: "database",
+          confidence: "high",
+        },
+        {
+          description: "Espresso",
+          grams: 30,
+          provenance: "estimate",
+          confidence: "low",
+          note: "doppelt?",
+          estimatePer100g: { energyKcal: 2, protein: 0.1 },
+        },
+      ],
+      questions: [],
+    });
+    return { meal, view, milk };
+  };
+  const repeat = (mealId: string, body: unknown) =>
+    call<RepeatMealResponse & ApiError>("POST", mealPaths.repeat(mealId), body);
+
+  test("a copy of the current revision: grams scaled, snapshots kept, totals computed, no run", async () => {
+    const { meal: source, view, milk } = await cappuccino();
+    // the food changes later: the copy keeps the numbers the source was saved with
+    app.services.repos.foods.save({
+      source: "off",
+      sourceRef: "4000000000017",
+      data: { ...milk, per100g: { ...milk.per100g, energyKcal: 99 } },
+      raw: null,
+      fetchedAt: Date.now(),
+    });
+    const id = crypto.randomUUID();
+    const eatenAt = Date.now() - 60_000;
+    const res = await repeat(source.id, { id, factor: 1.5, eatenAt, tz: "Europe/Berlin" });
+    expect(res.status).toBe(201);
+    const { meal, revision } = res.body;
+    expect(meal).toMatchObject({
+      id,
+      status: "analysed",
+      eatenAt,
+      eatenAtSource: "user",
+      sourceMealId: source.id,
+      currentRevisionId: revision.revision.id,
+    });
+    expect(revision.revision).toMatchObject({
+      mealId: id,
+      number: 1,
+      kind: "copy",
+      runId: null,
+      sourceRevisionId: view.revision.id,
+      title: "Cappuccino",
+      summary: "Ein Cappuccino.",
+      eatenAt,
+      status: "analysed",
+    });
+    const day = new Intl.DateTimeFormat("en-GB", {
+      weekday: "short",
+      day: "numeric",
+      month: "short",
+      timeZone: "Europe/Berlin",
+    })
+      .format(source.eatenAt)
+      .replace(",", "");
+    expect(revision.revision.assumptions).toEqual([
+      "Große Tasse",
+      `Logged again from Cappuccino (${day}), × 1.5`,
+    ]);
+    expect(revision.questions).toEqual([]);
+    expect(
+      revision.items.map((i) => [
+        i.description,
+        i.grams,
+        i.foodId,
+        i.provenance,
+        i.confidence,
+        i.note,
+        i.per100g.energyKcal,
+      ]),
+    ).toEqual([
+      ["Vollmilch", 225, milk.id, "database", "high", null, 64],
+      ["Espresso", 45, null, "estimate", "low", "doppelt?", 2],
+    ]);
+    // computeTotals over the copied items: 225 g × 64 + 45 g × 2 per 100 g
+    expect(revision.totals.nutrients.energyKcal).toBe(Math.round(2.25 * 64 + 0.45 * 2));
+    expect(view.totals.nutrients.energyKcal).toBe(Math.round(1.5 * 64 + 0.3 * 2));
+
+    // the detail links the source; nothing was captured, nothing ran, nothing was queued
+    const detail = await call<MealDetailResponse>("GET", mealPaths.meal(id));
+    expect(detail.body.source).toEqual({ mealId: source.id, title: "Cappuccino", eatenAt: source.eatenAt });
+    expect(detail.body).toMatchObject({ captures: [], runs: [] });
+    expect(app.services.repos.jobs.list().some((j) => j.dedupeKey === `analyse:${id}`)).toBe(false);
+
+    // the overview and its day count it like any analysed meal
+    const list = await call<MealsResponse>("GET", `${mealPaths.meals}?from=${eatenAt}&to=${eatenAt + 1}`);
+    expect(list.body.meals).toMatchObject([
+      { id, sourceMealId: source.id, captureCount: 0, title: "Cappuccino", status: "analysed" },
+    ]);
+    expect(list.body.days[0]).toMatchObject({ meals: 1, unanalysed: 0 });
+    expect(list.body.days[0]?.totals.nutrients.energyKcal).toBe(revision.totals.nutrients.energyKcal);
+
+    // sent again (a lost response): the stored copy, not a second one
+    const again = await repeat(source.id, { id, factor: 1.5, eatenAt });
+    expect(again.status).toBe(200);
+    expect(again.body.meal.id).toBe(id);
+    expect(app.services.repos.revisions.listForMeal(id)).toHaveLength(1);
+    // an id of a meal that isn't a copy of this one
+    expect((await repeat(source.id, { id: source.id, factor: 1, eatenAt })).status).toBe(409);
+    // a copy of the copy is fine and names the copy
+    const copy2 = await repeat(id, { factor: 0.5, eatenAt });
+    expect(copy2.status).toBe(201);
+    expect(copy2.body.meal.sourceMealId).toBe(id);
+    expect(copy2.body.revision.items.map((i) => i.grams)).toEqual([112.5, 22.5]);
+  });
+
+  test("refused: no finished analysis, a future time, a factor out of range, unknown meals", async () => {
+    const draft = await newMeal();
+    await call("POST", mealPaths.captures(draft.id), { kind: "text", text: "Suppe" });
+    const now = Date.now();
+    expect((await repeat(draft.id, { factor: 1, eatenAt: now })).status).toBe(409);
+    const asking = await newMeal();
+    await call("POST", mealPaths.captures(asking.id), { kind: "text", text: "Curry" });
+    saveRevision(asking.id, 300, ["Wie viel Reis?"]);
+    const prelim = await repeat(asking.id, { factor: 1, eatenAt: now });
+    expect(prelim.status).toBe(409);
+    expect(prelim.body.error).toContain("no finished analysis");
+
+    const { meal } = await cappuccino();
+    expect((await repeat(meal.id, { factor: 1, eatenAt: now + 2 * 3_600_000 })).status).toBe(400);
+    expect((await repeat(meal.id, { factor: 0, eatenAt: now })).status).toBe(400);
+    expect((await repeat(meal.id, { factor: 11, eatenAt: now })).status).toBe(400);
+    expect((await repeat(meal.id, { factor: 1 })).status).toBe(400);
+    expect((await repeat(meal.id, { factor: 1, eatenAt: now, tz: "Mars/Olympus" })).status).toBe(400);
+    expect((await repeat("nope", { factor: 1, eatenAt: now })).status).toBe(404);
+  });
+
+  test("a copy has nothing to analyse until something is added; then it analyses as usual", async () => {
+    const { meal: source } = await cappuccino();
+    const copy = (await repeat(source.id, { factor: 1, eatenAt: Date.now() })).body.meal;
+    expect((await call<ApiError>("POST", mealPaths.analyse(copy.id))).status).toBe(409);
+    await call("POST", mealPaths.captures(copy.id), { kind: "correction", text: "mit Hafermilch" });
+    const queued = await call<AnalyseResponse>("POST", mealPaths.analyse(copy.id));
+    expect(queued.status).toBe(200);
+    expect(queued.body.meal).toMatchObject({ status: "queued", currentRevisionId: copy.currentRevisionId });
+  });
+
+  test("what to log again: analysed meals of the last 30 days, one per title, most often first", async () => {
+    const day = 86_400_000;
+    const now = Date.now();
+    const titles = ["Haferbrei", "Toast", "Alt", "Cappuccino"];
+    await cappuccino("Haferbrei", now - 3 * day);
+    await cappuccino("haferbrei ", now - 2 * day);
+    const latest = (await cappuccino("Haferbrei", now - day)).meal;
+    await cappuccino("Haferbrei", now - 40 * day); // outside the window
+    await cappuccino("Alt", now - 40 * day);
+    await cappuccino("Toast", now - 2 * 3_600_000);
+    const asking = await newMeal({ eatenAt: now - 3_600_000 });
+    await call("POST", mealPaths.captures(asking.id), { kind: "text", text: "Toast?" });
+    app.services.revisions.save({
+      mealId: asking.id,
+      runId: null,
+      title: "Toast",
+      summary: "",
+      eatenAt: null,
+      assumptions: [],
+      items: [],
+      questions: [{ question: "Wie viel?", whyItMatters: "Butter", impactKcal: 100 }],
+    }); // preliminary: not offered, not counted
+
+    const res = await call<RepeatableResponse>("GET", `${mealPaths.repeatable}?limit=20`);
+    expect(res.status).toBe(200);
+    const mine = res.body.meals.filter((m) => titles.includes(m.title));
+    // the cappuccinos of the tests above: three sources and three copies (copies count as logging it)
+    expect(mine.map((m) => [m.title, m.times])).toEqual([
+      ["Cappuccino", 6],
+      ["Haferbrei", 3],
+      ["Toast", 1],
+    ]);
+    expect(mine[1]).toMatchObject({ mealId: latest.id, eatenAt: now - day });
+    expect(mine[1]?.totals.nutrients.energyKcal).toBe(Math.round(1.5 * 64 + 0.3 * 2));
+    expect(
+      (await call<RepeatableResponse>("GET", mealPaths.repeatable)).body.meals.length,
+    ).toBeLessThanOrEqual(5);
+    expect((await call("GET", `${mealPaths.repeatable}?days=0`)).status).toBe(400);
   });
 });
 

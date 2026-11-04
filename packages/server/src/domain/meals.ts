@@ -10,10 +10,15 @@ import {
   type MealDetailResponse,
   type MealItem,
   type MealRevisionsResponse,
+  type MealSource,
   type MealSummary,
   type MealsQuery,
   type MealsResponse,
   type NutrientTotals,
+  type RepeatableQuery,
+  type RepeatableResponse,
+  type RepeatMealBody,
+  type RepeatMealResponse,
   type RetractResponse,
   type TranscribeResponse,
   type UpdateMealBody,
@@ -119,6 +124,119 @@ export class MealService {
       transcripts: this.repos.transcripts.listForMeal(id),
       revision: this.revisionService.current(meal),
       runs: this.repos.runs.listForMeal(id),
+      source: meal.sourceMealId ? this.sourceOf(meal.sourceMealId) : null,
+    };
+  }
+
+  /** The meal another was logged again from, as it is now (its title may have changed since). */
+  private sourceOf(mealId: string): MealSource | null {
+    const m = this.repos.meals.get(mealId);
+    if (!m) return null;
+    const title = m.currentRevisionId ? (this.repos.revisions.get(m.currentRevisionId)?.title ?? null) : null;
+    return { mealId: m.id, title, eatenAt: m.eatenAt };
+  }
+
+  /**
+   * Logs a meal again (#30): a new meal at `eatenAt` (pinned) whose one revision is a copy of the
+   * source's current revision: the same items with their foods and per-100 g snapshots, grams ×
+   * `factor`, provenance, confidence and notes kept, the assumptions plus a line saying where it
+   * came from. No run, no questions, no notification: the meal is `analysed` at once, and its
+   * totals are computed from the copied items like any others. Idempotent with a client `id`.
+   */
+  repeat(
+    sourceId: string,
+    body: RepeatMealBody,
+    now = Date.now(),
+  ): RepeatMealResponse & { created: boolean } {
+    const source = this.meal(sourceId);
+    if (body.id) {
+      const existing = this.repos.meals.get(body.id);
+      if (existing) {
+        if (existing.sourceMealId !== sourceId) {
+          throw new HttpError(409, "id: another meal has this id");
+        }
+        const revision = this.revisionService.current(existing);
+        if (!revision) throw new HttpError(409, "id: another meal has this id");
+        return { meal: existing, revision, created: false };
+      }
+    }
+    const view = this.revisionService.current(source);
+    if (view?.revision.status !== "analysed" || view.items.length === 0) {
+      throw new HttpError(
+        409,
+        "nothing to log again: the meal has no finished analysis",
+        "log a meal again once it is analysed",
+      );
+    }
+    if (body.eatenAt > now + CLOCK_SKEW_MS) {
+      throw new HttpError(400, "eatenAt lies in the future", "check the device clock");
+    }
+    const timeZone = body.tz ?? localTimeZone();
+    try {
+      assertTimeZone(timeZone);
+    } catch {
+      throw new HttpError(400, `tz: unknown time zone ${timeZone}`, "an IANA zone like Europe/Berlin");
+    }
+    const from = view.revision.title;
+    const line = `Logged again from ${from} (${shortDate(source.eatenAt, timeZone)}), × ${body.factor}`;
+
+    const created = this.repos.db.transaction(() => {
+      const meal = this.repos.meals.insert({
+        id: body.id,
+        eatenAt: body.eatenAt,
+        sourceMealId: source.id,
+        now,
+      });
+      const revision = this.repos.revisions.insert({
+        mealId: meal.id,
+        runId: null,
+        kind: "copy",
+        sourceRevisionId: view.revision.id,
+        title: view.revision.title,
+        summary: view.revision.summary,
+        eatenAt: body.eatenAt,
+        assumptions: [...view.revision.assumptions, line],
+        status: "analysed",
+        items: view.items.map((i) => ({
+          foodId: i.foodId,
+          description: i.description,
+          grams: scaleGrams(i.grams, body.factor),
+          provenance: i.provenance,
+          confidence: i.confidence,
+          note: i.note,
+          per100g: i.per100g,
+        })),
+        questions: [],
+        now,
+      });
+      return this.repos.meals.setCurrentRevision(meal.id, revision.id, "analysed", now)!;
+    })();
+    return { meal: created, revision: this.revisionService.current(created)!, created: true };
+  }
+
+  /**
+   * What the Log meal screen offers to log again (#30): analysed meals of the last `days` days
+   * (none from the future), one per title (the latest of them), the most often logged first, then the most recent.
+   */
+  repeatable(q: RepeatableQuery, now = Date.now()): RepeatableResponse {
+    const byTitle = new Map<string, { mealId: string; title: string; eatenAt: number; times: number }>();
+    for (const { meal, title } of this.repos.meals.analysedBetween(
+      now - q.days * 86_400_000,
+      now + CLOCK_SKEW_MS,
+    )) {
+      const key = title.trim().replace(/\s+/g, " ").toLowerCase();
+      const seen = byTitle.get(key);
+      if (seen) seen.times++;
+      else byTitle.set(key, { mealId: meal.id, title, eatenAt: meal.eatenAt, times: 1 });
+    }
+    const top = [...byTitle.values()]
+      .sort((a, b) => b.times - a.times || b.eatenAt - a.eatenAt)
+      .slice(0, q.limit);
+    return {
+      meals: top.flatMap((m) => {
+        const view = this.revisionService.current(this.repos.meals.get(m.mealId)!);
+        return view ? [{ ...m, totals: nutrientTotals(view.totals) }] : [];
+      }),
     };
   }
 
@@ -388,6 +506,15 @@ export const nutrientTotals = ({ grams, items, nutrients }: NutrientTotals): Nut
   items,
   nutrients,
 });
+
+/** Grams × a portion factor, to the hundredth of a gram (never 0: items need grams). */
+const scaleGrams = (grams: number, factor: number) => Math.max(0.01, Math.round(grams * factor * 100) / 100);
+
+/** "Tue 3 Nov" in the zone: the source's day in a copy's assumption line. */
+const shortDate = (ms: number, timeZone: string) =>
+  new Intl.DateTimeFormat("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone })
+    .format(ms)
+    .replace(",", "");
 
 export function checkCapturedAt(capturedAt: number | undefined, now: number): void {
   if (capturedAt !== undefined && capturedAt > now + CLOCK_SKEW_MS) {

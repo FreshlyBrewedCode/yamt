@@ -9,6 +9,10 @@ import {
   type MealRevisionsResponse,
   MealsQuery,
   type MealsResponse,
+  RepeatableQuery,
+  type RepeatableResponse,
+  RepeatMealBody,
+  type RepeatMealResponse,
   type RetractResponse,
   type TranscribeResponse,
   UpdateMealBody,
@@ -31,6 +35,11 @@ export function mealRoutes(s: Services): Hono<IdentityEnv> {
   });
 
   r.get("/meals", (c) => c.json<MealsResponse>(s.meals.list(MealsQuery.parse(c.req.query()))));
+
+  // before /meals/:id, which would take "repeatable" for an id
+  r.get("/meals/repeatable", (c) =>
+    c.json<RepeatableResponse>(s.meals.repeatable(RepeatableQuery.parse(c.req.query()))),
+  );
 
   r.get("/meals/:id", (c) => c.json<MealDetailResponse>(s.meals.detail(c.req.param("id"))));
 
@@ -75,6 +84,11 @@ export function mealRoutes(s: Services): Hono<IdentityEnv> {
   r.post("/captures/:id/transcribe", (c) =>
     c.json<TranscribeResponse>(s.meals.retranscribe(c.req.param("id"))),
   );
+
+  r.post("/meals/:id/repeat", async (c) => {
+    const { created, ...res } = s.meals.repeat(c.req.param("id"), RepeatMealBody.parse(await readJson(c)));
+    return c.json<RepeatMealResponse>(res, created ? 201 : 200);
+  });
 
   r.post("/meals/:id/analyse", (c) => c.json<AnalyseResponse>(s.meals.analyse(c.req.param("id"))));
 
