@@ -77,8 +77,11 @@ export function parseNdjson(text: string): { entries: TraceEntry[]; skipped: num
 }
 
 const MCP_PREFIX = /^mcp__.+?__/;
-/** `mcp__yamt__search_foods` → `search_foods`. */
-export const toolName = (raw: string): string => raw.replace(MCP_PREFIX, "");
+/** OpenCode names MCP tools `<server>_<tool>` (#28): `yamt_get_meal`. */
+const OPENCODE_PREFIX = /^yamt_(?=[a-z])/;
+
+/** `mcp__yamt__search_foods` (Claude Code), `yamt_search_foods` (OpenCode) → `search_foods`. */
+export const toolName = (raw: string): string => raw.replace(MCP_PREFIX, "").replace(OPENCODE_PREFIX, "");
 
 export function parseTrace(text: string): ParsedTrace {
   const { entries, skipped } = parseNdjson(text);
@@ -199,10 +202,17 @@ export function parseTrace(text: string): ParsedTrace {
         items.push({ type: "permission", tool: toolName(name), decision: str(e.decision) ?? "?", t: e.t });
         break;
       }
-      case "config":
+      case "config": {
+        // `what` since #28 (model or effort); older traces name only the option
+        const what = str(e.what) ?? str(e.configId) ?? "option";
+        const value = str(e.value);
         if (str(e.error))
-          items.push({ type: "notice", text: `config ${str(e.configId)}: ${str(e.error)}`, t: e.t });
+          items.push({ type: "notice", text: `${what} ${value ?? ""}: ${str(e.error)}`, t: e.t });
+        else if (str(e.note))
+          items.push({ type: "notice", text: `${what} ${value ?? ""}: ${str(e.note)}`, t: e.t });
+        else if (value) items.push({ type: "notice", text: `${what} set to ${value}`, t: e.t });
         break;
+      }
       case "cancel":
         items.push({ type: "error", text: `cancelled (${str(e.reason) ?? "?"})`, t: e.t });
         break;

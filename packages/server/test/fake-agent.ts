@@ -21,6 +21,13 @@
 // Everything it receives (system prompt, session/new fields, prompt blocks, model, permission
 // outcomes, tool results) goes to `fake-agent.json` in its working directory (the run dir).
 //
+// Config options (#28), like a real harness: `model` (category model: Fake Fast, Fake Smart, Fake
+// Tiny; default fake-fast) and `effort` (category thought_level), whose values depend on the
+// model: fast low/high, smart low/medium/high/max, tiny none at all. A model switch resets the
+// effort to the new model's default (as OpenCode does), so model must be set before effort.
+// Every `session/set_config_option` is recorded in order (`configCalls`), and the model and
+// effort the prompt ran with (`model`, `effort`).
+//
 // Env: FAKE_ACP_IMAGES=1 advertises image prompts, FAKE_ACP_NO_SYSTEM_PROMPT=1 hides the
 // systemPrompt capability (the prompt then carries the skill as a preamble).
 import { writeFileSync } from "node:fs";
@@ -34,19 +41,41 @@ interface Session {
   cwd: string;
   mcpServers: acp.McpServer[];
   model: string;
-  record: Record<string, unknown>;
+  effort: string | null;
+  record: Record<string, unknown> & { configCalls: { configId: string; value: string }[] };
 }
 
 const sessions = new Map<string, Session>();
 const running = new Map<string, AbortController>();
 
 const MODELS = [
-  { value: "fake-fast", name: "Fake Fast" },
-  { value: "fake-smart", name: "Fake Smart" },
+  { value: "fake-fast", name: "Fake Fast", description: "Quick and cheap" },
+  { value: "fake-smart", name: "Fake Smart", description: "Thinks harder" },
+  { value: "fake-tiny", name: "Fake Tiny", description: "No effort setting" },
 ];
-const configOptions = (s: Session): acp.SessionConfigOption[] => [
-  { id: "model", name: "Model", category: "model", type: "select", currentValue: s.model, options: MODELS },
-];
+const EFFORTS: Record<string, { values: string[]; default: string } | undefined> = {
+  "fake-fast": { values: ["low", "high"], default: "low" },
+  "fake-smart": { values: ["low", "medium", "high", "max"], default: "medium" },
+};
+const label = (v: string) => v.charAt(0).toUpperCase() + v.slice(1);
+const configOptions = (s: Session): acp.SessionConfigOption[] => {
+  const effort = EFFORTS[s.model];
+  return [
+    { id: "model", name: "Model", category: "model", type: "select", currentValue: s.model, options: MODELS },
+    ...(effort && s.effort
+      ? [
+          {
+            id: "effort",
+            name: "Effort",
+            category: "thought_level",
+            type: "select" as const,
+            currentValue: s.effort,
+            options: effort.values.map((v) => ({ value: v, name: label(v) })),
+          },
+        ]
+      : []),
+  ];
+};
 
 const save = (s: Session) => writeFileSync(join(s.cwd, "fake-agent.json"), JSON.stringify(s.record, null, 1));
 
@@ -97,10 +126,14 @@ const app = acp
       cwd: params.cwd,
       mcpServers: params.mcpServers,
       model: "fake-fast",
+      effort: EFFORTS["fake-fast"]?.default ?? null,
       record: {
+        configCalls: [],
         cwd: params.cwd,
         systemPrompt,
         systemPromptMode: params.systemPrompt?.mode ?? null,
+        // what the OpenCode adapter hands OpenCode (instructions file, permissions)
+        opencodeConfig: process.env.OPENCODE_CONFIG_CONTENT ?? null,
         meta: params._meta ?? null,
         mcpServers: params.mcpServers.map((m) => ({
           name: m.name,
@@ -116,9 +149,19 @@ const app = acp
   .onRequest("session/set_config_option", ({ params }) => {
     const s = sessions.get(params.sessionId);
     if (!s) throw acp.RequestError.invalidParams({}, "unknown session");
-    if (params.configId !== "model") throw acp.RequestError.invalidParams({}, "unknown option");
-    s.model = String(params.value);
-    s.record.model = s.model;
+    const value = String(params.value);
+    s.record.configCalls.push({ configId: params.configId, value });
+    if (params.configId === "model") {
+      if (!MODELS.some((m) => m.value === value)) throw acp.RequestError.invalidParams({}, "unknown model");
+      s.model = value;
+      s.effort = EFFORTS[value]?.default ?? null;
+    } else if (params.configId === "effort") {
+      if (!EFFORTS[s.model]?.values.includes(value))
+        throw acp.RequestError.invalidParams({}, "unknown effort");
+      s.effort = value;
+    } else {
+      throw acp.RequestError.invalidParams({}, "unknown option");
+    }
     save(s);
     return { configOptions: configOptions(s) };
   })
@@ -132,7 +175,8 @@ const app = acp
     const ac = new AbortController();
     running.set(sessionId, ac);
     const signal = ac.signal;
-    s.record.model ??= s.model;
+    s.record.model = s.model;
+    s.record.effort = s.effort;
     s.record.prompt = params.prompt.map((b) =>
       b.type === "text"
         ? { type: "text", text: b.text }

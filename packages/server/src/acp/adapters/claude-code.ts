@@ -15,7 +15,9 @@ function adapterEntry(): string {
  * Claude Code through @agentclientprotocol/claude-agent-acp, run with node (its shebang), or with
  * Bun when there is no node. Ported from vibe-center (see its spikes/acp-latency/FINDINGS.md):
  * - the skill appended to the Claude Code preset (spec `systemPrompt`, else `_meta.systemPrompt`)
- * - model and Claude Agent SDK options through `_meta.claudeCode.options`
+ * - model and Claude Agent SDK options through `_meta.claudeCode.options` (the model also through
+ *   its `model` config option when listed, like every harness; `_meta` covers ids it doesn't
+ *   list, such as `claude-opus-5-5`, which its list names `opus`)
  * - ENABLE_TOOL_SEARCH=false: otherwise the first use of each MCP tool costs an extra model call
  * - the yamt tools pre-allowed (`allowedTools`), so they don't trigger a permission round trip
  * - prompt suggestions off (they cost tokens after every turn)
@@ -29,7 +31,7 @@ function adapterEntry(): string {
  */
 export const claudeCodeAdapter: HarnessAdapter = {
   kind: "claude-code",
-  modelViaConfigOption: false,
+  modelViaMeta: true,
 
   defaultLaunch: () => ({ command: Bun.which("node") ?? process.execPath, args: [adapterEntry()] }),
 
@@ -64,4 +66,11 @@ export const claudeCodeAdapter: HarnessAdapter = {
   },
 
   needsPromptPreamble: () => false,
+
+  readAuth(method, params) {
+    if (method !== "_auth/status_update") return null;
+    const status = (params as { authStatus?: { kind?: string; label?: string } } | null)?.authStatus;
+    if (!status?.kind) return null;
+    return { loggedIn: status.kind !== "none", label: status.label ?? status.kind };
+  },
 };

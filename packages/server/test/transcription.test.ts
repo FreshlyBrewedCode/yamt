@@ -14,13 +14,12 @@ import { NormaliseError, normalise, normaliseArgs } from "../src/transcription/f
 import { settleTranscript } from "../src/transcription/job.ts";
 import { LocalWhisperBackend, parseSttLine, sttRequest } from "../src/transcription/local.ts";
 import { NIX_FFMPEG_LINK, resolveFfmpeg, ToolMissingError } from "../src/transcription/tools.ts";
-import { fixture, tempDir } from "./helpers.ts";
+import { fakeAgentConfig, fixture, tempDir } from "./helpers.ts";
 
 setDefaultTimeout(30_000);
 
 const FAKE_STT = [process.execPath, join(import.meta.dir, "fake-stt.ts")];
 const FAKE_FFMPEG = join(import.meta.dir, "fake-ffmpeg.ts");
-const FAKE_AGENT = join(import.meta.dir, "fake-agent.ts");
 const MEMO = fixture("memo-de.m4a"); // made up: espeak-ng reading a German lunch, AAC in M4A
 
 async function waitFor<T>(what: string, fn: () => T | null | undefined | false, timeoutMs = 10_000) {
@@ -317,10 +316,7 @@ describe("transcription in the server", () => {
     auth: { kind: "off" },
     worker: { pollMs: 20 },
     analysis: {
-      config: {
-        harness: { kind: "custom", command: process.execPath, args: [FAKE_AGENT], env: {} },
-        model: "fake-smart",
-      },
+      config: fakeAgentConfig(),
       timeouts: { idleMs: 3000, toolIdleMs: 3000, turnMs: 10_000, cancelGraceMs: 300 },
       // far longer than any test waits: an analysis only goes early when a transcript nudges it
       transcriptWaitMs: 60_000,

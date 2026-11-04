@@ -5,7 +5,6 @@ import { AnalysisJob, settleMeal } from "./analysis/job.ts";
 import type { AuthMode } from "./auth/identity.ts";
 import {
   type AnalysisConfig,
-  analysisConfig,
   ensureDataDir,
   type TranscriptionConfig,
   transcriptionConfig,
@@ -47,9 +46,13 @@ export interface ServerOptions {
    * that only need the API never spawn an agent or an STT process; `yamt start` turns it on.
    */
   worker?: boolean | { pollMs?: number };
-  /** The analysis agent; default: `analysisConfig({})` (Claude Code, the default model). */
+  /**
+   * The analysis agent: config.json and env layers (default `analysisConfig({})`: Claude Code, the
+   * default model), under and over the app's Agent setting; seams for discovery.
+   */
   analysis?: {
     config?: AnalysisConfig;
+    agent?: ServicesOptions["agent"];
     timeouts?: Partial<RunTimeouts>;
     transcriptWaitMs?: number;
     skillPath?: string;
@@ -92,6 +95,8 @@ export function createServer(opts: ServerOptions): AppServer {
     fetch: opts.fetch,
     timeZone: opts.timeZone,
     push: opts.push,
+    analysis: opts.analysis?.config,
+    agent: opts.analysis?.agent,
   });
   // one process owns the queue: whatever an earlier one left running was interrupted (a failed
   // attempt), and so were its runs; their meals go back to queued, or failed after the last try
@@ -138,7 +143,6 @@ export function createServer(opts: ServerOptions): AppServer {
     worker = new JobWorker(services.repos.jobs, typeof opts.worker === "object" ? opts.worker : {});
     worker.register(
       new AnalysisJob(services, {
-        config: a.config ?? analysisConfig({}),
         mcpUrl,
         timeouts: a.timeouts,
         transcriptWaitMs: a.transcriptWaitMs,

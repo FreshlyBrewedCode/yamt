@@ -1,7 +1,7 @@
 import type { McpSetup } from "../mcp.ts";
 import type * as acp from "../protocol.ts";
 
-export type HarnessKind = "claude-code" | "custom";
+export type HarnessKind = "claude-code" | "opencode" | "custom";
 
 /** Everything an adapter needs to shape one session. */
 export interface SessionFieldsContext {
@@ -24,6 +24,12 @@ export interface SessionFieldsContext {
   isolated: boolean;
 }
 
+/** Login state as a harness reports it. */
+export interface AuthReport {
+  loggedIn: boolean;
+  label: string;
+}
+
 /** Extra fields merged into session/new. */
 export interface SessionFields {
   /** Replaces the MCP servers from the McpSetup (e.g. with secrets moved out of the config). */
@@ -43,8 +49,20 @@ export interface HarnessAdapter {
   defaultLaunch(): { command: string; args: string[] } | null;
   /** Harness-specific session fields: system prompt, model, tool permissions. */
   sessionFields(ctx: SessionFieldsContext): SessionFields;
-  /** True if the model is chosen with `session/set_config_option` after session/new. */
-  readonly modelViaConfigOption: boolean;
+  /**
+   * True if the adapter also passes the model in session/new (Claude Code: `_meta`), so a model
+   * the harness's model option doesn't list still applies, and that option's current value can
+   * be stale (the answered model comes from the harness's usage reports instead). Otherwise the
+   * model applies only through `session/set_config_option`, and only if listed.
+   */
+  readonly modelViaMeta: boolean;
+  /**
+   * Env (and files in the run dir) the process needs, before it is spawned: e.g. OpenCode's
+   * instructions file, since it has no ACP system prompt.
+   */
+  prepareProcess?(ctx: { cwd: string; systemPrompt: string }): Promise<Record<string, string>>;
+  /** Interpret a harness extension notification about its login (claude-agent-acp's `_auth/status_update`). */
+  readAuth?(method: string, params: unknown): AuthReport | null;
   /**
    * True if the harness can't take a system prompt at session setup, so it goes as a preamble
    * block before the prompt.

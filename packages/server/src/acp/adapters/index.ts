@@ -1,12 +1,20 @@
 import type { LaunchSpec } from "../process.ts";
 import { claudeCodeAdapter } from "./claude-code.ts";
 import { customAdapter } from "./custom.ts";
+import { opencodeAdapter } from "./opencode.ts";
 import type { HarnessAdapter, HarnessKind } from "./types.ts";
 
-export type { HarnessAdapter, HarnessKind, SessionFields, SessionFieldsContext } from "./types.ts";
+export type {
+  AuthReport,
+  HarnessAdapter,
+  HarnessKind,
+  SessionFields,
+  SessionFieldsContext,
+} from "./types.ts";
 
 export const adapters: Record<HarnessKind, HarnessAdapter> = {
   "claude-code": claudeCodeAdapter,
+  opencode: opencodeAdapter,
   custom: customAdapter,
 };
 

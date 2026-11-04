@@ -183,7 +183,7 @@ describe("harness adapters", () => {
     expect(customAdapter.sessionFields(ctx()).systemPrompt?.mode).toBe("append");
     expect(customAdapter.needsPromptPreamble(ctx())).toBe(false);
     expect(customAdapter.needsPromptPreamble(ctx({ capabilities: {} }))).toBe(true);
-    expect(customAdapter.modelViaConfigOption).toBe(true);
+    expect(customAdapter.modelViaMeta).toBe(false);
   });
 
   test("permission options are picked by kind, once before always", () => {

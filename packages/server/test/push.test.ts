@@ -20,7 +20,7 @@ import { mealNotification } from "../src/push/messages.ts";
 import { PushSender } from "../src/push/sender.ts";
 import { loadVapidKeys } from "../src/push/vapid.ts";
 import { createServer } from "../src/server.ts";
-import { tempDir } from "./helpers.ts";
+import { fakeAgentConfig, tempDir } from "./helpers.ts";
 
 setDefaultTimeout(30_000);
 
@@ -300,11 +300,7 @@ describe("mealNotification", () => {
 
 // ---- the API and the analysis job ------------------------------------------------------------------
 
-const FAKE_AGENT = join(import.meta.dir, "fake-agent.ts");
-const fakeHarness: AnalysisConfig = {
-  harness: { kind: "custom", command: process.execPath, args: [FAKE_AGENT], env: {} },
-  model: "fake-smart",
-};
+const fakeHarness: AnalysisConfig = fakeAgentConfig();
 const service = pushService();
 const app = createServer({
   dataDir: join(tempDir(), "data"),

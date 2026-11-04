@@ -1,6 +1,7 @@
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { type AnalysisConfig, analysisConfig } from "../src/config.ts";
 
 /** A fresh temp dir; tests never touch the real ~/.yamt. */
 export const tempDir = (prefix = "yamt-test-"): string => mkdtempSync(join(tmpdir(), prefix));
@@ -15,3 +16,13 @@ export const tempDir = (prefix = "yamt-test-"): string => mkdtempSync(join(tmpdi
  */
 export const fixture = (name: string): Uint8Array<ArrayBuffer> =>
   Uint8Array.from(readFileSync(join(import.meta.dir, "fixtures", name)));
+
+/** The scripted ACP agent (test/fake-agent.ts); tests never start a real harness. */
+export const FAKE_AGENT = join(import.meta.dir, "fake-agent.ts");
+
+/** The fake agent as config.json's custom harness, with `model` (default fake-smart) and `effort`. */
+export const fakeAgentConfig = (
+  env: Record<string, string> = {},
+  layer: { model?: string; effort?: string } = { model: "fake-smart" },
+): AnalysisConfig =>
+  analysisConfig({ harness: "custom", command: process.execPath, args: [FAKE_AGENT], env, ...layer }, {});

@@ -10,7 +10,7 @@ import { specSystemPrompt } from "./types.ts";
 export const customAdapter: HarnessAdapter = {
   kind: "custom",
   defaultLaunch: () => null,
-  modelViaConfigOption: true,
+  modelViaMeta: false,
   sessionFields(ctx) {
     const systemPrompt = specSystemPrompt(ctx);
     return systemPrompt ? { systemPrompt } : {};

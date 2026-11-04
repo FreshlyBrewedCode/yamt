@@ -5,7 +5,7 @@ import { adapters } from "../acp/adapters/index.ts";
 import { httpMcpServer } from "../acp/mcp.ts";
 import type * as acp from "../acp/protocol.ts";
 import { type PromptRunResult, type RunTimeouts, runPrompt } from "../acp/run.ts";
-import { type AnalysisConfig, dataPaths } from "../config.ts";
+import { dataPaths } from "../config.ts";
 import { newId } from "../db/index.ts";
 import type { Repos } from "../db/repos/index.ts";
 import { dedupeKeys, type Job } from "../db/repos/jobs.ts";
@@ -19,7 +19,6 @@ import { loadSkill, SKILL_PATH } from "./skill.ts";
 import { TraceWriter } from "./trace.ts";
 
 export interface AnalysisOptions {
-  config: AnalysisConfig;
   /** `http://127.0.0.1:<port>/mcp`: the harness connects over loopback. */
   mcpUrl: string;
   timeouts?: Partial<RunTimeouts>;
@@ -92,7 +91,8 @@ export class AnalysisJob implements JobHandler<"analyse"> {
       };
     }
 
-    const { harness, model } = this.o.config;
+    // read per run: a change in the app's Agent setting applies to the next run
+    const { harness, model, effort } = this.s.agent.forRun();
     const runId = newId();
     const dir = join(dataPaths(this.s.dataDir).runs, runId);
     await mkdir(dir, { recursive: true, mode: 0o700 });
@@ -104,6 +104,7 @@ export class AnalysisJob implements JobHandler<"analyse"> {
       attempt: job.attempts,
       harness: harness.kind,
       model,
+      effort,
       startedAt,
     });
     repos.meals.setStatus(mealId, "analysing", startedAt);
@@ -116,6 +117,7 @@ export class AnalysisJob implements JobHandler<"analyse"> {
       attempt: job.attempts,
       harness: harness.kind,
       model,
+      effort,
       skill: { path: skill.path, sha256: skill.sha256, text: skill.text },
     });
 
@@ -133,6 +135,7 @@ export class AnalysisJob implements JobHandler<"analyse"> {
         cwd: dir,
         systemPrompt: skill.text,
         model,
+        effort,
         mcp: {
           servers: [httpMcpServer(MCP_SERVER_NAME, this.o.mcpUrl, token)],
           allowedTools: [`mcp__${MCP_SERVER_NAME}`, ...WEB_TOOLS],
@@ -170,6 +173,8 @@ export class AnalysisJob implements JobHandler<"analyse"> {
         context: null,
         agentInfo: null,
         model,
+        effort: null,
+        configNotes: [],
       };
     } finally {
       this.s.mcpTokens.revokeRun(runId);
@@ -182,6 +187,8 @@ export class AnalysisJob implements JobHandler<"analyse"> {
       status: runStatus,
       endedAt,
       model: result.model,
+      effort: result.effort,
+      configNote: sentence(result.configNotes),
       stopReason: result.stopReason,
       usage: result.usage || result.context ? { turn: result.usage, context: result.context } : null,
       error,
@@ -192,6 +199,9 @@ export class AnalysisJob implements JobHandler<"analyse"> {
       stopReason: result.stopReason,
       revisionId: saved[0]?.id ?? null,
       error,
+      model: result.model,
+      effort: result.effort,
+      configNotes: result.configNotes,
       usage: result.usage,
       context: result.context,
       durationMs: endedAt - startedAt,
@@ -209,6 +219,12 @@ export class AnalysisJob implements JobHandler<"analyse"> {
       );
     }
   }
+}
+
+/** "Effort max isn't offered for haiku, so …; model …." from the run's notes, null without any. */
+function sentence(notes: string[]): string | null {
+  const s = notes.join("; ");
+  return s ? `${s.charAt(0).toUpperCase()}${s.slice(1)}.` : null;
 }
 
 /** The run's verdict: saved a revision → success, whatever happened after. */
