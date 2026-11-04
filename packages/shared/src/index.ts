@@ -1,5 +1,6 @@
 export * from "./api.ts";
 export * from "./api-agent.ts";
+export * from "./api-calendar.ts";
 export * from "./api-goals.ts";
 export * from "./api-meals.ts";
 export * from "./api-nutrition.ts";
@@ -9,3 +10,4 @@ export * from "./api-runs.ts";
 export * from "./api-share.ts";
 export * from "./api-weight.ts";
 export * from "./goal-calc.ts";
+export * from "./plan.ts";

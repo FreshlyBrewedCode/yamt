@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { addDays } from "./api-goals.ts";
 
 /** Weight entries (#6). Unlike captures they are plain user data: they can be deleted. */
 
@@ -44,3 +45,27 @@ export interface WeightResponse {
 export interface WeightEntryResponse {
   entry: WeightEntry;
 }
+
+/**
+ * The weight trend's core (#12, the calendar's too): weighings already grouped by calendar day →
+ * one point per day with entries, oldest first: the day's mean (several weighings count as one)
+ * and the moving average, the mean of the daily means of the `windowDays` days up to and
+ * including it. Rounded to hundredths.
+ */
+export function dailyWeights(
+  byDay: ReadonlyMap<string, readonly number[]>,
+  windowDays = 7,
+): { date: string; kg: number; avg: number }[] {
+  const daily = [...byDay]
+    .filter(([, kgs]) => kgs.length > 0)
+    .map(([date, kgs]) => ({ date, kg: mean(kgs) }))
+    .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+  return daily.map(({ date, kg }) => {
+    const first = addDays(date, -(windowDays - 1));
+    const inWindow = daily.filter((d) => d.date >= first && d.date <= date).map((d) => d.kg);
+    return { date, kg: round2(kg), avg: round2(mean(inWindow)) };
+  });
+}
+
+const mean = (xs: readonly number[]) => xs.reduce((a, b) => a + b, 0) / xs.length;
+const round2 = (n: number) => Math.round(n * 100) / 100;

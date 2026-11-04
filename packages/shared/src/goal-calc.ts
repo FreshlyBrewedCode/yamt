@@ -129,7 +129,8 @@ const CUT_MAX_KCAL = 1000;
 const BULK_MAX_SHARE = 0.15;
 /** Maintenance above 2.4 × resting is hard to sustain (FAO/WHO/UNU). */
 const MAX_PAL = 2.4;
-const KCAL_FLOOR: Record<Sex, number> = { female: 1200, male: 1500 };
+/** The lowest kcal target yamt sets (and, in the calendar, "too low" below it for targets set by hand). */
+export const KCAL_FLOOR: Record<Sex, number> = { female: 1200, male: 1500 };
 
 export const PROTEIN_PRESETS = ["basic", "moderate", "high", "very_high"] as const;
 export type ProteinPreset = (typeof PROTEIN_PRESETS)[number];
