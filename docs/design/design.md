@@ -155,7 +155,25 @@ Units sit next to numbers smaller and muted (`28g`, `72 /160`).
 - **Meal detail's bottom slab** (#11): lime "Answer & re-analyse" / "Correct & re-analyse" /
   "Re-analyse" / "Retry analysis" once there is something for the next analysis; disabled with
   the hint "Answer or skip the question above." while questions are open; tint "Add to this
-  meal" otherwise.
+  meal" otherwise. On an analysed meal (#30) that calm slab is two tint halves like the day
+  view's steps: **Add more** (+) and **Log again** (the repeat arrows), 18 px captions, lime while
+  pressed. Neither wants the user, so neither is lime.
+- **Log again sheet** (#30): the top sheet ("Log again" over the meal's title), a micro-label with
+  the source's time and kcal and one muted line ("Its items are copied, scaled to the portion: no
+  new analysis."), "Portion" preset chips 0.5× / 1× / 1.5× / 2× with Half / Same / More / Double
+  (1× chosen), "Now · change time" (a `datetime-local` once tapped, like the weight entry) with
+  the portion's kcal on the right (display 28 px, "≈" unless 1×), then the lime **Log again**. A
+  failure is an orange line above the button ("No connection: logging a meal again needs yamt.
+  Try again once you're online."): it is one request, never queued.
+- **Again?** (#30, Log meal): before anything is captured, under the empty captures, a strip
+  "Again?" (meta "last 30 days") and up to five plain 68 px rows: the title (display 19 px), a
+  muted line ("4× in 30 days · Today, 08:15"), the kcal right (display 26 px over a "kcal"
+  label). A tap opens the Log again sheet. Nothing shows when there is nothing to offer.
+- **Logged again from** (#30, meal detail header): under the title and summary, a muted 14 px
+  line with the repeat icon, "Logged again from **Cappuccino** · Yesterday, 08:15" (the title
+  bold, underlined, in the foreground), linking to the source. The overview's row for such a
+  meal says "Logged again" where others list their captures; its trace row's meta is "no
+  analysis", opening to a tint line that says why.
 - **`Disclosure`**: a collapsible 56 px row on the plain page (uppercase title, muted meta,
   chevron), stacked with dividers; its content mounts only when open, on tint. For what is
   secondary and heavy: captures, revision history, the trace.

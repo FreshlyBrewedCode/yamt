@@ -4,7 +4,7 @@ What exists today (the scaffold, #3, the meal backend, #6, the nutrition layer w
 MCP server, #7, the analysis job over ACP, #8, the transcription worker, #9, the PWA with
 meal capture, #10, the meal detail with questions and corrections, #11, the day view with
 goals and weight, #12, Web Push notifications, #13, the guided goal setup, #24, paste and
-the iOS Shortcut share target, #26, and the agent settings, #28), how it
+the iOS Shortcut share target, #26, the agent settings, #28, and logging a meal again, #30), how it
 fits together, and what comes after wave 1. Why it is built this way:
 [ADR 0001](adr/0001-wave-1-architecture.md). Commands and conventions: [AGENTS.md](../AGENTS.md).
 The design: [design/design.md](design/design.md).
@@ -47,7 +47,8 @@ yamt start   (one Bun process, binds 127.0.0.1:7890 only)
 ```
 packages/shared/src/      contracts shared by server and web (no runtime deps but zod)
   api.ts                  API paths, request schemas, response types (health, me)
-  api-meals.ts            meals, captures, transcripts, media: `mealPaths`, enums, bodies, types
+  api-meals.ts            meals, captures, transcripts, media: `mealPaths`, enums, bodies, types; logging a
+                          meal again (#30): `RepeatMealBody`, `REPEAT_FACTORS`, `RepeatableQuery`
   api-weight.ts           weight entries: `weightPaths`, body, types
   api-goals.ts            goals and days: `goalPaths`, bodies, `DayResponse`, `goalInForce`, `goalPeriods`,
                           `dayProgress`, `addDays`, `goalLabel` (shared by server and web)
@@ -91,7 +92,7 @@ packages/server/src/
                           (media, ranges), middleware.ts (sameOrigin, errors, readJson),
                           origin.ts (originAllowed, publicOrigin), static.ts
   domain/                 errors.ts (HttpError), meals.ts (MealService: captures, retract, analyse,
-                          eaten-at, revision history),
+                          eaten-at, revision history, repeat and repeatable: logging a meal again),
                           revisions.ts (RevisionService: save, views, day summary), foods.ts
                           (FoodService: search, barcode, create), goals.ts (GoalService: goals and the
                           day view), share.ts (ShareService: the share target), time.ts (days and local
@@ -146,7 +147,8 @@ packages/web/src/
                           add-strip (photo/note/link/audio/paste, the paste sheet), capture-list (+ useCaptureRows),
                           meal-detail (the detail screen), items-list (provenance, confidence,
                           source), revision-history, trace-view, agent-settings (Settings → Agent, the
-                          model picker); ui/ (shadcn: button, input, sheet)
+                          model picker), log-again (the Log again sheet, the "Again?" list); ui/ (shadcn:
+                          button, input, sheet)
   index.css               Tailwind 4 + the D · Slab theme tokens (light/dark)
 e2e/                      Playwright specs (phone viewport)
 docs/adr/                 architecture decision records
@@ -239,6 +241,8 @@ new value never needs a table rebuild.
   `created`/`capture` follow the captures: adding or retracting one recomputes it from
   `COALESCE(taken_at, captured_at, created_at)` (EXIF beats the client clock beats arrival).
   `current_revision_id` points at the latest revision (null before the first analysis).
+  `source_meal_id` (#30): the meal this one was logged again from (null for a meal of its own);
+  such a meal starts with no captures, its time pinned (`user`) to the one chosen.
 - **captures**: the raw material (`audio`, `image`, `text`, `link`, `file`, `correction`,
   `answer`). Media kinds carry `mime_type`, `media_path` (relative to the data dir), `byte_size`,
   `sha256`, `file_name`, and for HEIC/HEIF photos `jpeg_path`/`jpeg_status` (`ok` | `missing`);
@@ -302,8 +306,9 @@ new value never needs a table rebuild.
   the source payload (`raw`) and `fetched_at`. `foods_fts` (FTS5, `unicode61 remove_diacritics
   2`, keyed by `food_id`, kept by triggers) indexes name and brand.
 - **meal_revisions**: one per analysis, numbered per meal: `run_id` (the #8 run; null when an
-  interactive session saved it), `title`, `summary`, `eaten_at`, `assumptions` (JSON list),
-  `status` (`analysed` | `needs_input`). **meal_items**: `food_id` (null for a pure estimate),
+  interactive session saved it, or for a copy), `kind` (`analysis`, or `copy` for a meal logged
+  again, #30, with `source_revision_id`: the source meal's revision it copied), `title`,
+  `summary`, `eaten_at`, `assumptions` (JSON list), `status` (`analysed` | `needs_input`). **meal_items**: `food_id` (null for a pure estimate),
   `description` as captured, `grams`, `provenance` (`weighed`, `label`, `database`, `estimate`),
   `confidence` (`high`, `medium`, `low`), `note`, and the core set per 100 g **copied from the food
   when saved** (or the estimate), so refreshing a food never changes an old revision's totals.
@@ -453,7 +458,7 @@ sessions' only way to read and write yamt data.
   ids and refusals come back as tool errors (`isError`) the model can act on.
 - **Tools** (`mcp/tools.ts`): `get_meal` (live captures with transcripts, link URLs, local media
   paths, answers; `afterCurrentRevision` flags; the current revision with items, questions and
-  answers, totals; earlier revisions), `search_foods`, `get_food`, `lookup_barcode`,
+  answers, totals; earlier revisions; each revision's `kind`, `copy` for a meal logged again), `search_foods`, `get_food`, `lookup_barcode`,
   `create_food`, `fetch_recipe`, `save_meal_revision` (returns the computed totals and the meal's
   status), `get_day_summary` (the meals of a date in the server's zone or a given one, with their
   totals and the day's, the goal in force with `progress` per target — eaten, target, left, over
@@ -734,6 +739,11 @@ All behind the identity check, writes also same-origin; paths in `mealPaths` / `
   a lost response without duplicates.
 - `POST /api/captures/:id/retract` (idempotent), `POST /api/meals/:id/analyse` (409 without a live
   capture; on a `failed` meal, the retry), `GET /api/media/:captureId[/jpeg]`.
+- **Log again** (#30, see [Log again](#log-again-30)): `POST /api/meals/:id/repeat` (`{id?, factor,
+  eatenAt, tz?}`; factor 0.1–10, the app offers 0.5 / 1 / 1.5 / 2; 201 with `{meal, revision}`,
+  200 for a known id, 409 without a finished analysis), `GET /api/meals/repeatable?days&limit`.
+  `GET /api/meals/:id` carries `source` (`{mealId, title, eatenAt}` of the meal it was logged
+  again from, as that is now) and every meal `sourceMealId`.
 - `POST /api/captures/:id/transcribe`: re-run an audio capture's transcript (400 for other kinds,
   409 when retracted); answers the `pending` transcript and the job id.
 - `GET /api/meals/:id` also lists the meal's analysis runs (`runs`, newest first); a revision's
@@ -863,6 +873,36 @@ and links from other apps come in two ways, both straight into a meal (no inbox)
   Shortcut shows the plain-text answer in a notification (opening a URL from a Shortcut would land
   in Safari, not the home-screen app).
 
+## Log again (#30)
+
+The same cappuccino again, without another analysis: an analysed meal is copied into a new meal
+at a new time. "The model reads, code computes" holds trivially: no model is involved at all.
+
+- **The copy** (`MealService.repeat`, `POST /api/meals/:id/repeat`): the source's *current*
+  revision must be a finished one (`analysed`, with items; a preliminary `needs_input` one or none
+  is a 409). In one transaction: a new meal (`source_meal_id`, `eatenAt` pinned as `user`, since
+  it has no captures that could set it) and its revision 1, `kind` `copy`, no run, no questions:
+  the same items with their foods, descriptions, provenance, confidence, notes and per-100 g
+  snapshots (the numbers the source was saved with, whatever the food holds now), grams × the
+  factor (to 0.01 g), title and summary as they were, the assumptions plus "Logged again from
+  <title> (<Tue 3 Nov>, the phone's zone), × 1.5". The meal is `analysed` at once; its totals come
+  from `computeTotals` over the copied items like any others, and the overview, the day view and
+  the day totals count it like any analysed meal. Copying a copy is fine (it names the copy).
+- **Idempotent** with a client `id` like other creates: the same id again answers the stored copy
+  (200); an id of a meal that isn't a copy of this source is a 409. The web app makes the id when
+  the sheet opens.
+- **No queue, no notification:** it is one request, not a capture, so it doesn't go through the
+  upload queue; offline it fails and the sheet says so. Nothing runs, so `notifyMeal` is never
+  called for it.
+- **Later changes work as usual:** a copy has no captures, so analyse refuses it (409) until the
+  user adds one (a capture or a correction); then re-analysis starts from the copy like from any
+  revision. `get_meal` marks the revision `kind: "copy"`, and the log-meal skill says what that
+  means (everything captured is new; the copy is the starting point).
+- **What to log again** (`MealService.repeatable`, `GET /api/meals/repeatable?days=30&limit=5`):
+  meals eaten in the last `days` days (none from the future) whose current revision is analysed,
+  grouped by title (case and spacing aside), each title's latest meal with its totals and how often
+  the title was logged (copies count), the most often first, then the most recent.
+
 ## Notifications (#13)
 
 Web Push to the home-screen app: the phone hears when an analysis is done, needs input or
@@ -887,7 +927,7 @@ failed, and a tap opens the meal.
   only the final state of the latest run is notified. The message is built from the meal at that
   moment and sent to every subscription whose toggle for the event is on. An analysis that failed
   for good while no server ran (`releaseInterrupted` at the start) is notified too. Interactive
-  sessions saving a revision over MCP don't notify.
+  sessions saving a revision over MCP don't notify, nor does logging a meal again (#30).
 - **What it says** (`push/messages.ts`; personal data only inside the encrypted payload):
   analysed "<title> · <kcal> kcal" with "Protein · Fat · Carbs" (from the revision view, i.e.
   `computeTotals`); needs input "<title> · needs input" with the first question ("(+1 more)");
@@ -945,14 +985,15 @@ square corners. The tokens are in `index.css` (shadcn's names mapped onto the pa
 `ink`, `lime`, `lime-soft`, `tint`, `orange` and their foregrounds); the primitives (`Band`,
 `Strip`, `Label`, `SlabButton`, `BottomSlab`, `StatusLabel`) in `components/slab.tsx`.
 
-### Screens (#10, #11, #12, #13, #24)
+### Screens (#10, #11, #12, #13, #24, #30)
 
 - **Overview** (`/`): today's totals as the ink slab against the goal in force today (kcal,
   protein, fat, carbs, fibre with what's left; "N meals not counted yet" for those without an
   analysis); a tap opens today's day view. Then the last 14 days by day (a tint strip with the
   day's kcal from `days` against that day's own goal, "2,505 / 2,400 kcal", opening the day), each
   meal a row with time, status, title ("Untitled meal" until analysed), what it holds and its
-  kcal ("— not counted" without an analysis); needs input is a lime row, failed an orange one.
+  kcal ("— not counted" without an analysis); needs input is a lime row, failed an orange one. A
+  meal logged again (#30) has no captures and says "Logged again" instead.
   Meals that exist only on this phone so far (started offline) are listed from the upload queue;
   drafts with nothing captured are left out. "Earlier days" opens the day before the 14, from
   where the day view steps back as far as needed. The header's scale opens goals and weight.
@@ -1006,7 +1047,9 @@ square corners. The tokens are in `index.css` (shadcn's names mapped onto the pa
   (thumbnail or playback, transcript snippet, upload state, retract with an inline confirm), and
   the bottom slab: Analyse / Analyse queued / Analysing… / Retry analysis / Re-analyse (only with
   something new since the current revision). Analysing returns to the overview (to the detail
-  when adding).
+  when adding). On Log meal, before anything is captured, **Again?** (#30) lists recent meals to
+  log again (`useRepeatable`): title, "4× in 30 days", when, kcal; a tap opens the Log again sheet,
+  which returns to the overview once the copy is made.
 - **Meal detail** (#11, `components/meal-detail.tsx`), top to bottom: the header (back, status
   chip, the eaten-at time, which opens an editor that PATCHes it, title, summary); a failed
   analysis's error (orange); the numbers as the ink slab ("preliminary" with open questions,
@@ -1025,7 +1068,14 @@ square corners. The tokens are in `index.css` (shadcn's names mapped onto the pa
   bottom slab is the one action: **Answer & re-analyse** / **Correct & re-analyse** /
   **Re-analyse** / **Retry analysis** (lime) once there is something for the next analysis
   (typed answers and the correction are sent through the upload queue first, then the analyse
-  entry), disabled with a hint while questions are open, **Add to this meal** (tint) otherwise.
+  entry), disabled with a hint while questions are open, **Add to this meal** (tint) otherwise; on
+  an analysed meal (#30) that calm slab is two tint halves, **Add more** and **Log again**. Log
+  again opens a top sheet (`components/log-again.tsx`): portion chips 0.5× / 1× / 1.5× / 2× (1×
+  chosen), "Now · change time", the kcal for that portion ("≈" unless 1×: the server computes the
+  real one), and lime **Log again**, which posts the copy (`useRepeatMeal`, a UUIDv7 per opening)
+  and opens it; a failure is an orange line in the sheet ("No connection: …"). A meal logged
+  again shows "Logged again from <title> · <when>" under its title, linking to the source; its
+  trace row says "no analysis" and why, and its revision in the history "logged again".
   The screen stays put while it re-analyses and polls like the overview.
 - **Trace viewer** (`components/trace-view.tsx`, `lib/trace.ts`): fetched only when its row is
   opened (polled while the run runs). The run's facts (the model that answered and, when it
@@ -1114,5 +1164,5 @@ with the MCP server (#7), the ACP runtime with the analysis job and worker loop 
 transcription worker (#9), the PWA with meal capture (#10), the meal detail with questions and
 corrections (#11), the day view with goals and weight (#12) and Web Push notifications (#13)
 are in: wave 1 is complete. On top of it, the guided goal setup (#24), paste with the iOS
-Shortcut share target (#26) and the agent settings (#28). Spike #4 (speech-to-text) decided ADR 0002; spike #5's chosen design is
+Shortcut share target (#26), the agent settings (#28) and logging a meal again (#30). Spike #4 (speech-to-text) decided ADR 0002; spike #5's chosen design is
 [design/design.md](design/design.md). See the epic for the decisions each one builds on.
