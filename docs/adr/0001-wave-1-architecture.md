@@ -47,7 +47,8 @@ new ones.
 5. **Raw first: captures are immutable, analyses are revisioned.** Audio, photos, text and links
    are stored as captured and never edited or deleted (a mistaken one is retracted with a soft
    flag). Corrections and answers to the agent's questions are captures too. Adding to an analysed
-   meal queues a new analysis revision; earlier revisions are kept.
+   meal queues a new analysis revision; earlier revisions are kept. A whole meal is removed the
+   same way: a soft `removed_at` on the meal, undone by a restore; nothing of it is deleted.
 6. **The agent runs over ACP, not `claude -p`.** The runtime is a port of vibe-center's ACP layer
    (`@agentclientprotocol/sdk`, `claude-agent-acp`), with harness and model configurable. ACP
    gives a typed, streaming event stream (stored in full as the run's trace), image content

@@ -319,6 +319,25 @@ Units sit next to numbers smaller and muted (`28g`, `72 /160`).
 - **Capture row**: 48 px tile (photo thumbnail, or an icon on tint), bold title, micro-label
   status, a 44 px remove action. Removing asks once inline ("Remove?") because captures can't be
   un-retracted.
+- **Remove meal row**: the last row of a meal's screen (the detail, after the collapsed rows; the
+  capture view, after its captures), a 56 px plain row like a `Disclosure`'s: "Remove meal" in the
+  same uppercase and a muted trash icon on the right. A tap asks once inline, like a capture: the
+  row says "Remove meal?" with one muted 14 px line on what happens ("Its analysis stops." when one
+  is queued or running, "It leaves its day and the totals; you can undo it.") and the 44 px
+  foreground "Remove" block where the icon was; it falls back after 4 s. While captures of the meal
+  are still in the upload queue the row is muted and says to wait for them or discard them. A
+  failure is an orange line under the row. Never lime or orange as a fill: removing doesn't want
+  the user, and nothing failed.
+- **Undo strip** (day view, right after a removal): a tint band at the top of the content, above
+  the totals slab: "Meal removed" as a micro-label over the meal's title (bold), and a 44 px
+  foreground **Undo** block (with the undo arrow) on the right. Quiet, not a toast: it is part of
+  the page and pushes the slab down, and goes by itself after 12 s, on Undo or when the user moves
+  on.
+- **Removed meal** (a removed meal opened directly): the header with a tint "Removed" chip where
+  the status sits, the time and the title muted; a tint band ("Removed Today, 22:29", that it
+  isn't counted anywhere and nothing was deleted); the numbers as the ink slab labelled "kcal · not
+  counted" with "■ Removed: in no day's totals" in its note, the items; **Restore meal** as a tint
+  bottom slab (available, but it doesn't want the user).
 - **Icon buttons** in headers: 48 px tint squares (close ✕, back ←, the calendar on the overview
   and the day view (#33), the scale for goals and weight on the overview and the day view, the
   cog for settings on the overview; the calendar's ‹ › month steps). Back goes back in the app's history, or to the

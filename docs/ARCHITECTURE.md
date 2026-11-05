@@ -4,8 +4,8 @@ What exists today (the scaffold, #3, the meal backend, #6, the nutrition layer w
 MCP server, #7, the analysis job over ACP, #8, the transcription worker, #9, the PWA with
 meal capture, #10, the meal detail with questions and corrections, #11, the day view with
 goals and weight, #12, Web Push notifications, #13, the guided goal setup, #24, paste and
-the iOS Shortcut share target, #26, the agent settings, #28, logging a meal again, #30, and the
-calendar, #33), how it
+the iOS Shortcut share target, #26, the agent settings, #28, logging a meal again, #30, the
+calendar, #33, and removing a meal), how it
 fits together, and what comes after wave 1. Why it is built this way:
 [ADR 0001](adr/0001-wave-1-architecture.md). Commands and conventions: [AGENTS.md](../AGENTS.md).
 The design: [design/design.md](design/design.md).
@@ -98,7 +98,8 @@ packages/server/src/
                           (media, ranges), middleware.ts (sameOrigin, errors, readJson),
                           origin.ts (originAllowed, publicOrigin), static.ts
   domain/                 errors.ts (HttpError), meals.ts (MealService: captures, retract, analyse,
-                          eaten-at, revision history, repeat and repeatable: logging a meal again),
+                          eaten-at, revision history, repeat and repeatable: logging a meal again,
+                          remove and restore),
                           revisions.ts (RevisionService: save, views, day summary), foods.ts
                           (FoodService: search, barcode, create), goals.ts (GoalService: goals and the
                           day view), calendar.ts (CalendarService: a month, #33), share.ts (ShareService: the share target), time.ts (days and local
@@ -155,7 +156,8 @@ packages/web/src/
                           meal-detail (the detail screen), items-list (provenance, confidence,
                           source), revision-history, trace-view, agent-settings (Settings → Agent, the
                           model picker), log-again (the Log again sheet, the "Again?" list), calendar (the
-                          month grid, the selected day, the summary, the legend, #33); ui/ (shadcn:
+                          month grid, the selected day, the summary, the legend, #33), remove-meal (the
+                          Remove meal row, the day's undo strip, a removed meal); ui/ (shadcn:
                           button, input, sheet)
   index.css               Tailwind 4 + the D · Slab theme tokens (light/dark)
 e2e/                      Playwright specs (phone viewport); calendar-seed.ts makes four made-up months for the
@@ -252,6 +254,10 @@ new value never needs a table rebuild.
   `current_revision_id` points at the latest revision (null before the first analysis).
   `source_meal_id` (#30): the meal this one was logged again from (null for a meal of its own);
   such a meal starts with no captures, its time pinned (`user`) to the one chosen.
+  `removed_at`: when the user removed the meal (soft, see [Removing a meal](#removing-a-meal));
+  null for a meal in use. Every query over meals but the lookup by id leaves removed ones out, and
+  triggers (`captures_not_on_removed_meal`, `revisions_not_on_removed_meal`) refuse new captures
+  and revisions on one. Meals are never deleted.
 - **captures**: the raw material (`audio`, `image`, `text`, `link`, `file`, `correction`,
   `answer`). Media kinds carry `mime_type`, `media_path` (relative to the data dir), `byte_size`,
   `sha256`, `file_name`, and for HEIC/HEIF photos `jpeg_path`/`jpeg_status` (`ok` | `missing`);
@@ -362,7 +368,9 @@ transcribe). Types and payloads: `transcribe {captureId}`, `analyse {mealId}`.
   host asleep). A requeue that meets a newer queued job with the same key is `cancelled` instead.
 - `expedite(key)` makes a queued job that waits for later due now (a finished transcript wakes
   the analysis waiting for it).
-- `cancelQueued(key)` (a retracted audio capture cancels its transcription) and
+- `cancelQueued(key)` (a retracted audio capture cancels its transcription; a removed meal its
+  analysis and transcriptions), `cancelRunning(id)` (running → cancelled: a run stopped because
+  its meal was removed), `isOpen(key)` (queued or running) and
   `releaseInterrupted()`, which the server runs at startup: jobs a previous process left
   `running` count a failed attempt and are queued again.
 - Producers: an audio capture enqueues `transcribe` (with its pending transcript, in the same
@@ -377,10 +385,13 @@ job type with their own concurrency (`analyse`: 1; `transcribe`: 1 batch, runnin
 Every poll (1 s, or at once after `wake()`) fills each type's lane with `claim({types: [type]})`;
 a batch handler (`runBatch`, `batchSize`) claims up to that many due jobs per slot and returns one
 outcome each. The queue already keeps two jobs with the same key (one meal) from running together. A handler
-returns `done`, `failed` (`retryable: false` fails at once) or `reschedule` (no attempt spent);
-throwing counts as a retryable failure. `settled(job)` then sees the job as it ended up (`done`,
-`queued`, `failed`, `cancelled`). `stop()` (server shutdown) aborts the running handlers' signal
-and waits for them; the analysis requeues itself without spending an attempt.
+returns `done`, `failed` (`retryable: false` fails at once), `reschedule` (no attempt spent) or
+`cancelled` (no longer wanted); throwing counts as a retryable failure. `settled(job)` then sees
+the job as it ended up (`done`, `queued`, `failed`, `cancelled`). `stop()` (server shutdown) aborts
+the running handlers' signal and waits for them; the analysis requeues itself without spending an
+attempt. `cancel(key, reason)` aborts the one running job with that dedupe key (and the batch it is
+in) with a `JobCancelled` as the signal's reason; the services reach it as `services.queue.cancel`
+(removing a meal).
 
 ## Nutrition layer (#7)
 
@@ -467,10 +478,12 @@ sessions' only way to read and write yamt data.
   ids and refusals come back as tool errors (`isError`) the model can act on.
 - **Tools** (`mcp/tools.ts`): `get_meal` (live captures with transcripts, link URLs, local media
   paths, answers; `afterCurrentRevision` flags; the current revision with items, questions and
-  answers, totals; earlier revisions; each revision's `kind`, `copy` for a meal logged again), `search_foods`, `get_food`, `lookup_barcode`,
-  `create_food`, `fetch_recipe`, `save_meal_revision` (returns the computed totals and the meal's
-  status), `get_day_summary` (the meals of a date in the server's zone or a given one, with their
-  totals and the day's, the goal in force with `progress` per target — eaten, target, left, over
+  answers, totals; earlier revisions; each revision's `kind`, `copy` for a meal logged again;
+  `removedAt` for a removed meal, which can be read but not saved to), `search_foods` (its history
+  counts no removed meal), `get_food`, `lookup_barcode`, `create_food`, `fetch_recipe`,
+  `save_meal_revision` (returns the computed totals and the meal's status; 409 for a removed meal),
+  `get_day_summary` (the meals of a date in the server's zone or a given one, removed ones left
+  out, with their totals and the day's, the goal in force with `progress` per target — eaten, target, left, over
   — and the weight measured that day), `get_goals` (every goal newest first with the last day it
   held, `until`, and whether a same-day goal replaced it; and the one in force on a date). Times
   go out as ISO 8601 with the zone's offset.
@@ -513,7 +526,9 @@ saved revision. ADR 0001 (6–8) has the why.
    retries after 30 s and 2 min (3 attempts); the meal is `queued` in between and `failed` with
    `analysis_error` after the last one (unless another analysis is queued). A server stop cancels
    the run (`cancelled`) and requeues the job without spending an attempt; after a crash the next
-   start fails the interrupted run and requeues or fails its meal (`settleMeal`).
+   start fails the interrupted run and requeues or fails its meal (`settleMeal`). Removing the
+   meal stops the run (see [Removing a meal](#removing-a-meal)): the run and the job end
+   `cancelled`, without a revision and without a retry, and `settleMeal` leaves a removed meal alone.
 5. **Retry:** `POST /api/meals/:id/analyse` on a `failed` meal queues a fresh job (fresh attempts)
    and clears the error.
 
@@ -755,6 +770,12 @@ All behind the identity check, writes also same-origin; paths in `mealPaths` / `
   again from, as that is now) and every meal `sourceMealId`.
 - `POST /api/captures/:id/transcribe`: re-run an audio capture's transcript (400 for other kinds,
   409 when retracted); answers the `pending` transcript and the job id.
+- **Removing a meal** (see [Removing a meal](#removing-a-meal)): `POST /api/meals/:id/remove`
+  (`RemoveMealResponse`: the meal with `removedAt`, `stoppedAnalysis`) and `POST
+  /api/meals/:id/restore` (`RestoreMealResponse`), no body, both idempotent. Every meal carries
+  `removedAt`. Every other write to a removed meal (captures, analyse, PATCH, repeat from it,
+  retract, transcribe) is a 409 "the meal was removed"; a capture retried with an id that is
+  already stored is still answered (200). Reads (`GET /api/meals/:id`, its revisions, media) work.
 - `GET /api/meals/:id` also lists the meal's analysis runs (`runs`, newest first); a revision's
   `runId` names its run. `GET /api/runs/:id` (the run), `GET /api/runs/:id/trace` (NDJSON).
 - `GET /api/meals/:id/revisions` (#11): every revision, newest first, each a full view (items,
@@ -914,6 +935,39 @@ at a new time. "The model reads, code computes" holds trivially: no model is inv
   grouped by title (case and spacing aside), each title's latest meal with its totals and how often
   the title was logged (copies count), the most often first, then the most recent.
 
+## Removing a meal
+
+A meal logged by mistake (a duplicate, a test, the wrong day) can be removed and the removal
+undone. Raw first (ADR 0001, 5) holds: nothing is deleted.
+
+- **Soft:** `meals.removed_at`. Captures, media files, revisions, items, questions, runs and traces
+  stay as they are. A removed meal is left out of the meal list and the overview's day totals, the
+  day view and its totals, the calendar's month, Log again (as a candidate, and as a source: 409),
+  the share target's current draft, `get_day_summary` and the food search's personal history (the
+  repositories' queries carry `removed_at IS NULL`; `MealRepo.get` alone sees every meal).
+- **Writes** to a removed meal but a restore are refused (409) in `MealService` and in
+  `RevisionService.save` (so `save_meal_revision` too); two insert triggers back that up in SQL.
+- **A queued analysis** is cancelled (`cancelQueued`), and so are the queued transcriptions of
+  its voice captures. **A running one** loses its run token at once (`revokeRun`: a late
+  `save_meal_revision` gets a 401) and its job is aborted (`JobWorker.cancel`); the harness gets
+  `session/cancel`, the run ends `cancelled` ("cancelled: the meal was removed"), the job
+  `cancelled`, without a retry. A job that comes up later for a removed meal (one an earlier
+  process left) is cancelled before it starts a run. A running transcription batch finishes.
+- **Where the meal stands:** a meal that was `queued` or `analysing` is put back where that
+  analysis started: its current revision's status (`analysed`, `needs_input`), or `draft` without
+  one. Any other status (including `failed` with its error) is kept.
+- **Restore** clears `removed_at`; the meal is back exactly as it stood while removed (status,
+  current revision, time). Transcriptions the removal cancelled are queued again (their
+  transcripts were left `pending`); a stopped analysis is not: the user presses Analyse (a run costs
+  money and quota). Restoring a draft bumps `updated_at`, so it can be the share target again.
+- **No notification** for a removed meal (`notifyMeal`).
+- **The phone:** the meal's screen (detail or capture view) ends with a "Remove meal" row with an
+  inline confirm; it posts the removal (one request, not through the upload queue: offline it
+  says so) and opens the meal's day with an undo strip (`?removed=<id>`). Captures of the meal still
+  in the upload queue hold the removal (they would be refused, 409, and turn orange): the row says
+  to wait for them or discard them. A queued analyse request of the meal is dropped from the queue
+  with the removal. A removed meal opened directly shows what it was with Restore.
+
 ## Calendar (#33)
 
 A month at a glance: which days were tracked and how each day and week sat against the goal in
@@ -981,6 +1035,8 @@ failed, and a tap opens the meal.
   failed "<title> · failed" (or "Meal at HH:MM" in the server's zone without a revision) with the
   error's first clause and "Tap to retry.". The payload (`PushPayload`) carries `url`
   (`/meals/<id>`, `#questions` for needs input) and `tag` (`meal-<id>`: one notification per meal).
+  A removed meal is never notified: `notifyMeal` sends nothing for it, and a run stopped by the
+  removal ends `cancelled`, which isn't notified anyway.
 - **Service worker** (`sw.js`): `push` always shows a notification (iOS revokes subscriptions
   that receive pushes silently) with the tag (`renotify`), and tells open windows to refresh;
   `notificationclick` focuses an open window of the app and posts it the URL, which the router
@@ -1052,7 +1108,9 @@ square corners. The tokens are in `index.css` (shadcn's names mapped onto the pa
   goal row (since when, its note; to the goals screen), the meals (the server's plus the upload
   queue's for that day), the weight entries of the day; the bottom slab steps to the previous and
   next day (replacing the history entry; not past today); the header's calendar opens the day's
-  month with the day selected. Its query key sits under `meals`, so
+  month with the day selected. Right after a meal of the day was removed (`?removed=<id>`), a tint
+  strip at the top says "Meal removed" with its title and **Undo** (a restore); it goes after 12 s,
+  on Undo and with any navigation. Its query key sits under `meals`, so
   everything that refreshes the meals refreshes it, and it polls while a meal is in motion. A
   malformed date redirects to today.
 - **Calendar** (#33, `/calendar?month=YYYY-MM&day=YYYY-MM-DD`, `useMonth` → `GET /api/months/:month?tz`,
@@ -1108,7 +1166,13 @@ square corners. The tokens are in `index.css` (shadcn's names mapped onto the pa
   something new since the current revision). Analysing returns to the overview (to the detail
   when adding). On Log meal, before anything is captured, **Again?** (#30) lists recent meals to
   log again (`useRepeatable`): title, "4× in 30 days", when, kcal; a tap opens the Log again sheet,
-  which returns to the overview once the copy is made.
+  which returns to the overview once the copy is made. Once the server has the meal, the capture
+  view ends with the same **Remove meal** row as the detail (not when adding to an analysed meal:
+  the detail has it).
+- **Removed meal** (`/meals/:id` of a removed meal, `components/remove-meal.tsx`): a "Removed" chip,
+  the time and the title muted, a tint band saying when it was removed and that it counts nowhere
+  and nothing was deleted, its numbers (the ink slab, "kcal · not counted") and items, and a tint
+  bottom slab **Restore meal**, after which the screen is the meal's usual one.
 - **Meal detail** (#11, `components/meal-detail.tsx`), top to bottom: the header (back, status
   chip, the eaten-at time, which opens an editor that PATCHes it, title, summary); a failed
   analysis's error (orange); the numbers as the ink slab ("preliminary" with open questions,
@@ -1123,7 +1187,9 @@ square corners. The tokens are in `index.css` (shadcn's names mapped onto the pa
   then collapsed rows: captures (with retract, playback, re-transcribe of a failed transcript, and
   the way to the capture view), revisions (`GET …/revisions` when opened: kcal and the change per
   revision, what arrived before it, each opening to its items, assumptions, questions with answers
-  and the trace of its run) and the trace of the current revision's run (or the latest run). The
+  and the trace of its run) and the trace of the current revision's run (or the latest run); last
+  **Remove meal** (see [Removing a meal](#removing-a-meal)): a tap asks inline ("Remove meal?",
+  what it does, a Remove button; it falls back after 4 s), the removal opens the meal's day. The
   bottom slab is the one action: **Answer & re-analyse** / **Correct & re-analyse** /
   **Re-analyse** / **Retry analysis** (lime) once there is something for the next analysis
   (typed answers and the correction are sent through the upload queue first, then the analyse
@@ -1196,6 +1262,9 @@ the API:
    left. Without IndexedDB (rare) it falls back to memory and says so in the console.
 
 The screens merge the queue's entries (`useMealOutbox`) with the server's captures by id.
+Removing a meal waits until none of its captures is left in the queue (see [Removing a
+meal](#removing-a-meal)); an upload that reaches a meal removed meanwhile (from another device) is
+refused with 409 and shows as refused, with Retry and Discard.
 
 ### PWA
 
