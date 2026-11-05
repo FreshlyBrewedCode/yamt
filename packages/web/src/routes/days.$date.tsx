@@ -2,8 +2,9 @@ import { createFileRoute, Link, redirect, useNavigate } from "@tanstack/react-ro
 import { addDays, goalLabel, LocalDate } from "@yamt/shared";
 import { cn } from "cn";
 import { ArrowRight, CalendarDays, ChevronLeft, ChevronRight, Scale, Square } from "lucide-react";
-import { useMemo } from "react";
+import { useCallback, useMemo } from "react";
 import { groupByDay, MealRow } from "@/components/meal-row";
+import { RemovedStrip } from "@/components/remove-meal";
 import { BackButton, Band, BottomSlab, iconButtonClass, Label, Strip } from "@/components/slab";
 import { TotalsSlab } from "@/components/totals-slab";
 import {
@@ -20,7 +21,14 @@ import {
 import { useOutbox } from "@/lib/outbox";
 import { useDay } from "@/lib/queries";
 
+interface DaySearch {
+  /** A meal of the day was just removed: the strip offers Undo. */
+  removed?: string;
+}
+
 export const Route = createFileRoute("/days/$date")({
+  validateSearch: (s: Record<string, unknown>): DaySearch =>
+    typeof s.removed === "string" && /^[0-9a-f-]{36}$/i.test(s.removed) ? { removed: s.removed } : {},
   // a date that isn't one goes to today
   beforeLoad: ({ params }) => {
     if (!LocalDate.safeParse(params.date).success) {
@@ -33,10 +41,12 @@ export const Route = createFileRoute("/days/$date")({
 /**
  * One calendar day: its totals against the goal in force that day (the ink slab, with what's
  * left or over per target and the meals not counted yet), the goal line (to the goals screen),
- * the day's meals and its weight. The bottom slab steps to the day before or after.
+ * the day's meals and its weight. The bottom slab steps to the day before or after. Right after
+ * a meal of the day was removed, a strip at the top offers Undo.
  */
 function DayView() {
   const { date } = Route.useParams();
+  const { removed } = Route.useSearch();
   const navigate = useNavigate();
   const now = Date.now();
   const today = localDate(now);
@@ -55,6 +65,10 @@ function DayView() {
   const goal = data?.goal ?? null;
   const step = (n: number) =>
     navigate({ to: "/days/$date", params: { date: addDays(date, n) }, replace: true });
+  const dropRemoved = useCallback(
+    () => void navigate({ to: "/days/$date", params: { date }, search: {}, replace: true }),
+    [navigate, date],
+  );
 
   return (
     <>
@@ -83,6 +97,7 @@ function DayView() {
       </header>
 
       <main className="flex-1">
+        {removed && <RemovedStrip key={removed} mealId={removed} onDone={dropRemoved} />}
         <TotalsSlab
           totals={data?.totals ?? null}
           label={isToday ? "kcal today" : "kcal eaten"}

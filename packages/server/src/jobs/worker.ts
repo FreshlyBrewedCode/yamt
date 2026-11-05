@@ -10,10 +10,18 @@ export type JobOutcome =
   /** → queued again after the backoff while attempts remain, else failed; `retryable: false` fails at once */
   | { status: "failed"; error: string; retryable?: boolean }
   /** → queued at `runAfter` without spending an attempt (waiting for something) */
-  | { status: "reschedule"; runAfter: number; reason: string };
+  | { status: "reschedule"; runAfter: number; reason: string }
+  /** → cancelled: the work is no longer wanted (`JobWorker.cancel`, or the handler found so) */
+  | { status: "cancelled"; reason: string };
+
+/** The abort reason of a job cancelled through `JobWorker.cancel` (not a server stop). */
+export class JobCancelled extends Error {}
 
 export interface JobContext {
-  /** Aborted when the worker stops (server shutdown): wrap up and return `reschedule`. */
+  /**
+   * Aborted when the worker stops (server shutdown: wrap up and return `reschedule`) or when the
+   * job is cancelled (`JobWorker.cancel`: its `reason` is a `JobCancelled`; return `cancelled`).
+   */
   signal: AbortSignal;
 }
 
@@ -31,7 +39,8 @@ export interface JobHandler<T extends JobType> {
   batchSize?: number;
   /**
    * After the queue transition, with the job as it now is: `done`, `queued` (retry or
-   * reschedule), `failed` (final) or `cancelled` (a newer job with its key took over).
+   * reschedule), `failed` (final) or `cancelled` (a newer job with its key took over, or the
+   * outcome was `cancelled`).
    */
   settled?(job: JobOf<T>, outcome: JobOutcome): void;
 }
@@ -46,7 +55,7 @@ interface Lane {
   // biome-ignore lint/suspicious/noExplicitAny: handlers of every job type share the lanes map
   handler: JobHandler<any>;
   /** One entry per running job or batch, keyed by its first job's id. */
-  running: Map<string, { jobs: number; done: Promise<void> }>;
+  running: Map<string, { jobs: Job[]; done: Promise<void>; cancel: AbortController }>;
 }
 
 /**
@@ -55,8 +64,9 @@ interface Lane {
  * alongside). Every poll fills each lane up to its limit with `claim({types: [type]})` (a batch
  * handler claims up to `batchSize` jobs per slot); the queue itself keeps two jobs with the same
  * dedupe key from running at once. A handler's outcome becomes `complete`,
- * `fail` (with the queue's backoff) or `reschedule`; a handler that throws counts as a retryable
- * failure. `stop()` aborts what runs and waits for it.
+ * `fail` (with the queue's backoff), `reschedule` or `cancelRunning`; a handler that throws
+ * counts as a retryable failure. `cancel(key)` aborts one running job; `stop()` aborts what runs
+ * and waits for it.
  */
 export class JobWorker {
   private readonly lanes = new Map<JobType, Lane>();
@@ -96,8 +106,25 @@ export class JobWorker {
   /** Jobs running now, by type (every job of a batch counts). */
   runningCount(type: JobType): number {
     let n = 0;
-    for (const r of this.lanes.get(type)?.running.values() ?? []) n += r.jobs;
+    for (const r of this.lanes.get(type)?.running.values() ?? []) n += r.jobs.length;
     return n;
+  }
+
+  /**
+   * Aborts the running job with this dedupe key (and the batch it is in), with a `JobCancelled`
+   * as the signal's reason; the handler wraps up and reports. Returns whether one was running.
+   * Queued jobs are the queue's business (`JobRepo.cancelQueued`).
+   */
+  cancel(dedupeKey: string, reason: string): boolean {
+    let found = false;
+    for (const lane of this.lanes.values()) {
+      for (const r of lane.running.values()) {
+        if (!r.jobs.some((j) => j.dedupeKey === dedupeKey)) continue;
+        if (!r.cancel.signal.aborted) r.cancel.abort(new JobCancelled(reason));
+        found = true;
+      }
+    }
+    return found;
   }
 
   /** Stop polling, abort running jobs and wait until their handlers have returned. */
@@ -132,18 +159,19 @@ export class JobWorker {
         }
         if (batch.length === 0) break;
         const id = batch[0]!.id;
-        const done = this.execute(lane, batch).finally(() => {
+        const cancel = new AbortController();
+        const done = this.execute(lane, batch, cancel.signal).finally(() => {
           lane.running.delete(id);
           // a slot is free: the next job need not wait for the tick
           if (!this.stopped) this.wake();
         });
-        lane.running.set(id, { jobs: batch.length, done });
+        lane.running.set(id, { jobs: batch, done, cancel });
       }
     }
   }
 
-  private async execute(lane: Lane, batch: Job[]): Promise<void> {
-    const ctx = { signal: this.abort.signal };
+  private async execute(lane: Lane, batch: Job[], cancelled: AbortSignal): Promise<void> {
+    const ctx = { signal: AbortSignal.any([this.abort.signal, cancelled]) };
     let outcomes: JobOutcome[];
     try {
       outcomes = lane.handler.runBatch
@@ -167,7 +195,9 @@ export class JobWorker {
           ? this.jobs.complete(job.id, now)
           : outcome.status === "failed"
             ? this.jobs.fail(job.id, outcome.error, { retryable: outcome.retryable, now })
-            : this.jobs.reschedule(job.id, outcome.runAfter, outcome.reason, now);
+            : outcome.status === "cancelled"
+              ? this.jobs.cancelRunning(job.id, outcome.reason, now)
+              : this.jobs.reschedule(job.id, outcome.runAfter, outcome.reason, now);
       if (after) lane.handler.settled?.(after, outcome);
     } catch (e) {
       console.error(`job ${job.type} ${job.id}: recording the outcome failed`, e);

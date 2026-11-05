@@ -15,10 +15,12 @@ import {
   type MealsQuery,
   type MealsResponse,
   type NutrientTotals,
+  type RemoveMealResponse,
   type RepeatableQuery,
   type RepeatableResponse,
   type RepeatMealBody,
   type RepeatMealResponse,
+  type RestoreMealResponse,
   type RetractResponse,
   type TranscribeResponse,
   type UpdateMealBody,
@@ -39,6 +41,12 @@ import { assertTimeZone, localDate, localTimeZone } from "./time.ts";
 /** How far a client clock may run ahead before its `capturedAt` (or an `eatenAt`) is refused. */
 const CLOCK_SKEW_MS = 60 * 60_000;
 
+/** Why the jobs of a removed meal were cancelled. */
+export const MEAL_REMOVED = "the meal was removed";
+
+/** The refusal of every write to a removed meal but a restore. */
+export const mealRemoved = () => new HttpError(409, MEAL_REMOVED, "restore it first");
+
 export interface MediaFile {
   /** Absolute. */
   path: string;
@@ -51,7 +59,8 @@ export interface MediaFile {
 /**
  * Meals and their captures: the rules the routes (and later the agent's tools) go through.
  * Captures are only ever added or retracted. An audio capture gets a pending transcript and a
- * `transcribe` job; analysing a meal queues it and enqueues one `analyse` job.
+ * `transcribe` job; analysing a meal queues it and enqueues one `analyse` job. A meal is removed
+ * softly (`remove`, `restore`): a removed meal takes no writes (409).
  */
 export class MealService {
   constructor(
@@ -62,6 +71,11 @@ export class MealService {
     private readonly toJpeg: (heic: Uint8Array) => Promise<Uint8Array> = heicToJpeg,
     /** Called after a job was enqueued, so the worker picks it up without waiting for its tick. */
     private readonly jobsChanged: () => void = () => {},
+    /**
+     * Stops the meal's running analysis, if there is one (its run token revoked, its job aborted);
+     * returns whether one ran. The server wires it to the worker; without one nothing runs.
+     */
+    private readonly stopAnalysis: (mealId: string) => boolean = () => false,
   ) {}
 
   /**
@@ -160,6 +174,7 @@ export class MealService {
         return { meal: existing, revision, created: false };
       }
     }
+    if (source.removedAt !== null) throw mealRemoved();
     const view = this.revisionService.current(source);
     if (view?.revision.status !== "analysed" || view.items.length === 0) {
       throw new HttpError(
@@ -255,7 +270,7 @@ export class MealService {
    * alone from now on); `null` unpins it, and it follows the captures again.
    */
   update(mealId: string, body: UpdateMealBody, now = Date.now()): Meal {
-    this.meal(mealId);
+    this.live(mealId);
     if (body.eatenAt === null) return this.repos.meals.unpinEatenAt(mealId, now)!;
     if (body.eatenAt > now + CLOCK_SKEW_MS) {
       throw new HttpError(400, "eatenAt lies in the future", "check the device clock");
@@ -271,6 +286,7 @@ export class MealService {
     const meal = this.meal(mealId);
     const existing = this.existing(mealId, body.id);
     if (existing) return existing;
+    if (meal.removedAt !== null) throw mealRemoved();
     checkCapturedAt(body.capturedAt, now);
     const questionId = this.questionOf(meal, body.kind === "answer" ? body.questionId : undefined);
     return this.record({
@@ -299,6 +315,7 @@ export class MealService {
     const meal = this.meal(mealId);
     const existing = this.existing(mealId, fields.id);
     if (existing) return existing;
+    if (meal.removedAt !== null) throw mealRemoved();
     checkCapturedAt(fields.capturedAt, now);
     if (fields.questionId !== undefined && fields.kind !== "answer") {
       throw new HttpError(400, "questionId: only an answer answers a question");
@@ -365,6 +382,7 @@ export class MealService {
   retract(captureId: string, now = Date.now()): RetractResponse {
     const existing = this.repos.captures.get(captureId);
     if (!existing) throw new HttpError(404, "capture not found");
+    this.live(existing.mealId);
     return this.repos.db.transaction(() => {
       const capture = this.repos.captures.retract(captureId, now)!;
       if (isVoice(capture)) {
@@ -387,6 +405,7 @@ export class MealService {
     if (!capture) throw new HttpError(404, "capture not found");
     if (!isVoice(capture)) throw new HttpError(400, "only voice captures have a transcript");
     if (capture.retractedAt !== null) throw new HttpError(409, "the capture was retracted");
+    this.live(capture.mealId);
     const res = this.repos.db.transaction(() => {
       const transcript = this.repos.transcripts.upsertPending(captureId, now);
       const { job } = this.repos.jobs.enqueue(
@@ -406,7 +425,7 @@ export class MealService {
    * retry: a fresh job with fresh attempts, and the error is cleared.
    */
   analyse(mealId: string, now = Date.now()): AnalyseResponse {
-    this.meal(mealId);
+    this.live(mealId);
     if (this.repos.captures.countLive(mealId) === 0) {
       throw new HttpError(409, "nothing to analyse yet", "add a capture first");
     }
@@ -421,6 +440,60 @@ export class MealService {
     })();
     this.jobsChanged();
     return result;
+  }
+
+  /**
+   * Soft removal; idempotent (a removed meal is answered as it is). The meal leaves every list,
+   * day, month, total, history and share target; nothing of it is deleted. A queued analysis is
+   * cancelled and a running one stopped (it can't save any more: its token is revoked, and saving
+   * onto a removed meal is refused), and so are the queued transcriptions of its voice captures.
+   * A meal whose analysis was stopped stands where that analysis started from: its current
+   * revision's status, or `draft` without one; a restore brings it back like that.
+   */
+  remove(mealId: string, now = Date.now()): RemoveMealResponse {
+    const before = this.meal(mealId);
+    if (before.removedAt !== null) return { meal: before, stoppedAnalysis: false };
+    const busy = before.status === "queued" || before.status === "analysing";
+    const { meal, cancelled } = this.repos.db.transaction(() => {
+      const cancelled = this.repos.jobs.cancelQueued(dedupeKeys.analyse(mealId), MEAL_REMOVED, now);
+      for (const c of this.repos.captures.listForMeal(mealId)) {
+        if (isVoice(c)) this.repos.jobs.cancelQueued(dedupeKeys.transcribe(c.id), MEAL_REMOVED, now);
+      }
+      const current = before.currentRevisionId ? this.repos.revisions.get(before.currentRevisionId) : null;
+      const status = busy ? (current?.status ?? "draft") : before.status;
+      return { meal: this.repos.meals.remove(mealId, status, now)!, cancelled };
+    })();
+    const stopped = this.stopAnalysis(mealId);
+    return { meal, stoppedAnalysis: cancelled > 0 || stopped };
+  }
+
+  /**
+   * Undoes a removal; idempotent. The meal is back as it was removed (status, revision, time).
+   * Voice captures whose transcription the removal cancelled are queued again; a stopped
+   * analysis is not (the user presses Analyse: a run costs money).
+   */
+  restore(mealId: string, now = Date.now()): RestoreMealResponse {
+    const before = this.meal(mealId);
+    if (before.removedAt === null) return { meal: before };
+    const { meal, queued } = this.repos.db.transaction(() => {
+      const meal = this.repos.meals.restore(mealId, now)!;
+      const pending = new Set(
+        this.repos.transcripts
+          .listForMeal(mealId)
+          .filter((t) => t.status === "pending")
+          .map((t) => t.captureId),
+      );
+      let queued = 0;
+      for (const c of this.repos.captures.listForMeal(mealId)) {
+        const key = dedupeKeys.transcribe(c.id);
+        if (c.retractedAt !== null || !pending.has(c.id) || this.repos.jobs.isOpen(key)) continue;
+        this.repos.jobs.enqueue("transcribe", { captureId: c.id }, { dedupeKey: key, now });
+        queued++;
+      }
+      return { meal, queued };
+    })();
+    if (queued > 0) this.jobsChanged();
+    return { meal };
   }
 
   /** The stored file of a media capture: the original, or the JPEG derivative of a HEIC photo. */
@@ -476,6 +549,13 @@ export class MealService {
   private meal(id: string): Meal {
     const meal = this.repos.meals.get(id);
     if (!meal) throw new HttpError(404, "meal not found");
+    return meal;
+  }
+
+  /** A meal that may be written to: it exists and wasn't removed (409 otherwise). */
+  private live(id: string): Meal {
+    const meal = this.meal(id);
+    if (meal.removedAt !== null) throw mealRemoved();
     return meal;
   }
 

@@ -152,9 +152,9 @@ export class FoodRepo {
   }
 
   /**
-   * Personal history: foods used in any revision whose name or brand matches every word of the
-   * query (prefix match, umlauts folded), best FTS match first, then the most used. Falls back to
-   * any word matching when all of them together find nothing.
+   * Personal history: foods used in any revision of a meal that wasn't removed, whose name or
+   * brand matches every word of the query (prefix match, umlauts folded), best FTS match first,
+   * then the most used. Falls back to any word matching when all of them together find nothing.
    */
   searchHistory(query: string, limit: number): HistoryHit[] {
     const words = ftsWords(query);
@@ -167,7 +167,8 @@ export class FoodRepo {
            JOIN foods f ON f.id = fts.food_id
            JOIN (SELECT i.food_id, count(DISTINCT r.meal_id) AS meals, max(r.created_at) AS last_used_at
                  FROM meal_items i JOIN meal_revisions r ON r.id = i.revision_id
-                 WHERE i.food_id IS NOT NULL GROUP BY i.food_id) h ON h.food_id = f.id
+                 JOIN meals m ON m.id = r.meal_id
+                 WHERE i.food_id IS NOT NULL AND m.removed_at IS NULL GROUP BY i.food_id) h ON h.food_id = f.id
            WHERE foods_fts MATCH ?
            ORDER BY fts.rank, h.meals DESC, h.last_used_at DESC
            LIMIT ?`,

@@ -81,6 +81,8 @@ export class RevisionService {
     const now = this.now();
     const meal = this.repos.meals.get(input.mealId);
     if (!meal) throw new HttpError(404, `no meal with id ${input.mealId}`);
+    // a run that was mid-flight when the meal was removed (or a session that read it before)
+    if (meal.removedAt !== null) throw new HttpError(409, "the meal was removed", "nothing is saved to it");
     if (input.items.length === 0 && input.questions.length === 0) {
       throw new HttpError(400, "items: a revision needs items, or a question when nothing can be identified");
     }

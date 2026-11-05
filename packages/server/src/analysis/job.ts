@@ -1,4 +1,4 @@
-import { mkdir } from "node:fs/promises";
+import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { isVoice, type RunStatus } from "@yamt/shared";
 import { adapters } from "../acp/adapters/index.ts";
@@ -9,7 +9,14 @@ import { dataPaths } from "../config.ts";
 import { newId } from "../db/index.ts";
 import type { Repos } from "../db/repos/index.ts";
 import { dedupeKeys, type Job } from "../db/repos/jobs.ts";
-import type { JobContext, JobHandler, JobOf, JobOutcome } from "../jobs/worker.ts";
+import { MEAL_REMOVED } from "../domain/meals.ts";
+import {
+  JobCancelled,
+  type JobContext,
+  type JobHandler,
+  type JobOf,
+  type JobOutcome,
+} from "../jobs/worker.ts";
 import { MCP_SERVER_NAME } from "../mcp/endpoint.ts";
 import { notifyMeal } from "../push/messages.ts";
 import type { Services } from "../services.ts";
@@ -45,6 +52,10 @@ const BUILT_IN_TOOLS = ["Read", ...WEB_TOOLS];
  *    the meal's status. Otherwise the attempt fails with the reason and the queue retries with
  *    backoff; after the last attempt the meal is `failed` with the error.
  *
+ * A removed meal is never analysed: the job is cancelled before the run starts, and a run that
+ * is going when the meal is removed is stopped (`JobWorker.cancel`) and ends `cancelled`, without
+ * a revision (saving onto a removed meal is refused) and without touching the meal's status.
+ *
  * One at a time (concurrency 1); the queue never runs two jobs of the same meal at once.
  */
 export class AnalysisJob implements JobHandler<"analyse"> {
@@ -64,6 +75,7 @@ export class AnalysisJob implements JobHandler<"analyse"> {
     const { mealId } = job.payload;
     const meal = repos.meals.get(mealId);
     if (!meal) return { status: "failed", error: `meal ${mealId} not found`, retryable: false };
+    if (meal.removedAt !== null) return { status: "cancelled", reason: MEAL_REMOVED };
     if (signal.aborted) return { status: "reschedule", runAfter: this.now(), reason: "server stopped" };
 
     const captures = repos.captures.listForMeal(mealId).filter((c) => c.retractedAt === null);
@@ -96,6 +108,11 @@ export class AnalysisJob implements JobHandler<"analyse"> {
     const runId = newId();
     const dir = join(dataPaths(this.s.dataDir).runs, runId);
     await mkdir(dir, { recursive: true, mode: 0o700 });
+    // removed while the skill was read: nothing ran, nothing to keep
+    if (repos.meals.get(mealId)?.removedAt != null) {
+      await rm(dir, { recursive: true, force: true });
+      return { status: "cancelled", reason: MEAL_REMOVED };
+    }
     const startedAt = this.now();
     repos.runs.insert({
       id: runId,
@@ -181,7 +198,14 @@ export class AnalysisJob implements JobHandler<"analyse"> {
     }
 
     const saved = repos.revisions.forRun(runId);
-    const { runStatus, outcome, error } = judge(result, saved.length > 0, reply, this.now());
+    // stopped on purpose (the meal was removed), not by a server stop
+    const cancelled =
+      signal.reason instanceof JobCancelled
+        ? signal.reason.message
+        : repos.meals.get(mealId)?.removedAt != null
+          ? MEAL_REMOVED
+          : null;
+    const { runStatus, outcome, error } = judge(result, saved.length > 0, reply, this.now(), cancelled);
     const endedAt = this.now();
     repos.runs.finish(runId, {
       status: runStatus,
@@ -227,18 +251,29 @@ function sentence(notes: string[]): string | null {
   return s ? `${s.charAt(0).toUpperCase()}${s.slice(1)}.` : null;
 }
 
-/** The run's verdict: saved a revision → success, whatever happened after. */
+/**
+ * The run's verdict: saved a revision → success, whatever happened after. `cancelled`: why the
+ * run was stopped on purpose (the meal was removed), which ends the job without a retry.
+ */
 function judge(
   r: PromptRunResult,
   saved: boolean,
   reply: string,
   now: number,
+  cancelled: string | null = null,
 ): { runStatus: Exclude<RunStatus, "running">; outcome: JobOutcome; error: string | null } {
   if (saved) {
     return {
       runStatus: "succeeded",
       outcome: { status: "done" },
       error: r.status === "error" ? `after saving the revision: ${r.error}` : null,
+    };
+  }
+  if (cancelled !== null) {
+    return {
+      runStatus: "cancelled",
+      outcome: { status: "cancelled", reason: cancelled },
+      error: `cancelled: ${cancelled}`,
     };
   }
   if (r.status === "cancelled") {
@@ -277,12 +312,13 @@ function lastReply(current: string, e: Parameters<Parameters<typeof runPrompt>[0
 /**
  * The meal's status after its analyse job moved on: a retry or a wait puts an `analysing` meal
  * back to `queued`; the final failure makes it `failed` with the error, unless another analysis
- * of the meal is already queued. A finished job leaves it alone (the revision set it).
+ * of the meal is already queued. A finished job leaves it alone (the revision set it), and so
+ * does any job of a removed meal (the removal set its status).
  */
 export function settleMeal(repos: Repos, job: Job, now = Date.now()): void {
   if (job.type !== "analyse") return;
   const meal = repos.meals.get(job.payload.mealId);
-  if (!meal) return;
+  if (!meal || meal.removedAt !== null) return;
   if (job.status === "queued" || job.status === "cancelled") {
     if (meal.status === "analysing") repos.meals.setStatus(meal.id, "queued", now);
   } else if (job.status === "failed") {

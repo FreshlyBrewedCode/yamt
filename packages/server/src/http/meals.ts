@@ -9,10 +9,12 @@ import {
   type MealRevisionsResponse,
   MealsQuery,
   type MealsResponse,
+  type RemoveMealResponse,
   RepeatableQuery,
   type RepeatableResponse,
   RepeatMealBody,
   type RepeatMealResponse,
+  type RestoreMealResponse,
   type RetractResponse,
   type TranscribeResponse,
   UpdateMealBody,
@@ -91,6 +93,10 @@ export function mealRoutes(s: Services): Hono<IdentityEnv> {
   });
 
   r.post("/meals/:id/analyse", (c) => c.json<AnalyseResponse>(s.meals.analyse(c.req.param("id"))));
+
+  // soft removal and its undo, both idempotent; no body
+  r.post("/meals/:id/remove", (c) => c.json<RemoveMealResponse>(s.meals.remove(c.req.param("id"))));
+  r.post("/meals/:id/restore", (c) => c.json<RestoreMealResponse>(s.meals.restore(c.req.param("id"))));
 
   r.get("/media/:captureId", (c) => media(c.req.raw, s, c.req.param("captureId"), "original"));
   r.get("/media/:captureId/jpeg", (c) => media(c.req.raw, s, c.req.param("captureId"), "jpeg"));

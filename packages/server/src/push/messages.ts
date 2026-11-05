@@ -102,12 +102,12 @@ export const TEST_NOTIFICATION: PushPayload = {
  * Called when a meal's analyse job ended for now (`AnalysisJob.settled`): sends the meal's
  * notification to every subscription that wants it, if the meal ended in a notified status.
  * A meal left `queued` (another analysis of it is waiting) sends nothing: only the final state
- * of the latest run is notified. The message is built before the first await, so it shows the
- * meal as it was when the job settled.
+ * of the latest run is notified, and a removed meal nothing at all. The message is built before
+ * the first await, so it shows the meal as it was when the job settled.
  */
 export async function notifyMeal(s: Services, mealId: string): Promise<DeliveryResult[]> {
   const meal = s.repos.meals.get(mealId);
-  if (!meal || !isPushEvent(meal.status)) return [];
+  if (!meal || meal.removedAt !== null || !isPushEvent(meal.status)) return [];
   const view = meal.currentRevisionId ? s.revisions.view(meal.currentRevisionId) : null;
   const message = mealNotification(meal, view, s.timeZone);
   if (!message) return [];

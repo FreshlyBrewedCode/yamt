@@ -3,10 +3,11 @@ import { AgentService } from "./agent/settings.ts";
 import { type AnalysisConfig, analysisConfig, DEFAULT_PUSH_SUBJECT, dataPaths } from "./config.ts";
 import type { Db } from "./db/index.ts";
 import { createRepos, type Repos } from "./db/repos/index.ts";
+import { dedupeKeys } from "./db/repos/jobs.ts";
 import { CalendarService } from "./domain/calendar.ts";
 import { FoodService } from "./domain/foods.ts";
 import { GoalService } from "./domain/goals.ts";
-import { MealService } from "./domain/meals.ts";
+import { MEAL_REMOVED, MealService } from "./domain/meals.ts";
 import { RevisionService } from "./domain/revisions.ts";
 import { ShareService } from "./domain/share.ts";
 import { localTimeZone } from "./domain/time.ts";
@@ -42,8 +43,12 @@ export interface Services {
   push: PushSender;
   /** The Agent setting (#28): harness, model and effort for the next run, and what harnesses offer. */
   agent: AgentService;
-  /** Pokes the job worker after an enqueue; the server wires it to its worker (a no-op without one). */
-  queue: { wake: () => void };
+  /**
+   * The job worker, as far as the services need it: `wake` after an enqueue, `cancel` a running
+   * job by its dedupe key (true if one ran). The server wires both to its worker; without one
+   * they do nothing.
+   */
+  queue: { wake: () => void; cancel: (dedupeKey: string, reason: string) => boolean };
 }
 
 export interface ServicesOptions {
@@ -74,8 +79,23 @@ export function createServices(opts: ServicesOptions): Services {
   const media = new MediaStore(opts.dataDir);
   const fetchFn: Fetch = opts.fetch ?? ((input, init) => fetch(input, init));
   const revisions = new RevisionService(repos);
-  const queue = { wake: () => {} };
-  const meals = new MealService(repos, media, revisions, opts.heicToJpeg, () => queue.wake());
+  const queue: Services["queue"] = { wake: () => {}, cancel: () => false };
+  const mcpTokens = new McpTokens(dataPaths(opts.dataDir).mcpToken);
+  const meals = new MealService(
+    repos,
+    media,
+    revisions,
+    opts.heicToJpeg,
+    () => queue.wake(),
+    // a removed meal's running analysis: its token stops working at once (no late save), its job
+    // is aborted (the harness stops)
+    (mealId) => {
+      for (const run of repos.runs.listForMeal(mealId)) {
+        if (run.status === "running") mcpTokens.revokeRun(run.id);
+      }
+      return queue.cancel(dedupeKeys.analyse(mealId), MEAL_REMOVED);
+    },
+  );
   const timeZone = opts.timeZone ?? localTimeZone();
   let vapid: VapidKeys | null = null;
   const push = new PushSender(repos.pushSubscriptions, {
@@ -94,7 +114,7 @@ export function createServices(opts: ServicesOptions): Services {
     share: new ShareService(repos, meals, timeZone),
     goals: new GoalService(repos, meals, timeZone),
     calendar: new CalendarService(repos, timeZone),
-    mcpTokens: new McpTokens(dataPaths(opts.dataDir).mcpToken),
+    mcpTokens,
     fetch: fetchFn,
     timeZone,
     push,

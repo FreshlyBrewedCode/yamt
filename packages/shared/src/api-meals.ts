@@ -17,6 +17,10 @@ export const mealPaths = {
   analyse: (mealId: string) => `/api/meals/${mealId}/analyse`,
   /** Log the meal again (#30): a new meal with a copy of its current revision, no analysis. */
   repeat: (mealId: string) => `/api/meals/${mealId}/repeat`,
+  /** Soft removal (`RemoveMealResponse`): out of every list, day and total; idempotent. */
+  remove: (mealId: string) => `/api/meals/${mealId}/remove`,
+  /** Undoes a removal (`RestoreMealResponse`); idempotent. */
+  restore: (mealId: string) => `/api/meals/${mealId}/restore`,
   /** Recent analysed meals to log again (`RepeatableQuery`): one per title, most often first. */
   repeatable: "/api/meals/repeatable",
   retract: (captureId: string) => `/api/captures/${captureId}/retract`,
@@ -99,6 +103,12 @@ export interface Meal {
   analysisError: string | null;
   /** The meal this one was logged again from (#30); null for a meal of its own. */
   sourceMealId: string | null;
+  /**
+   * When the meal was removed (soft: nothing of it is deleted); null for a meal in use. A removed
+   * meal is left out of every list, day, month, total and history, and takes no writes but a
+   * restore; `GET /api/meals/:id` still answers it.
+   */
+  removedAt: number | null;
   createdAt: number;
   updatedAt: number;
 }
@@ -387,6 +397,25 @@ export interface RepeatableMeal {
 
 export interface RepeatableResponse {
   meals: RepeatableMeal[];
+}
+
+/**
+ * `POST /api/meals/:id/remove` (no body): the meal with its `removedAt` (a second call answers it
+ * as it is). A queued or running analysis is cancelled (`stoppedAnalysis`); the meal then stands
+ * where that analysis started from: its current revision's status, or `draft` without one.
+ */
+export interface RemoveMealResponse {
+  meal: Meal;
+  /** An analysis of the meal was queued or running and has been cancelled. */
+  stoppedAnalysis: boolean;
+}
+
+/**
+ * `POST /api/meals/:id/restore` (no body): the meal back in use, as it was when it was removed
+ * (status, revision, time); idempotent. A stopped analysis isn't started again: press analyse.
+ */
+export interface RestoreMealResponse {
+  meal: Meal;
 }
 
 /** `POST /api/captures/:id/retract`: idempotent; the capture keeps its first `retractedAt`. */

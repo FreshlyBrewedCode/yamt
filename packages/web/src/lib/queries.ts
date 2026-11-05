@@ -30,8 +30,10 @@ import {
   type PushTestResponse,
   profilePaths,
   pushPaths,
+  type RemoveMealResponse,
   type RepeatableResponse,
   type RepeatMealResponse,
+  type RestoreMealResponse,
   type RetractResponse,
   runPaths,
   type TranscribeResponse,
@@ -178,6 +180,47 @@ export function useUpdateMeal(mealId: string) {
       void queryClient.invalidateQueries({ queryKey: keys.meals });
     },
   });
+}
+
+/** The meal's detail with the meal as the server answered a removal or a restore, until it refetches. */
+const mealChanged = (r: { meal: MealResponse["meal"] }) => {
+  queryClient.setQueryData<MealDetailResponse | null>(keys.meal(r.meal.id), (d) =>
+    d ? { ...d, meal: r.meal } : d,
+  );
+};
+const mealsChanged = (mealId: string) => {
+  void queryClient.invalidateQueries({ queryKey: keys.meal(mealId) });
+  void queryClient.invalidateQueries({ queryKey: keys.meals });
+};
+
+/**
+ * Remove a meal (soft: out of every day and total, nothing deleted; a queued or running analysis
+ * stops). One request, not a capture, so not through the upload queue; offline it fails and says
+ * so (`removeError`).
+ */
+export function useRemoveMeal() {
+  return useMutation({
+    mutationFn: (mealId: string) => api.post<RemoveMealResponse>(mealPaths.remove(mealId)),
+    onSuccess: mealChanged,
+    onSettled: (_r, _e, mealId) => mealsChanged(mealId),
+  });
+}
+
+/** Undo a removal: the meal is back as it was. */
+export function useRestoreMeal() {
+  return useMutation({
+    mutationFn: (mealId: string) => api.post<RestoreMealResponse>(mealPaths.restore(mealId)),
+    onSuccess: mealChanged,
+    onSettled: (_r, _e, mealId) => mealsChanged(mealId),
+  });
+}
+
+/** What a failed remove or restore says: offline is the usual reason, and it needs the server. */
+export function removeError(e: Error, what: "remove" | "restore"): string {
+  if (!(e instanceof ApiError) || !navigator.onLine) {
+    return `No connection: ${what === "remove" ? "removing" : "restoring"} a meal needs yamt. Try again once you're online.`;
+  }
+  return `Couldn't ${what} it: ${e.message}`;
 }
 
 /** Recent analysed meals to log again (#30), one per title, the most often logged first. */

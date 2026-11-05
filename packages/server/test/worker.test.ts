@@ -11,7 +11,7 @@ import { TraceWriter } from "../src/analysis/trace.ts";
 import { openDb } from "../src/db/index.ts";
 import type { CaptureRecord } from "../src/db/repos/captures.ts";
 import { dedupeKeys, JobRepo, type JobType } from "../src/db/repos/jobs.ts";
-import { type JobHandler, type JobOutcome, JobWorker } from "../src/jobs/worker.ts";
+import { JobCancelled, type JobHandler, type JobOutcome, JobWorker } from "../src/jobs/worker.ts";
 import { boxResize, downscaleJpeg, reorient } from "../src/media/downscale.ts";
 import { MediaStore, sha256Hex } from "../src/media/store.ts";
 import { tempDir } from "./helpers.ts";
@@ -130,6 +130,40 @@ describe("job worker", () => {
     await worker.stop();
     expect(signal!.aborted).toBe(true);
     expect(jobs.get(j.id)).toMatchObject({ status: "queued", attempts: 0 });
+  });
+
+  test("cancel(key) aborts that running job alone, with a JobCancelled reason; cancelled ends it", async () => {
+    const jobs = new JobRepo(openDb(":memory:"));
+    const signals = new Map<string, AbortSignal>();
+    const settled: string[] = [];
+    const handler: JobHandler<"analyse"> = {
+      type: "analyse",
+      concurrency: 2,
+      run: (job, ctx) => {
+        signals.set(job.payload.mealId, ctx.signal);
+        return new Promise((resolve) =>
+          ctx.signal.addEventListener("abort", () =>
+            resolve(
+              ctx.signal.reason instanceof JobCancelled
+                ? { status: "cancelled", reason: ctx.signal.reason.message }
+                : { status: "reschedule", runAfter: Date.now(), reason: "stopped" },
+            ),
+          ),
+        );
+      },
+      settled: (job) => settled.push(`${job.payload.mealId}:${job.status}`),
+    };
+    worker = new JobWorker(jobs, { pollMs: 10 }).register(handler).start();
+    const a = jobs.enqueue("analyse", { mealId: "a" }, { dedupeKey: dedupeKeys.analyse("a") }).job;
+    const b = jobs.enqueue("analyse", { mealId: "b" }, { dedupeKey: dedupeKeys.analyse("b") }).job;
+    await sleep(50);
+    expect(worker.cancel(dedupeKeys.analyse("a"), "the meal was removed")).toBe(true);
+    expect(worker.cancel(dedupeKeys.analyse("nope"), "x")).toBe(false);
+    await sleep(20);
+    expect(jobs.get(a.id)).toMatchObject({ status: "cancelled", lastError: "the meal was removed" });
+    expect(settled).toEqual(["a:cancelled"]);
+    expect(signals.get("b")!.aborted).toBe(false);
+    expect(jobs.get(b.id)?.status).toBe("running");
   });
 });
 

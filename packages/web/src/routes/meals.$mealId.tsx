@@ -7,6 +7,7 @@ import { CaptureList, useCaptureRows } from "@/components/capture-list";
 import { AgainList, LogAgainSheet, type RepeatSource } from "@/components/log-again";
 import { MealDetail } from "@/components/meal-detail";
 import { RecorderBand } from "@/components/recorder-band";
+import { RemovedMeal, RemoveMealRow } from "@/components/remove-meal";
 import {
   Band,
   BottomSlab,
@@ -44,7 +45,7 @@ export const Route = createFileRoute("/meals/$mealId")({
  * One route per meal. A meal with an analysis (or a failed one) opens on its detail: numbers,
  * questions, items, corrections, revisions, trace, captures. A meal without one yet (draft,
  * queued, analysing for the first time) opens on the capture view, and so does `?add=1`, the
- * detail's way to add more.
+ * detail's way to add more. A removed meal opens on what it was, with Restore.
  */
 function MealRoute() {
   const { mealId } = Route.useParams();
@@ -52,6 +53,7 @@ function MealRoute() {
   const query = useMeal(mealId);
   const detail = query.data ?? null;
   if (query.isPending && !search.new) return <Loading />;
+  if (detail && detail.meal.removedAt !== null) return <RemovedMeal detail={detail} />;
   if (detail && (detail.revision || detail.meal.status === "failed") && !search.add) {
     return <MealDetail detail={detail} />;
   }
@@ -212,6 +214,8 @@ function MealCapture({
         )}
         {/* Log meal, before anything is captured: the same as before, without an analysis (#30) */}
         {isNew && !meal && rows.length === 0 && <AgainList onPick={setAgain} />}
+        {/* once the server has the meal (when adding, its detail has the row) */}
+        {meal && !adding && <RemoveMealRow meal={meal} />}
       </main>
       <LogAgainSheet
         source={again}
