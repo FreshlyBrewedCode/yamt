@@ -25,6 +25,7 @@ import { formatDuration, recordingName } from "@/lib/recorder";
 import { CaptureList, useCaptureRows } from "./capture-list";
 import { ItemsList } from "./items-list";
 import { LogAgainSheet, type RepeatSource } from "./log-again";
+import { RemoveMealRow } from "./remove-meal";
 import { RevisionHistory } from "./revision-history";
 import { BackButton, Band, BottomSlab, Disclosure, Label, SlabButton, StatusLabel, Strip } from "./slab";
 import { TotalsSlab } from "./totals-slab";
@@ -42,8 +43,9 @@ type VoiceTarget = { kind: "answer"; questionId: string } | { kind: "correction"
  * numbers (the ink slab) → the agent's questions (lime: answer by text or a spoken answer
  * recorded right there, or skip) → items with provenance and confidence (low confidence
  * lime-soft; tap for the source) → what it assumed (tint) → a free correction → captures,
- * revision history and the trace, collapsed. The bottom slab is the one action: "Answer &
- * re-analyse" / "Correct & re-analyse" / "Re-analyse" / "Retry analysis" (lime) when there is
+ * revision history and the trace, collapsed, then "Remove meal" (an inline confirm). The bottom
+ * slab is the one action: "Answer & re-analyse" / "Correct & re-analyse" / "Re-analyse" / "Retry
+ * analysis" (lime) when there is
  * something for the next analysis, else "Add to this meal" (tint), which opens the capture view;
  * on an analysed meal split with "Log again" (#30), which copies it to a new meal. A meal that was
  * logged again links its source under the title and has no run to trace.
@@ -298,6 +300,7 @@ export function MealDetail({ detail }: { detail: MealDetailResponse }) {
             </Disclosure>
           )
         )}
+        <RemoveMealRow meal={meal} />
       </main>
 
       <DetailSlab
