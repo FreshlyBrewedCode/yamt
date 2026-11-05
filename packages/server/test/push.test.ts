@@ -18,7 +18,7 @@ import type { AnalysisConfig } from "../src/config.ts";
 import { dataPaths } from "../src/config.ts";
 import { openDb } from "../src/db/index.ts";
 import { createRepos } from "../src/db/repos/index.ts";
-import { mealNotification } from "../src/push/messages.ts";
+import { mealNotification, notifyMeal } from "../src/push/messages.ts";
 import { PushSender } from "../src/push/sender.ts";
 import { loadVapidKeys } from "../src/push/vapid.ts";
 import { createServer } from "../src/server.ts";
@@ -241,6 +241,7 @@ describe("mealNotification", () => {
     currentRevisionId: "r1",
     analysisError: null,
     sourceMealId: null,
+    removedAt: null,
     createdAt: 0,
     updatedAt: 0,
     ...over,
@@ -443,6 +444,25 @@ describe("notifications from the analysis job", () => {
     expect(sent.headers.Topic).toBe(analysed.replaceAll("-", ""));
     s.repos.pushSubscriptions.delete(s.repos.pushSubscriptions.byEndpoint(phone.subscription.endpoint)!.id);
     s.repos.pushSubscriptions.delete(s.repos.pushSubscriptions.byEndpoint(quiet.subscription.endpoint)!.id);
+  });
+
+  test("a meal removed during its analysis notifies nothing; a removed meal never does", async () => {
+    const phone = browser();
+    s.repos.pushSubscriptions.upsert(phone.subscription);
+    const stopped = meal("Entferntes Essen, fake:slow:20000");
+    s.meals.analyse(stopped);
+    await waitFor("analysing", () => s.repos.meals.get(stopped)!.status === "analysing");
+    s.meals.remove(stopped);
+    await waitFor("the stopped run", () => s.repos.runs.listForMeal(stopped)[0]?.status === "cancelled");
+
+    const done = meal("Porridge, fake:save");
+    s.meals.analyse(done);
+    await waitFor("its notification", () => received(phone).length === 1);
+    s.meals.remove(done);
+    expect(await notifyMeal(s, done)).toEqual([]);
+    await Bun.sleep(100);
+    expect(received(phone).map((p) => p.url)).toEqual([`/meals/${done}`]);
+    s.repos.pushSubscriptions.delete(s.repos.pushSubscriptions.byEndpoint(phone.subscription.endpoint)!.id);
   });
 
   test("no notification while another analysis of the meal is queued; then one for the final state", async () => {

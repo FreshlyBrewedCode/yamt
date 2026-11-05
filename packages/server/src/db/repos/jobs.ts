@@ -207,6 +207,27 @@ export class JobRepo {
     return this.requeue(job, runAfter, reason, -1, now);
   }
 
+  /**
+   * running → cancelled: the handler stopped because the work is no longer wanted (the meal was
+   * removed while it was analysed). Null if the job is not running.
+   */
+  cancelRunning(id: string, reason: string, now = Date.now()): Job | null {
+    if (!this.running(id)) return null;
+    this.finish(id, "cancelled", reason, now);
+    return this.get(id);
+  }
+
+  /** Whether a job with this key is queued or running (e.g. a capture's transcription). */
+  isOpen(dedupeKey: string): boolean {
+    return (
+      this.db
+        .query<{ n: number }, [string]>(
+          "SELECT count(*) AS n FROM jobs WHERE dedupe_key = ? AND status IN ('queued', 'running')",
+        )
+        .get(dedupeKey)!.n > 0
+    );
+  }
+
   /** Whether a job with this key waits in the queue (e.g. another analysis of the meal). */
   hasQueued(dedupeKey: string): boolean {
     return this.queuedWithKey(dedupeKey) !== null;

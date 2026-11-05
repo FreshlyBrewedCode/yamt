@@ -5,19 +5,27 @@ import {
   type AnalyseResponse,
   type ApiError,
   type CaptureResponse,
+  calendarPaths,
+  type DayResponse,
+  goalPaths,
   type MealDetailResponse,
   type MealResponse,
   type MealRevisionsResponse,
   type MealsResponse,
+  type MonthResponse,
   mealPaths,
+  type RemoveMealResponse,
   type RepeatableResponse,
   type RepeatMealResponse,
+  type RestoreMealResponse,
   type RetractResponse,
   type WeightEntryResponse,
   type WeightResponse,
   weightPaths,
 } from "@yamt/shared";
 import { IDENTITY_HEADER } from "../src/auth/identity.ts";
+import { dedupeKeys } from "../src/db/repos/jobs.ts";
+import { localDate } from "../src/domain/time.ts";
 import { createServer } from "../src/server.ts";
 import { fixture, tempDir } from "./helpers.ts";
 
@@ -921,6 +929,236 @@ describe("log again (#30)", () => {
       (await call<RepeatableResponse>("GET", mealPaths.repeatable)).body.meals.length,
     ).toBeLessThanOrEqual(5);
     expect((await call("GET", `${mealPaths.repeatable}?days=0`)).status).toBe(400);
+  });
+});
+
+describe("remove a meal", () => {
+  const s = app.services;
+  /** An analysed meal eaten `hoursAgo` hours ago: one estimated item of 300 g at 100 kcal/100 g. */
+  const analysed = async (title: string, hoursAgo = 2) => {
+    const meal = await newMeal({ eatenAt: Date.now() - hoursAgo * 3_600_000 });
+    await call("POST", mealPaths.captures(meal.id), { kind: "text", text: title });
+    s.revisions.save({
+      mealId: meal.id,
+      runId: null,
+      title,
+      summary: "",
+      eatenAt: null,
+      assumptions: [],
+      items: [
+        {
+          description: title,
+          grams: 300,
+          provenance: "estimate",
+          confidence: "medium",
+          estimatePer100g: { energyKcal: 100 },
+        },
+      ],
+      questions: [],
+    });
+    return s.repos.meals.get(meal.id)!;
+  };
+  const remove = (id: string) => call<RemoveMealResponse & ApiError>("POST", mealPaths.remove(id));
+  const restore = (id: string) => call<RestoreMealResponse & ApiError>("POST", mealPaths.restore(id));
+
+  /** Where the meal shows up: the list, its day (and the day's kcal), its month, Log again. */
+  const seen = async (meal: { id: string; eatenAt: number }) => {
+    const date = localDate(meal.eatenAt, "UTC");
+    const list = await call<MealsResponse>("GET", `${mealPaths.meals}?tz=UTC&limit=500`);
+    const day = await call<DayResponse>("GET", `${goalPaths.day(date)}?tz=UTC`);
+    const month = await call<MonthResponse>("GET", `${calendarPaths.month(date.slice(0, 7))}?tz=UTC`);
+    const again = await call<RepeatableResponse>("GET", `${mealPaths.repeatable}?limit=20`);
+    return {
+      list: list.body.meals.some((m) => m.id === meal.id),
+      listDayKcal: list.body.days.find((d) => d.date === date)?.totals.nutrients.energyKcal ?? 0,
+      day: day.body.meals.some((m) => m.id === meal.id),
+      dayKcal: day.body.totals.nutrients.energyKcal,
+      monthMeals: month.body.days.find((d) => d.date === date)?.meals ?? 0,
+      monthKcal: month.body.days.find((d) => d.date === date)?.totals?.nutrients.energyKcal ?? 0,
+      again: again.body.meals.some((m) => m.mealId === meal.id),
+    };
+  };
+
+  test("a removed meal leaves the list, its day and totals, the month and Log again; restore brings it back", async () => {
+    const meal = await analysed("Entfernter Testkuchen");
+    const before = await seen(meal);
+    expect(before).toMatchObject({ list: true, day: true, again: true });
+
+    const removed = await remove(meal.id);
+    expect(removed.status).toBe(200);
+    expect(removed.body).toMatchObject({ meal: { status: "analysed" }, stoppedAnalysis: false });
+    expect(removed.body.meal.removedAt).toBeNumber();
+    const after = await seen(meal);
+    expect(after).toMatchObject({ list: false, day: false, again: false });
+    expect(after.dayKcal).toBe(before.dayKcal - 300);
+    expect(after.listDayKcal).toBe(before.listDayKcal - 300);
+    expect(after.monthMeals).toBe(before.monthMeals - 1);
+    expect(after.monthKcal).toBe(before.monthKcal - 300);
+
+    // still there to look at (and undo): the detail, its captures, its revisions
+    const detail = await call<MealDetailResponse>("GET", mealPaths.meal(meal.id));
+    expect(detail.status).toBe(200);
+    expect(detail.body.meal.removedAt).toBe(removed.body.meal.removedAt);
+    expect(detail.body.captures).toHaveLength(1);
+    expect(detail.body.revision?.totals.nutrients.energyKcal).toBe(300);
+    expect(
+      (await call<MealRevisionsResponse>("GET", mealPaths.revisions(meal.id))).body.revisions,
+    ).toHaveLength(1);
+
+    // idempotent: the first removal time stays
+    expect((await remove(meal.id)).body.meal.removedAt).toBe(removed.body.meal.removedAt);
+
+    const restored = await restore(meal.id);
+    expect(restored.status).toBe(200);
+    expect(restored.body.meal).toMatchObject({
+      removedAt: null,
+      status: "analysed",
+      currentRevisionId: meal.currentRevisionId,
+      eatenAt: meal.eatenAt,
+    });
+    expect(await seen(meal)).toEqual(before);
+    expect((await restore(meal.id)).body.meal.removedAt).toBeNull();
+    expect((await remove("01a00000-0000-7000-8000-000000000000")).status).toBe(404);
+    expect((await restore("01a00000-0000-7000-8000-000000000000")).status).toBe(404);
+  });
+
+  test("a removed draft is no share target: the next share goes elsewhere", async () => {
+    const draft = await newMeal();
+    await call("POST", mealPaths.captures(draft.id), { kind: "text", text: "Erst geteilt" });
+    const joined = await s.share.share({ files: [], texts: ["Dazu"], urls: [] });
+    expect(joined).toMatchObject({ meal: { id: draft.id }, newMeal: false });
+    await remove(draft.id);
+    const next = await s.share.share({ files: [], texts: ["Später"], urls: [] });
+    expect(next.meal.id).not.toBe(draft.id);
+    expect(s.repos.captures.listForMeal(draft.id)).toHaveLength(2);
+  });
+
+  test("writes to a removed meal are refused (409), restore excepted; retried creates still answer", async () => {
+    const meal = await analysed("Gesperrter Testkuchen");
+    const text = await call<CaptureResponse>("POST", mealPaths.captures(meal.id), {
+      id: "01a00000-0000-7000-8000-0000000000a1",
+      kind: "text",
+      text: "noch was",
+    });
+    const memo = await call<CaptureResponse>(
+      "POST",
+      mealPaths.captures(meal.id),
+      upload(new Blob([fakeM4a()], { type: "audio/mp4" }), "memo.m4a"),
+    );
+    const question = s.repos.revisions.questions(meal.currentRevisionId!)[0];
+    expect(question).toBeUndefined();
+    await remove(meal.id);
+
+    const refused = [
+      await call<ApiError>("POST", mealPaths.captures(meal.id), { kind: "text", text: "mehr" }),
+      await call<ApiError>("POST", mealPaths.captures(meal.id), { kind: "correction", text: "2 Stück" }),
+      await call<ApiError>("POST", mealPaths.captures(meal.id), { kind: "answer", text: "ja" }),
+      await call<ApiError>(
+        "POST",
+        mealPaths.captures(meal.id),
+        upload(new Blob([fakeM4a()], { type: "audio/mp4" }), "more.m4a"),
+      ),
+      await call<ApiError>("POST", mealPaths.analyse(meal.id)),
+      await call<ApiError>("PATCH", mealPaths.meal(meal.id), { eatenAt: Date.now() - 60_000 }),
+      await call<ApiError>("POST", mealPaths.repeat(meal.id), { factor: 1, eatenAt: Date.now() }),
+      await call<ApiError>("POST", mealPaths.retract(text.body.capture.id)),
+      await call<ApiError>("POST", mealPaths.transcribe(memo.body.capture.id)),
+    ];
+    for (const r of refused) {
+      expect(r.status).toBe(409);
+      expect(r.body.error).toBe("the meal was removed");
+    }
+    // an upload retried after a lost response is answered with what was stored
+    const retried = await call<CaptureResponse>("POST", mealPaths.captures(meal.id), {
+      id: "01a00000-0000-7000-8000-0000000000a1",
+      kind: "text",
+      text: "noch was",
+    });
+    expect(retried.status).toBe(200);
+    // nothing moved: the time, the captures, the revision
+    const detail = (await call<MealDetailResponse>("GET", mealPaths.meal(meal.id))).body;
+    expect(detail.meal).toMatchObject({ eatenAt: meal.eatenAt, currentRevisionId: meal.currentRevisionId });
+    expect(detail.captures.filter((c) => c.retractedAt === null)).toHaveLength(3);
+    // nor in the database: the triggers refuse what slips past the service
+    expect(() =>
+      s.repos.captures.insert({
+        id: "01a00000-0000-7000-8000-0000000000a2",
+        mealId: meal.id,
+        kind: "text",
+        text: "durch die Hintertür",
+        now: Date.now(),
+      }),
+    ).toThrow("the meal was removed");
+
+    await restore(meal.id);
+    expect((await call("POST", mealPaths.captures(meal.id), { kind: "text", text: "mehr" })).status).toBe(
+      201,
+    );
+  });
+
+  test("removal cancels a queued analysis and the transcriptions; the meal stands where the analysis started", async () => {
+    // analysed before, queued again: back to its revision
+    const meal = await analysed("Abgebrochener Testkuchen");
+    await call("POST", mealPaths.captures(meal.id), { kind: "correction", text: "doppelt" });
+    expect((await call<AnalyseResponse>("POST", mealPaths.analyse(meal.id))).body.meal.status).toBe("queued");
+    const removed = await remove(meal.id);
+    expect(removed.body).toMatchObject({ meal: { status: "analysed" }, stoppedAnalysis: true });
+    const jobs = (key: string) => s.repos.jobs.list().filter((j) => j.dedupeKey === key);
+    expect(jobs(dedupeKeys.analyse(meal.id))).toMatchObject([
+      { status: "cancelled", lastError: "the meal was removed" },
+    ]);
+    expect((await restore(meal.id)).body.meal).toMatchObject({ status: "analysed", removedAt: null });
+    expect(s.repos.jobs.hasQueued(dedupeKeys.analyse(meal.id))).toBe(false);
+
+    // a first analysis waiting for a voice memo: back to draft; the memo's transcription comes back
+    const draft = await newMeal();
+    const memo = await call<CaptureResponse>(
+      "POST",
+      mealPaths.captures(draft.id),
+      upload(new Blob([fakeM4a()], { type: "audio/mp4" }), "memo.m4a"),
+    );
+    const key = dedupeKeys.transcribe(memo.body.capture.id);
+    await call("POST", mealPaths.analyse(draft.id));
+    expect((await remove(draft.id)).body).toMatchObject({ meal: { status: "draft" }, stoppedAnalysis: true });
+    expect(jobs(key)).toMatchObject([{ status: "cancelled" }]);
+    expect((await restore(draft.id)).body.meal).toMatchObject({ status: "draft", removedAt: null });
+    expect(jobs(key).map((j) => j.status)).toEqual(["cancelled", "queued"]);
+    expect(s.repos.transcripts.get(memo.body.capture.id)?.status).toBe("pending");
+    // restored twice: still one queued transcription
+    await remove(draft.id);
+    await restore(draft.id);
+    await restore(draft.id);
+    expect(jobs(key).filter((j) => j.status === "queued")).toHaveLength(1);
+  });
+
+  test("a failed meal stays failed with its error while removed and after", async () => {
+    const meal = await newMeal();
+    await call("POST", mealPaths.captures(meal.id), { kind: "text", text: "kaputt" });
+    s.repos.meals.setStatus(meal.id, "failed", Date.now(), "the agent crashed");
+    expect((await remove(meal.id)).body.meal).toMatchObject({
+      status: "failed",
+      analysisError: "the agent crashed",
+    });
+    expect((await restore(meal.id)).body.meal).toMatchObject({
+      status: "failed",
+      analysisError: "the agent crashed",
+    });
+  });
+
+  test("remove and restore need the identity and our origin", async () => {
+    const meal = await newMeal();
+    const anonymous = { method: "POST", headers: { origin: AUTH.origin } };
+    expect((await fetch(url(mealPaths.remove(meal.id)), anonymous)).status).toBe(401);
+    expect((await fetch(url(mealPaths.restore(meal.id)), anonymous)).status).toBe(401);
+    const cross = await call("POST", mealPaths.remove(meal.id), undefined, {
+      origin: "https://evil.example",
+    });
+    expect(cross.status).toBe(403);
+    const crossRestore = await call("POST", mealPaths.restore(meal.id), undefined, {
+      origin: "https://evil.example",
+    });
+    expect(crossRestore.status).toBe(403);
+    expect(s.repos.meals.get(meal.id)?.removedAt).toBeNull();
   });
 });
 

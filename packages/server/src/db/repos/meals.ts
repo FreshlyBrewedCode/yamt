@@ -9,6 +9,7 @@ interface Row {
   current_revision_id: string | null;
   analysis_error: string | null;
   source_meal_id: string | null;
+  removed_at: number | null;
   created_at: number;
   updated_at: number;
 }
@@ -21,12 +22,19 @@ const toMeal = (r: Row): Meal => ({
   currentRevisionId: r.current_revision_id,
   analysisError: r.analysis_error,
   sourceMealId: r.source_meal_id,
+  removedAt: r.removed_at,
   createdAt: r.created_at,
   updatedAt: r.updated_at,
 });
 
 /** What the meals table knows about a meal in the overview; the service adds the revision's part. */
 export type MealCaptureSummary = Omit<MealSummary, "title" | "totals" | "openQuestions">;
+
+/**
+ * A removed meal (soft removal) is in no list, day, month, total or history: every query over
+ * meals but `get` carries this condition.
+ */
+const LIVE = "removed_at IS NULL";
 
 /** The time a capture stands for: EXIF beats what the client reported beats arrival. */
 export const CAPTURE_TIME_SQL = "COALESCE(taken_at, captured_at, created_at)";
@@ -59,11 +67,12 @@ export class MealRepo {
     return r ? toMeal(r) : null;
   }
 
-  /** Meals eaten in [from, to), newest first, with what they hold (live captures only). */
+  /** Meals eaten in [from, to) and not removed, newest first, with what they hold (live captures only). */
   list(q: { from?: number; to?: number; limit: number }): MealCaptureSummary[] {
     const rows = this.db
       .query<Row, [number, number, number]>(
-        "SELECT * FROM meals WHERE eaten_at >= ? AND eaten_at < ? ORDER BY eaten_at DESC, id DESC LIMIT ?",
+        `SELECT * FROM meals WHERE eaten_at >= ? AND eaten_at < ? AND ${LIVE}
+         ORDER BY eaten_at DESC, id DESC LIMIT ?`,
       )
       .all(q.from ?? 0, q.to ?? Number.MAX_SAFE_INTEGER, q.limit);
     if (rows.length === 0) return [];
@@ -117,7 +126,8 @@ export class MealRepo {
   latestDraftSince(since: number): Meal | null {
     const r = this.db
       .query<Row, [number]>(
-        "SELECT * FROM meals WHERE status = 'draft' AND updated_at >= ? ORDER BY updated_at DESC, id DESC LIMIT 1",
+        `SELECT * FROM meals WHERE status = 'draft' AND updated_at >= ? AND ${LIVE}
+         ORDER BY updated_at DESC, id DESC LIMIT 1`,
       )
       .get(since);
     return r ? toMeal(r) : null;
@@ -132,7 +142,7 @@ export class MealRepo {
       .query<Row & { revision_title: string }, [number, number]>(
         `SELECT m.*, r.title AS revision_title FROM meals m
          JOIN meal_revisions r ON r.id = m.current_revision_id
-         WHERE m.eaten_at >= ? AND m.eaten_at < ? AND r.status = 'analysed'
+         WHERE m.eaten_at >= ? AND m.eaten_at < ? AND r.status = 'analysed' AND m.${LIVE}
          ORDER BY m.eaten_at DESC, m.id DESC`,
       )
       .all(from, to)
@@ -157,11 +167,11 @@ export class MealRepo {
     return this.get(id);
   }
 
-  /** Meals eaten in [from, to), oldest first, every one (for a day's summary). */
+  /** Meals eaten in [from, to) and not removed, oldest first (for a day's summary). */
   eatenBetween(from: number, to: number): Meal[] {
     return this.db
       .query<Row, [number, number]>(
-        "SELECT * FROM meals WHERE eaten_at >= ? AND eaten_at < ? ORDER BY eaten_at, id",
+        `SELECT * FROM meals WHERE eaten_at >= ? AND eaten_at < ? AND ${LIVE} ORDER BY eaten_at, id`,
       )
       .all(from, to)
       .map(toMeal);
@@ -182,7 +192,7 @@ export class MealRepo {
       >(
         `SELECT m.id, m.eaten_at, m.current_revision_id,
            (SELECT count(*) FROM captures c WHERE c.meal_id = m.id AND c.retracted_at IS NULL) AS captures
-         FROM meals m WHERE m.eaten_at >= ? AND m.eaten_at < ? ORDER BY m.eaten_at, m.id`,
+         FROM meals m WHERE m.eaten_at >= ? AND m.eaten_at < ? AND m.${LIVE} ORDER BY m.eaten_at, m.id`,
       )
       .all(from, to)
       .map((r) => ({
@@ -191,6 +201,30 @@ export class MealRepo {
         currentRevisionId: r.current_revision_id,
         captures: r.captures,
       }));
+  }
+
+  /**
+   * Soft removal: sets `removedAt` (once; a removed meal keeps its first time) and the status it
+   * stands in while removed (the service passes it: a cancelled analysis leaves it where it
+   * started from). Nothing else changes; captures, revisions and runs stay as they are.
+   */
+  remove(id: string, status: MealStatus, now = Date.now()): Meal | null {
+    this.db
+      .query(
+        `UPDATE meals SET removed_at = ?, status = ?,
+           analysis_error = CASE WHEN ? = 'failed' THEN analysis_error ELSE NULL END, updated_at = ?
+         WHERE id = ? AND removed_at IS NULL`,
+      )
+      .run(now, status, status, now, id);
+    return this.get(id);
+  }
+
+  /** Undoes `remove`: the meal is in use again, as it was. */
+  restore(id: string, now = Date.now()): Meal | null {
+    this.db
+      .query("UPDATE meals SET removed_at = NULL, updated_at = ? WHERE id = ? AND removed_at IS NOT NULL")
+      .run(now, id);
+    return this.get(id);
   }
 
   /** Pins `eatenAt` (user or agent); captures no longer move it. */

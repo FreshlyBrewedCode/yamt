@@ -388,6 +388,60 @@ describe("concurrency", () => {
   });
 });
 
+describe("removing the meal", () => {
+  test("mid-run: the run is stopped and cancelled, nothing is saved, the meal stays where it was, no retry", async () => {
+    const mealId = meal("fake:slow:20000");
+    s.meals.analyse(mealId);
+    await waitFor("the run", () => status(mealId) === "analysing");
+    const removedAt = Date.now();
+    expect(s.meals.remove(mealId)).toMatchObject({ stoppedAnalysis: true, meal: { status: "draft" } });
+    const [run] = await finishedRun(mealId);
+    expect(Date.now() - removedAt).toBeLessThan(5_000); // stopped, not run to its end
+    expect(run).toMatchObject({
+      status: "cancelled",
+      error: "cancelled: the meal was removed",
+      revisionId: null,
+    });
+    await waitFor("the job", () => job(mealId)[0]?.status === "cancelled" && job(mealId));
+    expect(job(mealId)).toMatchObject([{ status: "cancelled", attempts: 1 }]);
+    expect(s.repos.revisions.listForMeal(mealId)).toEqual([]);
+    expect(s.repos.meals.get(mealId)).toMatchObject({ status: "draft", analysisError: null });
+    expect(trace(run!.id).at(-1)).toMatchObject({ kind: "run.end", status: "cancelled" });
+
+    // restored, it is as it was removed: nothing starts again by itself
+    s.meals.restore(mealId);
+    await Bun.sleep(200);
+    expect(status(mealId)).toBe("draft");
+    expect(runs(mealId)).toHaveLength(1);
+  });
+
+  test("restored at once, while the stopped run winds down: it still can't save, and isn't retried", async () => {
+    const mealId = meal("fake:slow:20000");
+    s.meals.analyse(mealId);
+    await waitFor("the run", () => status(mealId) === "analysing");
+    s.meals.remove(mealId);
+    s.meals.restore(mealId);
+    const [run] = await finishedRun(mealId);
+    expect(run).toMatchObject({ status: "cancelled", revisionId: null });
+    await waitFor("the job", () => job(mealId)[0]?.status === "cancelled");
+    await Bun.sleep(200);
+    expect(runs(mealId)).toHaveLength(1);
+    expect(s.repos.revisions.listForMeal(mealId)).toEqual([]);
+    expect(s.repos.meals.get(mealId)).toMatchObject({ status: "draft", removedAt: null });
+  });
+
+  test("a job that comes up for a removed meal (e.g. one an earlier process left) is cancelled without a run", async () => {
+    const mealId = meal("fake:save");
+    s.meals.remove(mealId);
+    s.repos.jobs.enqueue("analyse", { mealId }, { dedupeKey: dedupeKeys.analyse(mealId) });
+    s.queue.wake();
+    await waitFor("the job", () => job(mealId)[0]?.status === "cancelled");
+    expect(job(mealId)[0]?.lastError).toBe("the meal was removed");
+    expect(runs(mealId)).toEqual([]);
+    expect(s.repos.meals.get(mealId)?.status).toBe("draft");
+  });
+});
+
 describe("server lifecycle", () => {
   test("stopping the server cancels a run and queues it again without spending an attempt", async () => {
     const dir = join(tempDir(), "data");

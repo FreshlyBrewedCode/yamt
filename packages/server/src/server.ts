@@ -176,6 +176,7 @@ export function createServer(opts: ServerOptions): AppServer {
     transcription = backend.describe();
     const w = worker;
     services.queue.wake = () => w.wake();
+    services.queue.cancel = (key, reason) => w.cancel(key, reason);
     w.start();
   }
 

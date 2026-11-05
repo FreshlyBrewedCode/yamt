@@ -122,7 +122,7 @@ export function yamtTools(s: Services): Tool[] {
     tool({
       name: "get_meal",
       scope: "meal",
-      description: `A meal with everything captured for it: transcripts of voice memos, text notes, links, photos (with a local file path you can view), corrections and answers to earlier questions, plus the current analysis revision (items, questions and their answers, computed totals) and the list of earlier revisions. Retracted captures are left out. Captures marked afterCurrentRevision arrived after the current revision was saved: take them into account. A revision of kind "copy" was logged again from an earlier meal (no analysis; its assumptions say from where and at what portion).`,
+      description: `A meal with everything captured for it: transcripts of voice memos, text notes, links, photos (with a local file path you can view), corrections and answers to earlier questions, plus the current analysis revision (items, questions and their answers, computed totals) and the list of earlier revisions. Retracted captures are left out. Captures marked afterCurrentRevision arrived after the current revision was saved: take them into account. A revision of kind "copy" was logged again from an earlier meal (no analysis; its assumptions say from where and at what portion). A meal with removedAt set was removed by the user: it can be read, but nothing can be saved to it.`,
       schema: z.object({ mealId: id("meal") }),
       run({ mealId }) {
         const detail = s.meals.detail(mealId);
@@ -137,6 +137,7 @@ export function yamtTools(s: Services): Tool[] {
             eatenAt: iso(detail.meal.eatenAt),
             eatenAtSource: detail.meal.eatenAtSource,
             createdAt: iso(detail.meal.createdAt),
+            ...(detail.meal.removedAt === null ? {} : { removedAt: iso(detail.meal.removedAt) }),
           },
           captures: live.map((rec) => {
             const c = toCapture(rec);

@@ -766,6 +766,81 @@ describe("run tokens", () => {
   });
 });
 
+describe("removed meals", () => {
+  test("the agent's history leaves them out; get_meal says so; nothing can be saved to one", async () => {
+    const client = await connect(interactive);
+    const meal = await newMeal();
+    await addText(meal.id, "Ein Stück Entfernungskuchen");
+    const cake = await ok<{ foodId: string }>(client, "create_food", {
+      source: "custom",
+      name: "Entfernungskuchen",
+      per100g: { energyKcal: 350, protein: 5, fat: 18, carbohydrate: 40 },
+    });
+    const save = (mealId: string) =>
+      call(client, "save_meal_revision", {
+        mealId,
+        title: "Kuchen",
+        items: [
+          {
+            foodId: cake.foodId,
+            description: "Kuchen",
+            grams: 120,
+            provenance: "database",
+            confidence: "high",
+          },
+        ],
+      });
+    expect((await save(meal.id)).error).toBeNull();
+
+    const history = async () =>
+      (
+        await ok<{ candidates: (Candidate & { usedInMeals?: number })[] }>(client, "search_foods", {
+          query: "entfernungskuchen",
+          sources: ["history"],
+        })
+      ).candidates;
+    const daySummary = async () =>
+      (await ok<{ meals: { mealId: string }[] }>(client, "get_day_summary", {})).meals.map((m) => m.mealId);
+    expect(await history()).toMatchObject([{ foodId: cake.foodId, foundIn: "history", usedInMeals: 1 }]);
+    expect(await daySummary()).toContain(meal.id);
+
+    expect((await api("POST", mealPaths.remove(meal.id))).status).toBe(200);
+    expect(await history()).toEqual([]);
+    expect(await daySummary()).not.toContain(meal.id);
+    const read = await ok<{ meal: { removedAt?: string } }>(client, "get_meal", { mealId: meal.id });
+    expect(read.meal.removedAt).toMatch(/[+-]\d\d:\d\d$/);
+    expect((await save(meal.id)).error).toBe("the meal was removed (nothing is saved to it)");
+    expect(s.repos.revisions.listForMeal(meal.id)).toHaveLength(1);
+
+    expect((await api("POST", mealPaths.restore(meal.id))).status).toBe(200);
+    expect(await history()).toMatchObject([{ foodId: cake.foodId, usedInMeals: 1 }]);
+    expect(await daySummary()).toContain(meal.id);
+  });
+
+  test("a running analysis of a removed meal loses its token at once", async () => {
+    const meal = await newMeal();
+    await addText(meal.id, "Apfel");
+    s.meals.analyse(meal.id);
+    // what the worker does when it starts the run (this server runs no worker)
+    const job = s.repos.jobs.claim({ types: ["analyse"] })!;
+    const runId = "01a00000-0000-7000-8000-0000000000b1";
+    s.repos.runs.insert({
+      id: runId,
+      mealId: meal.id,
+      jobId: job.id,
+      attempt: 1,
+      harness: "custom",
+      model: null,
+      effort: null,
+      startedAt: Date.now(),
+    });
+    const token = s.mcpTokens.mintRun({ runId, mealId: meal.id });
+    expect(s.mcpTokens.verify(token)).toMatchObject({ kind: "run", runId });
+    await api("POST", mealPaths.remove(meal.id));
+    expect(s.mcpTokens.verify(token)).toBeNull();
+  });
+});
+
 describe("without an FDC key", () => {
   test("search says FDC is unavailable and never calls it", async () => {
     const f = fixtureFetch();
