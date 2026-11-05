@@ -99,7 +99,7 @@ export function Header({
 
 /* ---------------------------------------------------------------- captures */
 
-const captureIcon: Record<MockCapture["kind"], LucideIcon> = {
+export const captureIcon: Record<MockCapture["kind"], LucideIcon> = {
   note: NotebookPen,
   photo: Camera,
   link: Link2,
@@ -107,9 +107,9 @@ const captureIcon: Record<MockCapture["kind"], LucideIcon> = {
 };
 
 /** A fridge "photo": an inline drawing in the tile, never a real picture. */
-function FridgeTile() {
+export function FridgeTile({ className = "size-12" }: { className?: string }) {
   return (
-    <svg viewBox="0 0 48 48" className="size-12 bg-tint" aria-hidden>
+    <svg viewBox="0 0 48 48" className={cn(className, "bg-tint")} aria-hidden>
       <rect x="10" y="6" width="28" height="36" className="fill-foreground/15" />
       <rect x="12" y="8" width="24" height="14" className="fill-background" />
       <rect x="12" y="24" width="24" height="16" className="fill-background" />

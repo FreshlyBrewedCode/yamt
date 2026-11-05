@@ -394,7 +394,7 @@ const FADE = {
 } as const;
 
 /** Four days as squares in the calendar's fades, then each day's planned rows. */
-function PlanViewC({ go, onOpen }: { go: (s: Screen) => void; onOpen: (r: Recipe) => void }) {
+export function PlanViewC({ go, onOpen }: { go: (s: Screen) => void; onOpen: (r: Recipe) => void }) {
   return (
     <>
       <Header label="Plan" title="Next days" onBack={() => go("overview")} />

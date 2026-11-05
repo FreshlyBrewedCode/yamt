@@ -33,3 +33,51 @@ export const VARIANTS = [
 ] as const;
 
 export type VariantKey = (typeof VARIANTS)[number]["key"];
+
+/* ------------------------------------------------------------------ round 2 */
+
+export type Screen2 =
+  | "overview"
+  | "empty"
+  | "typing"
+  | "attached"
+  | "suggesting"
+  | "suggestions"
+  | "steer"
+  | "round2"
+  | "plan";
+
+export const SCREENS2: { key: Screen2; label: string }[] = [
+  { key: "overview", label: "Overview: Log | Plan, a request waiting, one suggesting" },
+  { key: "empty", label: "Composer, empty: starters and filters" },
+  { key: "typing", label: "Typing, keyboard up" },
+  { key: "attached", label: "A voice chip, a photo, a link, filters chosen" },
+  { key: "suggesting", label: "Sent: round 1 suggesting…" },
+  { key: "suggestions", label: "Round 1 in the mix, steering below" },
+  { key: "steer", label: "Steering, keyboard up" },
+  { key: "round2", label: "Both rounds, Tue and Wed filled" },
+  { key: "plan", label: "Plan view (C's)" },
+];
+
+export const VARIANTS2 = [
+  {
+    key: "d",
+    name: "Dock",
+    blurb:
+      "Chat-like: the composer is the sticky bottom slab (plus, field, mic, a lime send square once there is something to send), and it is the same dock on every planning screen. Above it the screen stacks what's open tonight (ink), the starters as rows and the filters as a tint band right over the dock, where the thumb is; chosen filters become chips in the dock and travel with the request. In a thread the dock becomes the steer: quick steer chips over the field.",
+  },
+  {
+    key: "e",
+    name: "Form",
+    blurb:
+      "A form: the field at the top under “What do you fancy?”, Attach and Speak as two tint halves under it, then the request as the agent will read it (ink: the filters as one sentence), the structured filters as a tint band, and the starters at the end. Suggest is the lime bottom slab and stays above the keyboard, its hint repeating the request. In a thread the same form sits at the end as Steer, and the slab reads Suggest again.",
+  },
+  {
+    key: "f",
+    name: "Starters",
+    blurb:
+      "Bold: the starters are the screen. Each is a full-width band carrying its number (82 g protein open tonight as the ink slab, ½ Hokkaido to use up, 3 weeks without fish, 760 kcal Linsen-Dal, November, the last request). A tap fills the compact composer in the bottom slab and the scope row (Tonight · dinner · any time), which opens the filters; Suggest is lime under it. Steering gets the same slab with steer chips instead of starters.",
+  },
+] as const;
+
+export type Variant2Key = (typeof VARIANTS2)[number]["key"];
