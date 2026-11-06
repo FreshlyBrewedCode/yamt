@@ -255,10 +255,10 @@ describe("worker batches", () => {
       batchSize: 2,
       run: async () => ({ status: "done" }),
       runBatch: async (js) => {
-        batches.push(js.map((j) => j.payload.captureId));
-        return js.map(
-          (j): JobOutcome =>
-            j.payload.captureId === "c2" ? { status: "failed", error: "x" } : { status: "done" },
+        const ids = js.map((j) => ("captureId" in j.payload ? j.payload.captureId : j.payload.inputId));
+        batches.push(ids);
+        return ids.map(
+          (id): JobOutcome => (id === "c2" ? { status: "failed", error: "x" } : { status: "done" }),
         );
       },
     };

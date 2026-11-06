@@ -9,8 +9,11 @@ import { type Db, newId } from "../index.ts";
  * a newer queued job with the same dedupe key).
  */
 export interface JobPayloads {
-  transcribe: { captureId: string };
+  /** A voice capture's transcript, or a voice planning input's (#44). */
+  transcribe: { captureId: string } | { inputId: string };
   analyse: { mealId: string };
+  /** Fills a planning round with suggestions (#45 registers the handler; until then it waits). */
+  plan: { roundId: string };
 }
 export type JobType = keyof JobPayloads;
 export type JobStatus = "queued" | "running" | "done" | "failed" | "cancelled";
@@ -34,10 +37,15 @@ interface JobBase {
 
 export type Job = { [T in JobType]: JobBase & { type: T; payload: JobPayloads[T] } }[JobType];
 
-/** One open analysis per meal, one transcription per audio capture. */
+/**
+ * One open analysis per meal, one transcription per voice capture or voice planning input, one
+ * open `plan` job per planning request (its rounds run one after the other).
+ */
 export const dedupeKeys = {
   analyse: (mealId: string) => `analyse:${mealId}`,
   transcribe: (captureId: string) => `transcribe:${captureId}`,
+  transcribeInput: (inputId: string) => `transcribe:input:${inputId}`,
+  plan: (requestId: string) => `plan:${requestId}`,
 };
 
 /** Wait before retry n (1-based): 30 s, 2 min, 8 min, … capped at an hour. */
