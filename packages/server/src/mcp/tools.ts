@@ -1,5 +1,6 @@
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import {
+  addDays,
   Confidence,
   dayProgress,
   type Food,
@@ -7,8 +8,14 @@ import {
   type Goal,
   goalPeriods,
   isVoice,
+  MAX_PLAN_DAYS,
   type MealRevisionView,
+  MealSlot,
+  type PlannedMealView,
   Provenance,
+  RecipeSourceMode,
+  type RecipeView,
+  type Totals,
 } from "@yamt/shared";
 import { z } from "zod";
 import { toCapture } from "../db/repos/captures.ts";
@@ -113,6 +120,24 @@ const QuestionInput = z
   })
   .strict();
 
+const RecipeItemInput = ItemInput.extend({
+  grams: z
+    .number()
+    .positive()
+    .max(10_000)
+    .describe("Grams for the whole recipe (all its servings), as the food is weighed (raw, dry …)."),
+  description: z
+    .string()
+    .trim()
+    .min(1)
+    .max(300)
+    .describe('The ingredient as written, e.g. "½ Hokkaido (ca. 500 g)", in the recipe\'s language.'),
+  provenance: Provenance.describe(
+    "database: a food from search/barcode (the usual case); label: numbers from a package label; estimate: no fitting food, numbers guessed; weighed: the user gave the weight.",
+  ),
+  optional: z.boolean().optional().describe('An ingredient the recipe marks optional ("Feta, optional").'),
+});
+
 /** The tools, in the order clients list them. */
 export function yamtTools(s: Services): Tool[] {
   const tz = s.timeZone;
@@ -122,7 +147,7 @@ export function yamtTools(s: Services): Tool[] {
     tool({
       name: "get_meal",
       scope: "meal",
-      description: `A meal with everything captured for it: transcripts of voice memos, text notes, links, photos (with a local file path you can view), corrections and answers to earlier questions, plus the current analysis revision (items, questions and their answers, computed totals) and the list of earlier revisions. Retracted captures are left out. Captures marked afterCurrentRevision arrived after the current revision was saved: take them into account. A revision of kind "copy" was logged again from an earlier meal (no analysis; its assumptions say from where and at what portion). A meal with removedAt set was removed by the user: it can be read, but nothing can be saved to it.`,
+      description: `A meal with everything captured for it: transcripts of voice memos, text notes, links, photos (with a local file path you can view), corrections and answers to earlier questions, plus the current analysis revision (items, questions and their answers, computed totals) and the list of earlier revisions. Retracted captures are left out. Captures marked afterCurrentRevision arrived after the current revision was saved: take them into account. A revision of kind "copy" was logged again from an earlier meal (no analysis; its assumptions say from where and at what portion); one of kind "plan" was logged from a planned meal ("Ate it": the recipe's items for the portion eaten, no analysis; plannedMealId names it). A meal with removedAt set was removed by the user: it can be read, but nothing can be saved to it.`,
       schema: z.object({ mealId: id("meal") }),
       run({ mealId }) {
         const detail = s.meals.detail(mealId);
@@ -137,6 +162,9 @@ export function yamtTools(s: Services): Tool[] {
             eatenAt: iso(detail.meal.eatenAt),
             eatenAtSource: detail.meal.eatenAtSource,
             createdAt: iso(detail.meal.createdAt),
+            ...(detail.meal.sourcePlannedMealId === null
+              ? {}
+              : { plannedMealId: detail.meal.sourcePlannedMealId }),
             ...(detail.meal.removedAt === null ? {} : { removedAt: iso(detail.meal.removedAt) }),
           },
           captures: live.map((rec) => {
@@ -423,6 +451,128 @@ export function yamtTools(s: Services): Tool[] {
         return { date: on, inForce: inForce ? goalOut(inForce) : null, goals };
       },
     }),
+
+    tool({
+      name: "get_plan",
+      scope: "interactive",
+      description: `The meal plan for a range of local dates (at most ${MAX_PLAN_DAYS} days): per day the planned meals (slot, status planned / logged / skipped, recipe, portions cooked and eaten, the computed numbers of one portion and of the portion eaten), the meals eaten (with the slot each fills), the eaten totals over analysed meals, the projection (eaten + meals still planned), the goal in force with the projection's progress against each target, the main slots still open, and whether the day is mostly known (a past day, or breakfast, lunch and dinner eaten or planned). Every number is computed by yamt.`,
+      schema: z.object({
+        from: z.iso.date().optional().describe("YYYY-MM-DD; default today."),
+        to: z.iso.date().optional().describe("YYYY-MM-DD (inclusive); default six days after from."),
+        timeZone: z.string().max(60).optional().describe("IANA zone for the days; default the server's."),
+      }),
+      run({ from, to, timeZone }) {
+        const zone = timeZone ?? tz;
+        try {
+          assertTimeZone(zone);
+        } catch {
+          throw new ToolError(`unknown time zone ${zone}`);
+        }
+        const start = from ?? localDate(Date.now(), zone);
+        const plan = s.planning.plan({ from: start, to: to ?? addDays(start, 6), tz: zone });
+        return {
+          from: plan.from,
+          to: plan.to,
+          timeZone: plan.timeZone,
+          today: plan.today,
+          days: plan.days.map((d) => ({
+            date: d.date,
+            mostlyKnown: d.mostlyKnown,
+            openSlots: d.openSlots,
+            plannedMeals: d.plannedMeals.map(plannedOut),
+            meals: d.meals.map((m) => ({
+              mealId: m.mealId,
+              title: m.title,
+              eatenAt: isoLocal(m.eatenAt, zone),
+              slot: m.slot,
+              totals: m.totals?.nutrients ?? null,
+              ...(m.plannedMealId ? { plannedMealId: m.plannedMealId } : {}),
+            })),
+            unanalysedMeals: d.unanalysed,
+            eaten: d.eaten?.nutrients ?? null,
+            projected: d.projected?.nutrients ?? null,
+            goal: d.goal
+              ? {
+                  goalId: d.goal.id,
+                  targets: d.goal.targets,
+                  kind: d.goal.kind,
+                  label: d.goal.label,
+                  floorKcal: d.goal.floorKcal,
+                }
+              : null,
+            projectedProgress:
+              d.goal && d.projected ? dayProgress(d.projected.nutrients, d.goal.targets) : null,
+          })),
+        };
+      },
+    }),
+
+    tool({
+      name: "get_recipe",
+      scope: "interactive",
+      description:
+        "A recipe with its items (grams for the whole recipe and for one portion, the matched food or the estimate, the computed nutrients), the totals per portion and for the whole recipe, steps, times, its source and what an adapted recipe changed.",
+      schema: z.object({ recipeId: id("recipe") }),
+      run({ recipeId }) {
+        return recipeOut(s.recipes.get(recipeId), iso);
+      },
+    }),
+
+    tool({
+      name: "save_recipe",
+      scope: "interactive",
+      description: `Save a recipe with its ingredients matched to foods, for the meal plan. Each item is a food (foodId from search_foods, lookup_barcode or create_food) with grams for the whole recipe, or, only when nothing fits, an estimate with estimatePer100g; mark optional ones. sourceMode: "published" (as published; give the source), "adapted" (based on a real recipe; give the source and list the changes, e.g. "Sahne → Kokosmilch light"), "composed" (your own). Never take the macros from the recipe's page: yamt computes them from the items and returns the totals per portion. Recipes are never changed: save a new one instead.`,
+      schema: z.object({
+        title: z.string().trim().min(1).max(120).describe('Short, e.g. "Kürbis-Curry mit Kichererbsen".'),
+        summary: z.string().trim().max(300).default("").describe("One line on what it is."),
+        sourceMode: RecipeSourceMode,
+        sourceUrl: z
+          .url({ protocol: /^https?$/ })
+          .max(4_000)
+          .optional(),
+        sourceName: z.string().trim().max(120).optional().describe('E.g. "chefkoch.de".'),
+        changes: z.array(z.string().trim().min(1).max(200)).max(20).optional(),
+        servings: z.number().int().min(1).max(50).describe("The portions the item grams are for."),
+        timeActiveMin: z.number().int().min(0).max(1_440).optional(),
+        timeTotalMin: z.number().int().min(0).max(10_080).optional(),
+        steps: z.array(z.string().trim().min(1).max(2_000)).max(50).optional(),
+        notes: z.string().trim().max(2_000).optional(),
+        items: z.array(RecipeItemInput).min(1).max(60),
+      }),
+      run(args) {
+        return recipeOut(s.recipes.save(args), iso);
+      },
+    }),
+
+    tool({
+      name: "plan_meal",
+      scope: "interactive",
+      description:
+        "Put a saved recipe onto a local date's slot in the meal plan, at the end of that slot. portionsCooked: how many portions get cooked (default 1); portionEaten: the share of one portion the user eats (default 1). Returns the planned meal with its computed numbers.",
+      schema: z.object({
+        recipeId: id("recipe"),
+        date: z.iso.date().describe("YYYY-MM-DD, the user's local date."),
+        slot: MealSlot,
+        portionsCooked: z.number().int().min(1).max(20).optional(),
+        portionEaten: z.number().min(0.1).max(10).optional(),
+        note: z.string().trim().max(1_000).optional(),
+      }),
+      run(args) {
+        return plannedOut(s.planning.create(args).plannedMeal);
+      },
+    }),
+
+    tool({
+      name: "unplan_meal",
+      scope: "interactive",
+      description:
+        "Take a planned meal off the plan. Only one still planned: logged and skipped ones are history.",
+      schema: z.object({ plannedMealId: id("planned meal") }),
+      run({ plannedMealId }) {
+        s.planning.unplan(plannedMealId);
+        return { unplanned: plannedMealId };
+      },
+    }),
   ];
 }
 
@@ -444,11 +594,74 @@ function foodOut(f: Food, iso: (ms: number | null) => string | null) {
   };
 }
 
+const totalsOut = (t: Totals) => ({
+  grams: t.grams,
+  ...t.nutrients,
+  ...(Object.values(t.missing).some((n) => n > 0)
+    ? { missing: Object.fromEntries(Object.entries(t.missing).filter(([, n]) => n > 0)) }
+    : {}),
+});
+
+function plannedOut(p: PlannedMealView) {
+  return {
+    plannedMealId: p.id,
+    date: p.date,
+    slot: p.slot,
+    position: p.position,
+    status: p.status,
+    title: p.title,
+    recipeId: p.recipeId,
+    portionsCooked: p.portionsCooked,
+    portionEaten: p.portionEaten,
+    perPortion: { grams: p.perPortion.grams, ...p.perPortion.nutrients },
+    eaten: { grams: p.eaten.grams, ...p.eaten.nutrients },
+    ...(p.loggedMealId ? { loggedMealId: p.loggedMealId } : {}),
+    ...(p.note ? { note: p.note } : {}),
+  };
+}
+
+function recipeOut(v: RecipeView, iso: (ms: number | null) => string | null) {
+  const r = v.recipe;
+  return {
+    recipeId: r.id,
+    title: r.title,
+    summary: r.summary,
+    sourceMode: r.sourceMode,
+    sourceUrl: r.sourceUrl,
+    sourceName: r.sourceName,
+    changes: r.changes,
+    servings: r.servings,
+    timeActiveMin: r.timeActiveMin,
+    timeTotalMin: r.timeTotalMin,
+    steps: r.steps,
+    notes: r.notes,
+    createdAt: iso(r.createdAt),
+    items: v.items.map((i) => ({
+      itemId: i.id,
+      description: i.description,
+      grams: i.grams,
+      portionGrams: i.portionGrams,
+      ...(i.optional ? { optional: true } : {}),
+      provenance: i.provenance,
+      confidence: i.confidence,
+      ...(i.note ? { note: i.note } : {}),
+      food: i.food
+        ? { foodId: i.food.id, name: i.food.name, brand: i.food.brand, source: i.food.source }
+        : null,
+      ...(i.food ? {} : { estimatePer100g: i.per100g }),
+      portionNutrients: i.portionNutrients,
+    })),
+    perPortion: totalsOut(v.perPortion),
+    whole: totalsOut(v.whole),
+  };
+}
+
 function revisionOut(v: MealRevisionView, iso: (ms: number | null) => string | null) {
   return {
     id: v.revision.id,
     number: v.revision.number,
-    // `copy`: logged again from another meal (#30), not analysed from this meal's captures
+    // `copy`: logged again from another meal (#30); `plan`: logged from a planned meal (#36); neither
+    // was analysed from this meal's captures
     kind: v.revision.kind,
     title: v.revision.title,
     summary: v.revision.summary,
