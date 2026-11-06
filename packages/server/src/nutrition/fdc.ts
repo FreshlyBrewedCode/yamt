@@ -7,13 +7,19 @@ export const FDC_DATA_TYPES = ["Foundation", "SR Legacy", "Survey (FNDDS)"];
 const BASE = "https://api.nal.usda.gov/fdc/v1";
 
 export const FDC_URLS = {
+  // URLSearchParams form-encodes spaces as "+", which turns "Survey (FNDDS)" into
+  // "Survey+%28FNDDS%29" and the API answers 400; encodeURIComponent uses "%20" and leaves
+  // parentheses literal, which it accepts.
   search: (query: string, limit: number, apiKey: string) => {
-    const q = new URLSearchParams({
+    const params = {
       query,
       dataType: FDC_DATA_TYPES.join(","),
       pageSize: String(limit),
       api_key: apiKey,
-    });
+    };
+    const q = Object.entries(params)
+      .map(([k, v]) => `${k}=${encodeURIComponent(v)}`)
+      .join("&");
     return `${BASE}/foods/search?${q}`;
   },
   food: (fdcId: string, apiKey: string) =>
