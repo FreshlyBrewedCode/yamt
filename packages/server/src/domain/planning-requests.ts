@@ -20,6 +20,7 @@ import {
   type PlanningRequestsResponse,
   type PlanningRound,
   type PlanningRoundKind,
+  type PlanningSettingsBody,
   type PlanningSuggestion,
   type PlanningSuggestionView,
   type PlanningUploadFields,
@@ -47,6 +48,7 @@ import { HttpError } from "./errors.ts";
 import { requestZone } from "./goals.ts";
 import { checkCapturedAt, nutrientTotals } from "./meals.ts";
 import type { PlanningService } from "./planning.ts";
+import { planningSettings } from "./planning-settings.ts";
 import { type RecipeService, recipeTotals, type SaveRecipeInput } from "./recipes.ts";
 import { localDate } from "./time.ts";
 
@@ -134,8 +136,9 @@ export class PlanningRequestService {
   // requests
 
   /**
-   * A new request with its filters completed (`PLANNING_DEFAULTS`, today in its zone) and a title
-   * from them; `text` becomes its first input. Idempotent with a client `id`.
+   * A new request with its filters completed (Settings → Planning's defaults over
+   * `PLANNING_DEFAULTS`, today in its zone) and a title from them; `text` becomes its first
+   * input. Idempotent with a client `id`.
    */
   create(
     body: CreatePlanningRequestBody,
@@ -147,7 +150,11 @@ export class PlanningRequestService {
     }
     const timeZone = requestZone(body.tz, this.timeZone);
     const now = this.now();
-    const filters = resolveFilters(body.filters, localDate(now, timeZone));
+    const filters = resolveFilters(
+      body.filters,
+      localDate(now, timeZone),
+      requestDefaults(planningSettings(this.repos.settings)),
+    );
     const request = this.repos.db.transaction(() => {
       const request = this.repos.planningRequests.insert({
         id: body.id,
@@ -789,25 +796,44 @@ function slotOpen(day: PlanDay, slot: MealSlot): boolean {
 }
 
 /**
- * The filters as given, completed with `PLANNING_DEFAULTS` and today: days sorted and distinct (none
- * before today, spanning at most `MAX_PLAN_DAYS`), slots in their order, constraints distinct.
+ * The filters as given, completed with `defaults` (Settings → Planning's `count`, `sourceMode`
+ * and `portionsCooked`, over `PLANNING_DEFAULTS` for the rest; see `requestDefaults`) and today:
+ * days sorted and distinct (none before today, spanning at most `MAX_PLAN_DAYS`), slots in their
+ * order, constraints distinct.
  */
-export function resolveFilters(f: PlanningFilters, today: string): ResolvedPlanningFilters {
+export function resolveFilters(
+  f: PlanningFilters,
+  today: string,
+  defaults: Omit<ResolvedPlanningFilters, "days"> = PLANNING_DEFAULTS,
+): ResolvedPlanningFilters {
   const days = [...new Set(f.days ?? [today])].sort();
   const past = days.find((d) => d < today);
   if (past) throw new HttpError(400, `filters.days: ${past} lies in the past`, `today is ${today}`);
   if (days.length > 1 && days.at(-1)! > addDays(days[0]!, MAX_PLAN_DAYS - 1)) {
     throw new HttpError(400, `filters.days: they span more than ${MAX_PLAN_DAYS} days`);
   }
-  const slots = MealSlotEnum.options.filter((s) => (f.slots ?? PLANNING_DEFAULTS.slots).includes(s));
+  const slots = MealSlotEnum.options.filter((s) => (f.slots ?? defaults.slots).includes(s));
   return {
     days,
     slots,
-    timeCapMin: f.timeCapMin ?? PLANNING_DEFAULTS.timeCapMin,
-    constraints: [...new Set(f.constraints ?? PLANNING_DEFAULTS.constraints)],
-    useUp: f.useUp ?? PLANNING_DEFAULTS.useUp,
-    sourceMode: f.sourceMode ?? PLANNING_DEFAULTS.sourceMode,
-    portionsCooked: f.portionsCooked ?? PLANNING_DEFAULTS.portionsCooked,
-    count: f.count ?? PLANNING_DEFAULTS.count,
+    timeCapMin: f.timeCapMin ?? defaults.timeCapMin,
+    constraints: [...new Set(f.constraints ?? defaults.constraints)],
+    useUp: f.useUp ?? defaults.useUp,
+    sourceMode: f.sourceMode ?? defaults.sourceMode,
+    portionsCooked: f.portionsCooked ?? defaults.portionsCooked,
+    count: f.count ?? defaults.count,
+  };
+}
+
+/**
+ * `PLANNING_DEFAULTS` with Settings → Planning's `count`, `sourceMode` and `portionsCooked` (#46)
+ * laid over it; the rest (slots, time cap, constraints, use-up) stays #51's.
+ */
+export function requestDefaults(settings: PlanningSettingsBody): Omit<ResolvedPlanningFilters, "days"> {
+  return {
+    ...PLANNING_DEFAULTS,
+    count: settings.count,
+    sourceMode: settings.sourceMode,
+    portionsCooked: settings.portionsCooked,
   };
 }

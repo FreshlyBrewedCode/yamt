@@ -25,5 +25,10 @@ export function agentRoutes(s: Services): Hono<IdentityEnv> {
     return c.json<AgentResponse>(await s.agent.save(body));
   });
 
+  r.put("/agent/planning", async (c) => {
+    const body = AgentSettingsBody.parse(await readJson(c));
+    return c.json<AgentResponse>(await s.agent.savePlanning(body));
+  });
+
   return r;
 }

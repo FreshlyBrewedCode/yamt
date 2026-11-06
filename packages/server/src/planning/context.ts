@@ -1,6 +1,13 @@
-import { addDays, type MealSlot, type PlanDay, type PlanningSuggestionView } from "@yamt/shared";
+import {
+  addDays,
+  type MealSlot,
+  type PlanDay,
+  type PlanningPreferences,
+  type PlanningSuggestionView,
+} from "@yamt/shared";
 import { isVoiceInput } from "../db/repos/planning-inputs.ts";
 import { HttpError } from "../domain/errors.ts";
+import { planningSettings } from "../domain/planning-settings.ts";
 import { dayRange, isoLocal, localDate } from "../domain/time.ts";
 import type { Services } from "../services.ts";
 import { slotBudget } from "./budget.ts";
@@ -10,23 +17,6 @@ export const RECENT_DAYS = 14;
 /** Main items listed per recent meal or earlier suggestion (the biggest by kcal). */
 const MAIN_ITEMS = 4;
 
-/**
- * The user's planning preferences (#36's Settings → Planning). #46 stores them; until then there
- * are none and the context says `null`. #46 fills `planningPreferences`, nothing else changes.
- */
-export interface PlanningPreferences {
-  /** Avoid ("Rosenkohl"). */
-  dislikes: string[];
-  /** Never ("Erdnüsse"): a suggestion with one is wrong. */
-  neverEat: string[];
-  /** What the kitchen has ("Airfryer", "kein Ofen"). */
-  equipment: string[];
-  /** Most minutes of cooking on a weekday; null: no limit. */
-  weekdayCookingMin: number | null;
-  /** Preferred for real recipes ("chefkoch.de"). */
-  favouriteSites: string[];
-}
-
 /** A leftover to use up (#49's list); until then the list is empty. */
 export interface PlanningLeftover {
   leftoverId: string;
@@ -35,9 +25,9 @@ export interface PlanningLeftover {
   note: string | null;
 }
 
-/** Until #46: none. */
-export function planningPreferences(_s: Services): PlanningPreferences | null {
-  return null;
+/** The user's planning preferences (#36's Settings → Planning, #46): the saved setting's, or its defaults. */
+export function planningPreferences(s: Services): PlanningPreferences {
+  return planningSettings(s.repos.settings).preferences;
 }
 
 /** Until #49: none. */
