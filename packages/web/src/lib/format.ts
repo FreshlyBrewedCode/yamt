@@ -22,16 +22,21 @@ export function startOfDay(ms: number, days = 0): number {
 const longDate = new Intl.DateTimeFormat("en-GB", { weekday: "long", day: "numeric", month: "short" });
 const weekday = new Intl.DateTimeFormat("en-GB", { weekday: "long" });
 const shortDate = new Intl.DateTimeFormat("en-GB", { weekday: "short", day: "numeric", month: "short" });
+const shortWeekday = new Intl.DateTimeFormat("en-GB", { weekday: "short" });
+
+/** "Tue" for a `YYYY-MM-DD` date. */
+export const formatWeekday = (date: string): string => shortWeekday.format(dateStart(date));
 
 /** "Tuesday 3 Nov". */
 export const formatLongDate = (ms: number): string => longDate.format(ms).replace(",", "");
 
-/** "Today", "Yesterday", a weekday within the week, else "Mon 26 Oct". */
+/** "Today", "Yesterday", "Tomorrow", a weekday within a week either way, else "Mon 26 Oct". */
 export function dayLabel(dayStart: number, now = Date.now()): string {
   const diff = Math.round((startOfDay(now) - dayStart) / 86_400_000);
   if (diff === 0) return "Today";
   if (diff === 1) return "Yesterday";
-  if (diff > 1 && diff < 7) return weekday.format(dayStart);
+  if (diff === -1) return "Tomorrow";
+  if (Math.abs(diff) > 1 && Math.abs(diff) < 7) return weekday.format(dayStart);
   return shortDate.format(dayStart).replace(",", "");
 }
 

@@ -26,7 +26,10 @@ export const planningPaths = {
   recipe: (id: string) => `/api/recipes/${id}`,
   /** POST a planned meal (`CreatePlannedMealBody`). */
   plannedMeals: "/api/planned-meals",
-  /** PATCH (`UpdatePlannedMealBody`) or DELETE (unplan) a planned meal; only while `planned`. */
+  /**
+   * GET a planned meal (`PlannedMealResponse`, any status); PATCH (`UpdatePlannedMealBody`) or
+   * DELETE (unplan) it, only while `planned`.
+   */
   plannedMeal: (id: string) => `/api/planned-meals/${id}`,
   /** POST: the planned meal won't be eaten (`skipped`); idempotent. */
   skip: (id: string) => `/api/planned-meals/${id}/skip`,

@@ -42,8 +42,8 @@ import { TotalsSlab } from "./totals-slab";
 const WEEKDAYS = ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"] as const;
 const pct = (x: number) => `${Math.round(x * 100)} %`;
 
-/** The fills on the ink slab: three lime strengths for the plan, greys for the rest. */
-const fill = {
+/** The fills on the ink slab: three lime strengths for the plan, greys for the rest (the plan view's too). */
+export const fill = {
   on: "bg-lime text-lime-foreground",
   just: "bg-lime/55 text-ink-foreground",
   far: "bg-lime/25 text-ink-foreground dark:bg-lime/35",
@@ -72,7 +72,7 @@ function lookOf(day: MonthDay | undefined): DayLook {
 }
 
 /** The direction caps: a bar on top for over, below for under, a hollow one below for too low. */
-function Caps({ c, inset }: { c: Classification; inset: boolean }) {
+export function Caps({ c, inset }: { c: Classification; inset: boolean }) {
   const x = inset ? "inset-x-[3px]" : "inset-x-0";
   if (c.tooLow) {
     return (

@@ -12,3 +12,4 @@ export * from "./api-share.ts";
 export * from "./api-weight.ts";
 export * from "./goal-calc.ts";
 export * from "./plan.ts";
+export * from "./totals.ts";

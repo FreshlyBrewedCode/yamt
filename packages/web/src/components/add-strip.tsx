@@ -1,3 +1,4 @@
+import { cn } from "cn";
 import { Camera, ClipboardPaste, FileAudio, Link2, type LucideIcon, NotebookPen, X } from "lucide-react";
 import { useRef, useState } from "react";
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet";
@@ -135,19 +136,22 @@ export function CaptureSheet({
   title,
   description,
   children,
+  className,
 }: {
   open: boolean;
   onClose: () => void;
   title: string;
   description: string;
   children: React.ReactNode;
+  /** E.g. a height cap with scrolling, for a sheet taller than the screen. */
+  className?: string;
 }) {
   return (
     <Sheet open={open} onOpenChange={(o) => !o && onClose()}>
       <SheetContent
         side="top"
         showCloseButton={false}
-        className="mx-auto max-w-md gap-0 pt-[env(safe-area-inset-top)]"
+        className={cn("mx-auto max-w-md gap-0 pt-[env(safe-area-inset-top)]", className)}
         onOpenAutoFocus={(e) => {
           // focus the field, not the close button, so the keyboard comes up at once
           e.preventDefault();

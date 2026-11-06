@@ -26,6 +26,10 @@ export function planningRoutes(s: Services): Hono<IdentityEnv> {
     return c.json<PlannedMealResponse>({ plannedMeal }, created ? 201 : 200);
   });
 
+  r.get("/planned-meals/:id", (c) =>
+    c.json<PlannedMealResponse>({ plannedMeal: s.planning.get(c.req.param("id")) }),
+  );
+
   r.patch("/planned-meals/:id", async (c) =>
     c.json<PlannedMealResponse>({
       plannedMeal: s.planning.update(c.req.param("id"), UpdatePlannedMealBody.parse(await readJson(c))),

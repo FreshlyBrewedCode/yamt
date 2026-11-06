@@ -1,14 +1,16 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { type DayTotals, goalInForce } from "@yamt/shared";
-import { CalendarDays, ChevronRight, CloudOff, Plus, Scale, Settings, Square } from "lucide-react";
-import { useMemo } from "react";
+import { CalendarDays, ChevronRight, CloudOff, Scale, Settings, Square } from "lucide-react";
+import { useMemo, useState } from "react";
 import { groupByDay, MealRow, type MealRowData } from "@/components/meal-row";
-import { BottomSlab, iconButtonClass, Label, SlabButton, Strip } from "@/components/slab";
+import { AteItSheet, PlannedNote, PlannedRow, SplitSlab } from "@/components/planning";
+import { iconButtonClass, Label, Strip } from "@/components/slab";
 import { TotalsSlab } from "@/components/totals-slab";
 import { dayLabel, formatLongDate, formatNumber, localDate, plural, startOfDay } from "@/lib/format";
 import { uuidv7 } from "@/lib/ids";
 import { useOutbox } from "@/lib/outbox";
-import { useGoals, useMeals } from "@/lib/queries";
+import { stillPlanned, withPlanned } from "@/lib/planning";
+import { useGoals, useMeals, usePlan } from "@/lib/queries";
 
 export const Route = createFileRoute("/")({ component: Overview });
 
@@ -17,9 +19,10 @@ const DAYS = 14;
 
 /**
  * Home: today's totals against today's goal (a tap opens the day view), then the last two weeks'
- * meals by day (each day header opens that day, with its kcal against its own goal), and Log
- * meal at the bottom. The header's calendar opens the month (#33), the scale goals and weight,
- * the cog the settings.
+ * meals by day (each day header opens that day, with its kcal against its own goal); today's
+ * planned meals (#40) follow its eaten ones as quiet rows with Ate it, and the totals say what the
+ * day comes to with them. The bottom slab is Log | Plan. The header's calendar opens the month
+ * (#33), the scale goals and weight, the cog the settings.
  */
 function Overview() {
   const navigate = useNavigate();
@@ -30,6 +33,11 @@ function Overview() {
   const meals = useMeals(from, to);
   const goals = useGoals();
   const outbox = useOutbox();
+  const todayDate = localDate(now);
+  const plan = usePlan(todayDate, todayDate);
+  const planToday = plan.data?.days.find((d) => d.date === todayDate);
+  const planned = stillPlanned(planToday);
+  const [ate, setAte] = useState<string | null>(null);
 
   const days = useMemo(() => {
     const list = groupByDay(meals.data?.meals ?? [], outbox.entries);
@@ -37,7 +45,6 @@ function Overview() {
     return list[0]?.start === today ? list : [{ start: today, rows: [] as MealRowData[] }, ...list];
   }, [meals.data, outbox.entries, today]);
   const totals = new Map<string, DayTotals>((meals.data?.days ?? []).map((d) => [d.date, d]));
-  const todayDate = localDate(now);
   const todayTotals = totals.get(todayDate);
   const todayRows = days.find((d) => d.start === today)?.rows ?? [];
   const waiting = todayRows.filter((r) => !r.meal?.totals).length;
@@ -82,14 +89,15 @@ function Overview() {
             label="kcal today"
             targets={goalOn(todayDate)?.targets}
             data-testid="today-totals"
-            note={
-              waiting > 0 ? (
+            note={[
+              waiting > 0 && (
                 <>
                   <Square className="size-2.5 fill-current" strokeWidth={0} />
                   {plural(waiting, "meal")} not counted yet
                 </>
-              ) : undefined
-            }
+              ),
+              withPlanned(planToday) && <PlannedNote day={planToday} />,
+            ]}
           />
         </Link>
 
@@ -116,7 +124,7 @@ function Overview() {
                   meta={
                     <span className="flex items-center gap-1">
                       {day.start === today
-                        ? plural(day.rows.length, "meal")
+                        ? `${plural(day.rows.length, "meal")}${planned.length ? ` · ${planned.length} planned` : ""}`
                         : target !== null
                           ? `${formatNumber(kcal)} / ${formatNumber(target)} kcal`
                           : `${formatNumber(kcal)} kcal`}
@@ -125,7 +133,7 @@ function Overview() {
                   }
                 />
               </Link>
-              {day.rows.length === 0 ? (
+              {day.rows.length === 0 && (day.start !== today || planned.length === 0) ? (
                 <p className="px-5 py-6 font-medium text-muted-foreground">
                   {meals.isPending ? "Loading…" : "Nothing logged yet today."}
                 </p>
@@ -134,6 +142,9 @@ function Overview() {
                   {day.rows.map((r) => (
                     <MealRow key={r.id} row={r} />
                   ))}
+                  {/* what is still planned for today, after what was eaten */}
+                  {day.start === today &&
+                    planned.map((p) => <PlannedRow key={p.id} planned={p} onAte={() => setAte(p.id)} />)}
                 </ul>
               )}
             </section>
@@ -154,16 +165,20 @@ function Overview() {
         </Link>
       </main>
 
-      {/* Log meal is part of the layout: a lime slab at the bottom, never floating over the list. */}
-      <BottomSlab>
-        <SlabButton
-          onClick={() =>
-            navigate({ to: "/meals/$mealId", params: { mealId: uuidv7() }, search: { new: true } })
-          }
-        >
-          <Plus className="size-8" strokeWidth={3} /> Log meal
-        </SlabButton>
-      </BottomSlab>
+      {/* Log | Plan is part of the layout: a slab at the bottom, never floating over the list. Until the
+          planning screens exist (#36), Plan opens the plan. */}
+      <SplitSlab
+        onLog={() => navigate({ to: "/meals/$mealId", params: { mealId: uuidv7() }, search: { new: true } })}
+        onPlan={() => navigate({ to: "/plan/days" })}
+      />
+      <AteItSheet
+        planned={planned.find((p) => p.id === ate) ?? null}
+        onClose={() => setAte(null)}
+        onLogged={({ meal }) => {
+          setAte(null);
+          void navigate({ to: "/meals/$mealId", params: { mealId: meal.id } });
+        }}
+      />
     </>
   );
 }

@@ -22,6 +22,7 @@ import {
   type RepeatMealResponse,
   type RestoreMealResponse,
   type RetractResponse,
+  scaleGrams,
   type TranscribeResponse,
   type UpdateMealBody,
   type UploadCaptureFields,
@@ -596,10 +597,6 @@ export const nutrientTotals = ({ grams, items, nutrients }: NutrientTotals): Nut
   items,
   nutrients,
 });
-
-/** Grams × a portion factor, to the hundredth of a gram (never 0: items need grams). */
-export const scaleGrams = (grams: number, factor: number) =>
-  Math.max(0.01, Math.round(grams * factor * 100) / 100);
 
 /** "Tue 3 Nov" in the zone: the source's day in a copy's assumption line. */
 const shortDate = (ms: number, timeZone: string) =>
