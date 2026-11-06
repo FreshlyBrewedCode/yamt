@@ -53,3 +53,21 @@ export async function readJson(c: Context): Promise<unknown> {
     throw new HttpError(400, "the body is not valid JSON");
   }
 }
+
+/** A multipart body (malformed is a 400) with its `file` part (required) and a reader for text fields. */
+export async function readUpload(
+  c: Context,
+): Promise<{ file: File; field: (name: string) => string | undefined }> {
+  const form = await c.req.raw.formData().catch(() => {
+    throw new HttpError(400, "malformed multipart body");
+  });
+  const file = form.get("file");
+  if (!(file instanceof File)) throw new HttpError(400, "file: a file upload is required");
+  return {
+    file,
+    field: (name) => {
+      const v = form.get(name);
+      return typeof v === "string" && v !== "" ? v : undefined;
+    },
+  };
+}
