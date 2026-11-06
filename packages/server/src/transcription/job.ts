@@ -3,7 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { isVoice } from "@yamt/shared";
 import type { Repos } from "../db/repos/index.ts";
-import { dedupeKeys, type Job } from "../db/repos/jobs.ts";
+import { dedupeKeys, type Job, type JobPayloads } from "../db/repos/jobs.ts";
+import { isVoiceInput } from "../db/repos/planning-inputs.ts";
 import type { JobContext, JobHandler, JobOf, JobOutcome } from "../jobs/worker.ts";
 import type { Services } from "../services.ts";
 import type { SttBackend, SttItem, SttResult } from "./backend.ts";
@@ -20,17 +21,72 @@ export interface TranscribeOptions {
   log?: (line: string) => void;
 }
 
+type TranscribePayload = JobPayloads["transcribe"];
+
 /**
- * The `transcribe` job: an audio capture's original → ffmpeg → 16 kHz mono WAV in a temp dir →
+ * What a `transcribe` job transcribes: a voice capture (`{captureId}`) or a voice planning input
+ * (`{inputId}`, #44). Both have their media stored the same way and a transcript of the same
+ * shape; only the table and what waits for it differ.
+ */
+interface VoiceSource {
+  id: string;
+  /** Its job's dedupe key: a queued one is a re-run that wins over this one. */
+  key: string;
+  /** Relative to the data dir; null when it can't be transcribed (then `refuse` says why). */
+  mediaPath: string | null;
+  refuse: string | null;
+}
+
+function voiceSource(repos: Repos, p: TranscribePayload): VoiceSource {
+  if ("inputId" in p) {
+    const i = repos.planningInputs.get(p.inputId);
+    const refuse = !i
+      ? `planning input ${p.inputId} not found`
+      : !isVoiceInput(i) || !i.mediaPath
+        ? `planning input ${p.inputId} is not a voice input`
+        : i.retractedAt !== null
+          ? "the input was retracted"
+          : null;
+    return {
+      id: p.inputId,
+      key: dedupeKeys.transcribeInput(p.inputId),
+      mediaPath: i?.mediaPath ?? null,
+      refuse,
+    };
+  }
+  const c = repos.captures.get(p.captureId);
+  const refuse = !c
+    ? `capture ${p.captureId} not found`
+    : !isVoice(c) || !c.mediaPath
+      ? `capture ${p.captureId} is not a voice capture`
+      : c.retractedAt !== null
+        ? "the capture was retracted"
+        : null;
+  return {
+    id: p.captureId,
+    key: dedupeKeys.transcribe(p.captureId),
+    mediaPath: c?.mediaPath ?? null,
+    refuse,
+  };
+}
+
+/** The transcript table of the payload's kind of source. */
+const transcriptsOf = (repos: Repos, p: TranscribePayload) =>
+  "inputId" in p ? repos.planningTranscripts : repos.transcripts;
+
+const sourceId = (p: TranscribePayload): string => ("inputId" in p ? p.inputId : p.captureId);
+
+/**
+ * The `transcribe` job: a voice capture's (or voice planning input's) original → ffmpeg → 16 kHz mono WAV in a temp dir →
  * the STT backend → its transcript (`done` with text, model, language, duration, segments).
  * The original is only read. Due jobs run as one batch (one STT process, one model load), one
  * batch at a time; the analysis may run alongside.
  *
- * A finished transcript lets a waiting analysis of its meal go at once (`nudgeAnalysis`) rather
- * than at its next 15 s look. A failure is retried with the queue's backoff (30 s, 2 min) while
- * the transcript stays `pending`; after the last attempt (or at once when retrying can't help: a
- * file ffmpeg can't read, a missing tool) it is `failed` with the error, and the analysis
- * proceeds without it. A server stop runs unfinished items again at the next start, no attempt
+ * A finished transcript lets a waiting analysis of its meal (or the `plan` job of its planning
+ * request) go at once (`nudgeWaiting`) rather than at its next 15 s look. A failure is retried
+ * with the queue's backoff (30 s, 2 min) while the transcript stays `pending`; after the last
+ * attempt (or at once when retrying can't help: a file ffmpeg can't read, a missing tool) it is
+ * `failed` with the error, and what waits for it proceeds without it. A server stop runs unfinished items again at the next start, no attempt
  * spent. A re-run requested meanwhile (a newer queued job) wins: this run's result is dropped.
  */
 export class TranscribeJob implements JobHandler<"transcribe"> {
@@ -56,7 +112,7 @@ export class TranscribeJob implements JobHandler<"transcribe"> {
   async runBatch(jobs: JobOf<"transcribe">[], { signal }: JobContext): Promise<JobOutcome[]> {
     const { repos, media } = this.s;
     const outcomes = new Map<string, JobOutcome>();
-    const byCapture = new Map<string, JobOf<"transcribe">>();
+    const bySource = new Map<string, JobOf<"transcribe">>();
     const stopped = (): JobOutcome => ({
       status: "reschedule",
       runAfter: this.now(),
@@ -68,27 +124,20 @@ export class TranscribeJob implements JobHandler<"transcribe"> {
       let ffmpeg: string | null = null;
       const items: SttItem[] = [];
       for (const job of jobs) {
-        const { captureId } = job.payload;
         if (signal.aborted) {
           outcomes.set(job.id, stopped());
           continue;
         }
-        const c = repos.captures.get(captureId);
-        const refuse = !c
-          ? `capture ${captureId} not found`
-          : !isVoice(c) || !c.mediaPath
-            ? `capture ${captureId} is not a voice capture`
-            : c.retractedAt !== null
-              ? "the capture was retracted"
-              : null;
-        if (refuse || !c?.mediaPath) {
-          outcomes.set(job.id, { status: "failed", error: refuse ?? "no media", retryable: false });
+        const source = voiceSource(repos, job.payload);
+        if (source.refuse || !source.mediaPath) {
+          outcomes.set(job.id, { status: "failed", error: source.refuse ?? "no media", retryable: false });
           continue;
         }
-        const wav = join(dir, `${captureId}.wav`);
+        const id = source.id;
+        const wav = join(dir, `${id}.wav`);
         try {
           ffmpeg ??= await this.o.ffmpeg();
-          await normalise(ffmpeg, media.absolute(c.mediaPath), wav, { signal });
+          await normalise(ffmpeg, media.absolute(source.mediaPath), wav, { signal });
         } catch (e) {
           if (signal.aborted) outcomes.set(job.id, stopped());
           else {
@@ -97,20 +146,20 @@ export class TranscribeJob implements JobHandler<"transcribe"> {
           }
           continue;
         }
-        byCapture.set(captureId, job);
-        items.push({ id: captureId, path: wav });
+        bySource.set(id, job);
+        items.push({ id, path: wav });
       }
 
       if (items.length > 0) {
         const end = await this.o.backend.transcribe(items, {
           signal,
-          onResult: (captureId, r) => {
-            const job = byCapture.get(captureId);
+          onResult: (id, r) => {
+            const job = bySource.get(id);
             if (job && !outcomes.has(job.id)) outcomes.set(job.id, this.store(job, r));
           },
         });
         for (const item of items) {
-          const job = byCapture.get(item.id)!;
+          const job = bySource.get(item.id)!;
           if (outcomes.has(job.id)) continue;
           outcomes.set(
             job.id,
@@ -128,16 +177,16 @@ export class TranscribeJob implements JobHandler<"transcribe"> {
     return jobs.map((j) => outcomes.get(j.id) ?? stopped());
   }
 
-  /** A result as it arrives: the transcript is written at once, so a waiting analysis can go. */
+  /** A result as it arrives: the transcript is written at once, so whatever waits for it can go. */
   private store(job: JobOf<"transcribe">, r: SttResult): JobOutcome {
     if (!r.ok) return { status: "failed", error: r.error };
     const { repos } = this.s;
-    const { captureId } = job.payload;
+    const { id, key } = voiceSource(repos, job.payload);
     // a re-run was requested while this one ran: its result replaces ours anyway
-    if (repos.jobs.hasQueued(dedupeKeys.transcribe(captureId))) return { status: "done" };
+    if (repos.jobs.hasQueued(key)) return { status: "done" };
     const now = this.now();
-    repos.transcripts.complete(
-      captureId,
+    transcriptsOf(repos, job.payload).complete(
+      id,
       {
         text: r.text,
         model: r.model,
@@ -151,10 +200,10 @@ export class TranscribeJob implements JobHandler<"transcribe"> {
     );
     if (r.durationMs && r.elapsedMs) {
       this.log(
-        `transcription: ${captureId}: ${(r.durationMs / 1000).toFixed(1)} s of audio in ${(r.elapsedMs / 1000).toFixed(1)} s (RTF ${(r.elapsedMs / r.durationMs).toFixed(2)})`,
+        `transcription: ${id}: ${(r.durationMs / 1000).toFixed(1)} s of audio in ${(r.elapsedMs / 1000).toFixed(1)} s (RTF ${(r.elapsedMs / r.durationMs).toFixed(2)})`,
       );
     }
-    nudgeAnalysis(this.s, captureId, now);
+    nudgeWaiting(this.s, job.payload, now);
     return { status: "done" };
   }
 
@@ -162,11 +211,10 @@ export class TranscribeJob implements JobHandler<"transcribe"> {
     if (outcome.status === "failed") {
       const next = job.status === "queued" ? `, retrying at ${new Date(job.runAfter).toISOString()}` : "";
       this.log(
-        `transcription: ${job.payload.captureId} failed (attempt ${job.attempts}${next}): ${outcome.error}`,
+        `transcription: ${sourceId(job.payload)} failed (attempt ${job.attempts}${next}): ${outcome.error}`,
       );
     }
-    if (settleTranscript(this.s.repos, job, this.now()))
-      nudgeAnalysis(this.s, job.payload.captureId, this.now());
+    if (settleTranscript(this.s.repos, job, this.now())) nudgeWaiting(this.s, job.payload, this.now());
   }
 }
 
@@ -177,16 +225,25 @@ export class TranscribeJob implements JobHandler<"transcribe"> {
  */
 export function settleTranscript(repos: Repos, job: Job, now = Date.now()): boolean {
   if (job.type !== "transcribe" || job.status !== "failed") return false;
-  const { captureId } = job.payload;
-  if (repos.jobs.hasQueued(dedupeKeys.transcribe(captureId))) return false;
-  if (repos.transcripts.get(captureId)?.status !== "pending") return false;
-  repos.transcripts.fail(captureId, job.lastError ?? "the transcription failed", now);
+  const { id, key } = voiceSource(repos, job.payload);
+  if (repos.jobs.hasQueued(key)) return false;
+  const transcripts = transcriptsOf(repos, job.payload);
+  if (transcripts.get(id)?.status !== "pending") return false;
+  transcripts.fail(id, job.lastError ?? "the transcription failed", now);
   return true;
 }
 
-/** The capture's meal may have an analysis waiting for this transcript: make it due and poke the worker. */
-export function nudgeAnalysis(s: Services, captureId: string, now = Date.now()): void {
-  const capture = s.repos.captures.get(captureId);
+/**
+ * Something may wait for this transcript: the analysis of the capture's meal, or the `plan` job
+ * of the input's request once the input is in a round. Make it due and poke the worker.
+ */
+export function nudgeWaiting(s: Services, p: TranscribePayload, now = Date.now()): void {
+  if ("inputId" in p) {
+    const input = s.repos.planningInputs.get(p.inputId);
+    if (input?.roundId && s.repos.jobs.expedite(dedupeKeys.plan(input.requestId), now)) s.queue.wake();
+    return;
+  }
+  const capture = s.repos.captures.get(p.captureId);
   if (!capture) return;
   if (s.repos.jobs.expedite(dedupeKeys.analyse(capture.mealId), now)) s.queue.wake();
 }

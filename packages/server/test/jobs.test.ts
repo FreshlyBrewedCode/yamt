@@ -53,7 +53,7 @@ describe("claim", () => {
     const b = jobs.enqueue("analyse", { mealId: "b" }, { now: T0 + 1 }).job;
     const claimed = jobs.claim({ now: T0 + 10 });
     expect(claimed).toMatchObject({ id: a.id, status: "running", attempts: 1, claimedAt: T0 + 10 });
-    expect(claimed?.type === "transcribe" && claimed.payload.captureId).toBe("a");
+    expect(claimed?.payload).toEqual({ captureId: "a" });
     expect(jobs.claim({ now: T0 + 10 })?.id).toBe(b.id);
     expect(jobs.claim({ now: T0 + 10 })).toBeNull();
     expect(jobs.claim({ now: T0 + 60_000 })?.id).toBe(late.id);

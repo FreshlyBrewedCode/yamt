@@ -69,6 +69,9 @@ packages/shared/src/      contracts shared by server and web (no runtime deps bu
   api-planning.ts         meal planning (#36): `planningPaths`, `RecipeSourceMode`, `MealSlot`, `MAIN_SLOTS`,
                           `PlannedMealStatus`, recipes and their views, planned meals, `PlanQuery` / `PlanResponse`
                           (`PlanDay`), the bodies, "Ate it" (`LogPlannedMealBody`), `slotOf` (an eaten meal's slot)
+  api-planning-requests.ts  planning requests (#44): `planningRequestPaths`, `PlanningFilters` /
+                          `ResolvedPlanningFilters` / `PLANNING_DEFAULTS`, `requestTitle`, the input, round and
+                          suggestion enums and types (`PlanningSuggestionView` with `SuggestionFit`), the bodies
   api-runs.ts             analysis runs and trace lines: `runPaths`, `AnalysisRun`, `TraceEntry`
   api-push.ts             Web Push: `pushPaths`, `PUSH_EVENTS`, `SubscribeBody`, `PushEventsBody`,
                           `PushPayload` (what the service worker receives)
@@ -93,7 +96,8 @@ packages/server/src/
   jobs/worker.ts          JobWorker: the in-process loop over `jobs`, handlers by type (single or batch)
   analysis/               job.ts (the `analyse` handler), prompt.ts (prompt and photos), permissions.ts
                           (the policy), skill.ts (loads log-meal), trace.ts (TraceWriter)
-  transcription/          job.ts (the `transcribe` handler, settleTranscript, nudgeAnalysis), backend.ts
+  transcription/          job.ts (the `transcribe` handler for voice captures and planning inputs,
+                          settleTranscript, nudgeWaiting), backend.ts
                           (the SttBackend interface), local.ts (LocalWhisperBackend: the services/stt
                           process and its NDJSON protocol), ffmpeg.ts (normalisation), tools.ts (finding
                           ffmpeg)
@@ -101,9 +105,9 @@ packages/server/src/
   build-stamp.ts          rebuild packages/web/dist when its sources changed
   auth/identity.ts        requireTailnetIdentity: the Tailscale-User-Login check, dev bypass
   auth/bearer.ts          requireBearer: token auth for machine clients (/mcp)
-  http/                   api.ts (mounts), meals.ts, runs.ts, weight.ts, goals.ts, push.ts, share.ts, agent.ts and
-                          planning.ts (routes), file-response.ts
-                          (media, ranges), middleware.ts (sameOrigin, errors, readJson),
+  http/                   api.ts (mounts), meals.ts, runs.ts, weight.ts, goals.ts, push.ts, share.ts, agent.ts,
+                          planning.ts and planning-requests.ts (routes), file-response.ts
+                          (media, ranges), middleware.ts (sameOrigin, errors, readJson, readUpload),
                           origin.ts (originAllowed, publicOrigin), static.ts
   domain/                 errors.ts (HttpError), meals.ts (MealService: captures, retract, analyse,
                           eaten-at, revision history, repeat and repeatable: logging a meal again,
@@ -112,17 +116,22 @@ packages/server/src/
                           (FoodService: search, barcode, create), goals.ts (GoalService: goals and the
                           day view), calendar.ts (CalendarService: a month, #33; goalsByDate), share.ts (ShareService:
                           the share target), recipes.ts (RecipeService: save and view), planning.ts
-                          (PlanningService: planned meals, the plan, "Ate it", #36), time.ts (days and local times)
+                          (PlanningService: planned meals, the plan, "Ate it", #36), planning-requests.ts
+                          (PlanningRequestService: requests, inputs, rounds, suggestions, picking, #44),
+                          time.ts (days and local times)
   nutrition/              nutrients.ts (OFF/FDC → core set), totals.ts (re-exports the shared totals), ranking.ts,
                           off.ts / fdc.ts (clients), http.ts (timeouts, size caps, rate limits,
                           User-Agent), recipe.ts (fetch + schema.org Recipe JSON-LD)
   mcp/                    endpoint.ts (/mcp: auth, stateless transport), tools.ts (the tools,
                           scopes, instructions), tokens.ts (interactive and per-run tokens)
   media/                  store.ts (write-once files), detect.ts (type sniffing), exif.ts,
-                          heic.ts (HEIC → JPEG), downscale.ts (JPEG → ≤ 1600 px, upright)
+                          heic.ts (HEIC → JPEG), downscale.ts (JPEG → ≤ 1600 px, upright), upload.ts
+                          (storeUpload: an upload into the store, for captures and planning inputs; storedFile)
   db/                     index.ts (open, pragmas, migration runner, newId), migrations/*.sql,
                           repos/ (one per aggregate: meals, captures, transcripts, jobs, weight,
-                          foods, revisions, runs, goals, profile, push, settings, recipes, planned-meals)
+                          foods, revisions, runs, goals, profile, push, settings, recipes, planned-meals,
+                          planning-requests, planning-inputs, planning-rounds (rounds and their suggestions);
+                          transcripts.ts holds both transcript tables)
   push/                   vapid.ts (the key pair in vapid.json), sender.ts (PushSender: encrypt, sign,
                           deliver, 404/410 cleanup), messages.ts (what a meal's notification says,
                           notifyMeal)
@@ -364,8 +373,31 @@ new value never needs a table rebuild.
   recipe's), `portions_cooked` (default 1), `portion_eaten` (a factor of one portion, default 1),
   `status` (`planned` → `logged` | `skipped`), `logged_meal_id` (unique), `leftover_of` (the
   planned meal whose extra portion this is; for #36's leftovers, null for now), `suggestion_id`
-  (null until #36's suggestions), `note`. Only a `planned` one can be deleted (unplanned; a trigger
-  keeps logged and skipped ones).
+  (the suggestion it was picked from, #44; null for one planned by hand), `note`. Only a `planned`
+  one can be deleted (unplanned; a trigger keeps logged and skipped ones).
+- **planning_requests** (#44): `title` (`requestTitle` from the filters, or the outline's), `origin`
+  (`user` | `nightly`), `filters` (JSON `ResolvedPlanningFilters`: complete, the defaults filled in
+  when it was made), `time_zone` (the phone's: the zone of its days and of the fit), `archived_at`
+  (soft; null while open), `created_at`, `updated_at` (anything in the thread changed).
+- **planning_inputs** (#44): what the user added to a request, a sibling of `captures` (whose
+  `meal_id` is NOT NULL and which is immutable, with transcripts and questions hanging off it):
+  `kind` (`text`, `link`, `audio`, `image`, `file`), the same media columns and storage
+  (`media/<yyyy>/<mm>/<input id>.<ext>`, a JPEG for HEIC), `captured_at`, `taken_at`, `text`/`url`,
+  `round_id` (the round it went into: set once, when the next round starts; null meanwhile) and
+  `retracted_at`. Immutable by triggers but for those two, each set once; never deleted.
+- **planning_transcripts** (#44): a voice input's transcript, `input_id` the key, the columns of
+  `transcripts` (`TranscriptRepo` and `PlanningTranscriptRepo` share their SQL).
+- **planning_rounds** (#44): `request_id`, `number` (1, 2, … unique per request), `kind` (`first` |
+  `more` | `steer`), `status` (`queued` → `running` → `done` | `failed`), `count` (suggestions asked
+  for), `run_id` (the run filling it, #45; no foreign key yet), `error`, `created_at`, `started_at`,
+  `ended_at`. A partial unique index allows one `queued` or `running` round per request.
+- **planning_suggestions** (#44): `round_id`, `position` (0, 1, … in the outline's order; unique
+  per round), `status` (`outlined` → `ready` | `failed`), `title`, `approach` (one line),
+  `source_mode`, `source_url`, `proposed_date`, `proposed_slot`, `recipe_id` (set when ready: the
+  suggestion **is** that insert-only recipe), `why` (JSON, up to four lines), `failure` (the agent's
+  reason, or "didn't complete"), `verdict` (`picked` | `rejected` | null), `planned_meal_id` (the
+  pick's; set null when it is unplanned), timestamps. Not insert-only: a retried attempt replaces
+  the outline, a second save of a position its recipe, and verdicts come and go.
 
 ### Media
 
@@ -391,11 +423,14 @@ new value never needs a table rebuild.
 ### Job queue
 
 `jobs` (`db/repos/jobs.ts`) is a small SQLite queue for one in-process worker loop (analyse,
-transcribe). Types and payloads: `transcribe {captureId}`, `analyse {mealId}`.
+transcribe, plan). Types and payloads: `transcribe {captureId}` or `{inputId}` (a voice planning
+input, #44), `analyse {mealId}`, `plan {roundId}` (#44 enqueues it; #45 registers the handler,
+until then it waits in the queue).
 
 - `enqueue(type, payload, {dedupeKey, runAfter, maxAttempts})` is idempotent per `dedupe_key`
   while a job is `queued` (a partial unique index backs it): one open `analyse:<meal>` per meal,
-  one `transcribe:<capture>` per audio capture. A request while the keyed job *runs* queues a new
+  one `transcribe:<capture>` per audio capture, one `transcribe:input:<input>` per voice planning
+  input, one `plan:<request>` per planning request (its rounds run one after the other). A request while the keyed job *runs* queues a new
   one, which is not claimed until the running one ends (it may have missed new captures).
 - `claim({types})` takes the oldest due job in an IMMEDIATE transaction → `running`, attempt + 1.
 - `complete(id)` → `done`. `fail(id, error, {retryable})` → back to `queued` after 30 s, 2 min,
@@ -409,8 +444,9 @@ transcribe). Types and payloads: `transcribe {captureId}`, `analyse {mealId}`.
   its meal was removed), `isOpen(key)` (queued or running) and
   `releaseInterrupted()`, which the server runs at startup: jobs a previous process left
   `running` count a failed attempt and are queued again.
-- Producers: an audio capture enqueues `transcribe` (with its pending transcript, in the same
-  transaction); `POST /api/meals/:id/analyse` sets the meal `queued` and enqueues `analyse`. Adding
+- Producers: an audio capture (or voice planning input) enqueues `transcribe` (with its pending
+  transcript, in the same transaction); `POST /api/meals/:id/analyse` sets the meal `queued` and
+  enqueues `analyse`; a planning round (`…/suggest`, `…/more`) enqueues `plan`. Adding
   captures to an `analysed`/`needs_input` meal does not queue it; the client calls analyse again.
   Both poke the worker (`services.queue.wake`) so it doesn't wait for its next poll.
 
@@ -712,7 +748,9 @@ CPU** (3.2 % WER on FLEURS German, real-time factor ~0.2, ~1.7 GB RAM, ~5 s mode
 host stays a possible second backend.
 
 **The `transcribe` job** (`transcription/job.ts`, `TranscribeJob`), created with the capture and
-its `pending` transcript (#6). Due jobs run as one **batch**, one batch at a time (the analysis
+its `pending` transcript (#6), or with a voice planning input and its `pending` row in
+`planning_transcripts` (#44: payload `{inputId}`; same backend, same batches, the input's media
+read the same way). Due jobs run as one **batch**, one batch at a time (the analysis
 runs alongside):
 
 1. For each job: the capture must exist, be audio and not retracted (else failed at once).
@@ -723,8 +761,8 @@ runs alongside):
 2. The WAVs go to the **STT backend** in one call (`SttBackend`, `transcription/backend.ts`);
    results arrive one by one, and each is written right away: `done` with text, model
    (`faster-whisper large-v3-turbo int8`), language, duration, segments, wall time and the
-   settings. Then `nudgeAnalysis` makes a waiting `analyse` job of the meal due and wakes the
-   worker. A result for a capture whose re-run is already queued is dropped (the re-run wins).
+   settings. Then `nudgeWaiting` makes a waiting `analyse` job of the meal due (for a planning
+   input that is in a round: the request's `plan` job) and wakes the worker. A result for a capture whose re-run is already queued is dropped (the re-run wins).
 3. Failures go through the queue: retried after 30 s and 2 min (3 attempts) while the transcript
    stays `pending`; after the last one (or at once when retrying can't help: an unreadable file,
    a missing ffmpeg or STT command) it is `failed` with the error, the analysis is nudged and
@@ -844,6 +882,11 @@ All behind the identity check, writes also same-origin; paths in `mealPaths` / `
 - **Planning** (#39, `planningPaths`): `GET /api/plan?from&to&tz`, `GET /api/recipes/:id`, `POST
   /api/planned-meals`, `GET` / `PATCH` / `DELETE /api/planned-meals/:id`, `POST
   /api/planned-meals/:id/skip` / `unskip` / `log`: see [Planning](#planning-36).
+- **Planning requests** (#44, `planningRequestPaths`): `GET` / `POST /api/planning/requests`,
+  `GET /api/planning/requests/:id`, `POST …/:id/archive` / `unarchive` / `inputs` / `suggest` /
+  `more`, `POST /api/planning/inputs/:id/retract`, `POST /api/planning/suggestions/:id/pick` /
+  `reject` / `unreject`, `GET /api/planning/media/:inputId[/jpeg]`: see
+  [Planning requests](#planning-requests-44).
 
 - **Profile and guided goals** (#24, `profilePaths`): `GET /api/profile` (`{profile}`, null before
   the first guided setup), `PUT /api/profile` (`ProfileBody`), `POST /api/goals/guided`
@@ -1056,7 +1099,8 @@ force. Design: spike #31's direction D · Plan ([design.md](design/design.md#com
 
 Planning meals on the phone (epic #36, [ADR 0003](adr/0003-meal-planning.md)). #39 is the data
 underneath: recipes, planned meals, the plan and "Ate it", with interactive MCP tools as the side
-door. Planning requests, rounds and suggestions (#36's subtasks 5–6) build on it.
+door. Planning requests, rounds and suggestions (#44, [below](#planning-requests-44)) build on it;
+the agent job that fills a round is #45's.
 
 - **Recipes** (`RecipeService`, `domain/recipes.ts`): saved with items matched to foods
   (`resolveItems`, the same validation as `RevisionService.save`: a food with an energy value, or
@@ -1111,8 +1155,75 @@ door. Planning requests, rounds and suggestions (#36's subtasks 5–6) build on 
   times, source and changes.
 - **MCP** (`interactive` scope only): `get_plan`, `get_recipe`, `save_recipe`, `plan_meal`,
   `unplan_meal` (see [MCP server](#mcp-server)), so a Claude Code session can fill the plan before
-  the phone's planning flow exists. The batch ingredient matcher and the suggestion tools are
-  spike #38's to shape.
+  the phone's planning flow exists. The batch ingredient matcher and the suggestion tools come
+  with #45 (spike #38 shaped them).
+
+### Planning requests (#44)
+
+What the user asks for and what comes back (`PlanningRequestService`,
+`domain/planning-requests.ts`; contracts in `api-planning-requests.ts`). The `plan` job that fills
+a round is #45's; here a round is queued and its rules are complete.
+
+- **A request** (`POST /api/planning/requests` `{id?, filters?, text?, tz?}`, idempotent with a
+  client id): structured `filters` (`days` as local dates in `tz`, `slots`, `timeCapMin`,
+  `constraints` (`PLANNING_CONSTRAINTS` ids or free strings), `useUp` (`{leftoverId}` or `{text}`),
+  `sourceMode`, `portionsCooked`, `count`), stored **complete**: what is missing comes from
+  `PLANNING_DEFAULTS` (tonight's dinner, `adapted`, 1 portion, 3 suggestions; Planning settings,
+  #46, will supply their own) and today in `tz` (days before today are a 400, a span over
+  `MAX_PLAN_DAYS` too). The title is code's (`requestTitle`: "Dinners Tue–Thu", "Lunch and dinner
+  Fri", dates once the days span a week; weekdays rather than "tonight" so it stays true), until an
+  outline names one. `text` becomes the first input. `origin` is `user` (`nightly` for #48).
+- **Inputs** (`POST …/:id/inputs`: multipart `file` + `id`, `kind` (audio, image, file),
+  `capturedAt`, or JSON `text` / `link`): stored like captures through the same code (`storeUpload`:
+  sniffing, the original byte for byte, EXIF time, a JPEG for HEIC), idempotent with a client id
+  (an id of another request's input is a 409), immutable, retracted softly (`POST
+  /api/planning/inputs/:id/retract`, idempotent; a voice one's queued transcription is cancelled).
+  A voice input gets a `pending` row in `planning_transcripts` and a `transcribe {inputId}` job.
+  Media: `GET /api/planning/media/:inputId[/jpeg]`, served like captures' (ranges, ETag, nosniff,
+  the sandboxing CSP).
+- **Rounds**: `POST …/:id/suggest` starts the first round, or a `steer` round when live inputs
+  arrived since the last one (409 "nothing new" otherwise); `POST …/:id/more` another round with
+  the same input (`more`; with new inputs it steers with them; 409 before the first round). Either
+  takes `{id?}` (the round's client id: a retry answers that round with 200). The new round
+  (`queued`, `count` from the filters) takes every live input that is in no round yet
+  (`round_id`, set once): an input that arrives while a round is queued or running belongs to the
+  next one. It enqueues `plan {roundId}` under `plan:<request>`. One open round per request: a
+  second while one is queued or running is a 409 (and a partial unique index refuses it).
+- **The agent's side** (for #45's job and tools, tested here through the service): `startRound`
+  (`queued` → `running`, with the run), `saveOutline` (exactly `count` ideas, each with title,
+  approach, source mode and URL, proposed date and slot, saved as `outlined` suggestions 0, 1, …;
+  an earlier outline is replaced while none of it is ready; `requestTitle` renames the request),
+  `saveSuggestion` (the recipe saved through `RecipeService.save`, the idea `ready` with the
+  recipe's title and source and up to four why-lines; a second save of the position replaces it
+  unless the user gave a verdict), `failSuggestion` (an idea not ready, with the reason),
+  `finishRound` (≥ 1 ready: `done`, the ideas still outlined `failed` "didn't complete"; none: null,
+  nothing changes), `failRound`, `requeueRound` (a retry or a server stop). Only a `running` round
+  of an open request takes writes.
+- **Picking** (`POST /api/planning/suggestions/:id/pick` `{id?, date?, slot?, portionsCooked?,
+  portionEaten?}`): a planned meal of the suggestion's recipe naming the suggestion
+  (`suggestion_id`), on the given day and slot, else the proposed ones (a past day doesn't count),
+  else the first of the request's days from today on and its slots that is still open (`openSlots`
+  of the plan; for snacks: nothing planned), keeping a proposed slot; portions cooked default to the
+  request's, the portion eaten to 1. The suggestion becomes `picked` with its planned meal.
+  Idempotent with the planned meal's client id; picking a picked one again is a 409 (change the
+  planned meal instead), a rejected one too ("unreject it first"), and only `ready` ones can be
+  picked. **Unplanning** that planned meal (#39's `DELETE`) clears the pick. `…/reject` ("No")
+  and `…/unreject` are idempotent; a picked one can't be rejected.
+- **The thread** (`GET /api/planning/requests/:id`, `PlanningRequestDetail`): the request, every
+  input (retracted ones flagged) with `roundId`, the transcripts, the rounds oldest first with
+  their suggestions by position, and `pendingInputs`. Each ready suggestion carries its recipe
+  (without items: `GET /api/recipes/:id`), its per-portion totals and **the fit**, computed live:
+  its day (the proposed one, or its planned meal's once picked) from `PlanningService.plan` in the
+  request's zone, `before` (the day's projection: eaten + planned), `with` (+ one portion; a pick
+  whose planned meal isn't skipped is in the projection already and isn't counted twice), the goal,
+  `progress` per target, `kcalLeft` and `proteinOpen` (target − `with`). Code computes all of it.
+- **The list** (`GET /api/planning/requests`): the open requests, newest first, each with its
+  latest round counted (`outlined`, `ready`, `failed`, `picked`, `rejected`: "2 of 3 ready") and
+  its live and pending inputs, for the overview strip and the entry screen.
+- **Archiving** (`POST …/:id/archive`, `…/unarchive`, idempotent): out of the list. An open round
+  fails ("the planning request was archived", its ideas not yet ready too), its queued `plan` job
+  is cancelled and a running one aborted. An archived request is still readable; every write but
+  an unarchive is a 409.
 
 ## Notifications (#13)
 

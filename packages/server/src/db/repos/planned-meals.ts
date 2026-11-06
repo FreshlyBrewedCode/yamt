@@ -62,6 +62,8 @@ export class PlannedMealRepo {
     portionsCooked: number;
     portionEaten: number;
     note: string | null;
+    /** The suggestion it was picked from (#44). */
+    suggestionId?: string | null;
     now?: number;
   }): PlannedMeal {
     const id = p.id ?? newId();
@@ -69,8 +71,8 @@ export class PlannedMealRepo {
     this.db
       .query(
         `INSERT INTO planned_meals (id, date, slot, position, recipe_id, title, portions_cooked, portion_eaten,
-           note, created_at, updated_at)
-         VALUES (?, ?, ?, (SELECT count(*) FROM planned_meals WHERE date = ? AND slot = ?), ?, ?, ?, ?, ?, ?, ?)`,
+           suggestion_id, note, created_at, updated_at)
+         VALUES (?, ?, ?, (SELECT count(*) FROM planned_meals WHERE date = ? AND slot = ?), ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
@@ -82,6 +84,7 @@ export class PlannedMealRepo {
         p.title,
         p.portionsCooked,
         p.portionEaten,
+        p.suggestionId ?? null,
         p.note,
         now,
         now,

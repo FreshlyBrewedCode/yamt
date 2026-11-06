@@ -9,6 +9,7 @@ import { FoodService } from "./domain/foods.ts";
 import { GoalService } from "./domain/goals.ts";
 import { MEAL_REMOVED, MealService } from "./domain/meals.ts";
 import { PlanningService } from "./domain/planning.ts";
+import { PlanningRequestService, REQUEST_ARCHIVED } from "./domain/planning-requests.ts";
 import { RecipeService } from "./domain/recipes.ts";
 import { RevisionService } from "./domain/revisions.ts";
 import { ShareService } from "./domain/share.ts";
@@ -39,6 +40,8 @@ export interface Services {
   recipes: RecipeService;
   /** Planned meals, the plan and "Ate it" (#36). */
   planning: PlanningService;
+  /** Planning requests: inputs, rounds, suggestions and picking them (#44). */
+  planningRequests: PlanningRequestService;
   /** Bearer tokens for /mcp: the interactive one and per-run ones (#8 mints and revokes). */
   mcpTokens: McpTokens;
   /** Outbound fetch (food databases, recipe pages); a fixture-backed fake in tests. */
@@ -110,6 +113,19 @@ export function createServices(opts: ServicesOptions): Services {
     fetch: opts.push?.fetch ?? ((input, init) => fetch(input, init)),
     log: opts.push?.log,
   });
+  const recipes = new RecipeService(repos);
+  const planning = new PlanningService(repos, revisions, timeZone);
+  const planningRequests = new PlanningRequestService(
+    repos,
+    media,
+    recipes,
+    planning,
+    timeZone,
+    opts.heicToJpeg,
+    () => queue.wake(),
+    // an archived request's running round: its job is aborted (#45 revokes the run's token too)
+    (requestId) => queue.cancel(dedupeKeys.plan(requestId), REQUEST_ARCHIVED),
+  );
   return {
     dataDir: opts.dataDir,
     repos,
@@ -120,8 +136,9 @@ export function createServices(opts: ServicesOptions): Services {
     share: new ShareService(repos, meals, timeZone),
     goals: new GoalService(repos, meals, timeZone),
     calendar: new CalendarService(repos, timeZone),
-    recipes: new RecipeService(repos),
-    planning: new PlanningService(repos, revisions, timeZone),
+    recipes,
+    planning,
+    planningRequests,
     mcpTokens,
     fetch: fetchFn,
     timeZone,

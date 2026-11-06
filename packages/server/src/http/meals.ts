@@ -25,7 +25,7 @@ import type { IdentityEnv } from "../auth/identity.ts";
 import { HttpError } from "../domain/errors.ts";
 import type { Services } from "../services.ts";
 import { fileResponse } from "./file-response.ts";
-import { readJson } from "./middleware.ts";
+import { readJson, readUpload } from "./middleware.ts";
 
 /** Meals, captures and their media (mounted under /api, behind auth). Paths: `mealPaths`. */
 export function mealRoutes(s: Services): Hono<IdentityEnv> {
@@ -57,16 +57,12 @@ export function mealRoutes(s: Services): Hono<IdentityEnv> {
     const mealId = c.req.param("id");
     const type = c.req.header("content-type")?.toLowerCase() ?? "";
     if (type.startsWith("multipart/form-data")) {
-      const form = await c.req.raw.formData().catch(() => {
-        throw new HttpError(400, "malformed multipart body");
-      });
-      const file = form.get("file");
-      if (!(file instanceof File)) throw new HttpError(400, "file: a file upload is required");
+      const { file, field } = await readUpload(c);
       const fields = UploadCaptureFields.parse({
-        id: textField(form, "id"),
-        kind: textField(form, "kind"),
-        capturedAt: textField(form, "capturedAt"),
-        questionId: textField(form, "questionId"),
+        id: field("id"),
+        kind: field("kind"),
+        capturedAt: field("capturedAt"),
+        questionId: field("questionId"),
       });
       const { created, ...res } = await s.meals.addUpload(mealId, file, fields);
       return c.json<CaptureResponse>(res, created ? 201 : 200);
@@ -108,8 +104,3 @@ function media(req: Request, s: Services, captureId: string, variant: "original"
   const f = s.meals.mediaFile(captureId, variant);
   return fileResponse(req, { ...f, downloadName: basename(f.path) });
 }
-
-const textField = (form: Awaited<ReturnType<Request["formData"]>>, name: string): string | undefined => {
-  const v = form.get(name);
-  return typeof v === "string" && v !== "" ? v : undefined;
-};

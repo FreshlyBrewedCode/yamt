@@ -5,7 +5,6 @@ import {
   type DayTotals,
   isVoice,
   type JsonCaptureBody,
-  MAX_UPLOAD_BYTES,
   type Meal,
   type MealDetailResponse,
   type MealItem,
@@ -31,10 +30,9 @@ import { newId } from "../db/index.ts";
 import { type NewCapture, toCapture } from "../db/repos/captures.ts";
 import type { Repos } from "../db/repos/index.ts";
 import { dedupeKeys } from "../db/repos/jobs.ts";
-import { detectMediaType, isHeif, kindForMime, mimeFitsKind } from "../media/detect.ts";
-import { exifTakenAt } from "../media/exif.ts";
 import { heicToJpeg } from "../media/heic.ts";
 import type { MediaStore } from "../media/store.ts";
+import { type MediaFile, storedFile, storeUpload } from "../media/upload.ts";
 import { HttpError } from "./errors.ts";
 import { type RevisionService, totalsOf } from "./revisions.ts";
 import { assertTimeZone, localDate, localTimeZone } from "./time.ts";
@@ -47,15 +45,6 @@ export const MEAL_REMOVED = "the meal was removed";
 
 /** The refusal of every write to a removed meal but a restore. */
 export const mealRemoved = () => new HttpError(409, MEAL_REMOVED, "restore it first");
-
-export interface MediaFile {
-  /** Absolute. */
-  path: string;
-  mimeType: string;
-  byteSize: number;
-  /** Strong validator for caching and range requests. */
-  etag: string;
-}
 
 /**
  * Meals and their captures: the rules the routes (and later the agent's tools) go through.
@@ -322,59 +311,31 @@ export class MealService {
       throw new HttpError(400, "questionId: only an answer answers a question");
     }
     const questionId = this.questionOf(meal, fields.questionId);
-    if (file.size === 0) throw new HttpError(400, "the file is empty");
-    if (file.size > MAX_UPLOAD_BYTES) {
-      throw new HttpError(413, `the file is larger than ${MAX_UPLOAD_BYTES / 1024 / 1024} MB`);
-    }
-    const bytes = await file.bytes();
-    const fileName = file.name ? file.name.slice(0, 255) : null;
+    const id = fields.id ?? newId();
     // a spoken answer or correction is audio as far as the file goes
     const asked = fields.kind;
-    const mediaKind = asked === "answer" || asked === "correction" ? "audio" : asked;
-    const type = detectMediaType(bytes.subarray(0, 64), file.type, fileName, mediaKind);
-    const kind = asked ?? kindForMime(type.mimeType);
-    if (mediaKind && !mimeFitsKind(type.mimeType, mediaKind)) {
-      throw new HttpError(
-        400,
-        `a ${type.mimeType} file is not ${mediaKind === "image" ? "an image" : "audio"}`,
-      );
-    }
-
-    const id = fields.id ?? newId();
-    const path = this.media.pathFor(id, type.ext, now);
-    const written: string[] = [];
+    const stored = await storeUpload(
+      this.media,
+      this.toJpeg,
+      id,
+      file,
+      asked === "answer" || asked === "correction" ? "audio" : asked,
+      now,
+    );
     try {
-      const { byteSize, sha256 } = await this.media.write(path, bytes);
-      written.push(path);
-      let takenAt: number | null = null;
-      let jpeg: { status: "ok"; path: string } | { status: "missing" } | null = null;
-      if (kind === "image") {
-        takenAt = await exifTakenAt(bytes);
-        if (isHeif(type.mimeType)) {
-          const jpegPath = this.media.pathFor(id, "jpg", now);
-          try {
-            await this.media.write(jpegPath, await this.toJpeg(bytes));
-            written.push(jpegPath);
-            jpeg = { status: "ok", path: jpegPath };
-          } catch (e) {
-            console.warn(`capture ${id}: no JPEG derivative (${(e as Error).message}); the original is kept`);
-            jpeg = { status: "missing" };
-          }
-        }
-      }
       return this.record({
         id,
         mealId,
-        kind,
+        kind: asked ?? stored.mediaKind,
         capturedAt: fields.capturedAt ?? null,
-        takenAt,
-        media: { mimeType: type.mimeType, path, byteSize, sha256, fileName, jpeg },
+        takenAt: stored.takenAt,
+        media: stored.media,
         questionId,
         now,
       });
     } catch (e) {
       // nothing points at the files: don't leave orphans
-      for (const p of written) await this.media.remove(p).catch(() => {});
+      await stored.discard();
       throw e;
     }
   }
@@ -511,19 +472,7 @@ export class MealService {
   mediaFile(captureId: string, variant: "original" | "jpeg"): MediaFile {
     const c = this.repos.captures.get(captureId);
     if (!c) throw new HttpError(404, "capture not found");
-    if (variant === "jpeg") {
-      if (!c.jpegPath) throw new HttpError(404, "this capture has no JPEG derivative");
-      const path = this.media.absolute(c.jpegPath);
-      return { path, mimeType: "image/jpeg", byteSize: Bun.file(path).size, etag: `"${c.sha256}-jpeg"` };
-    }
-    if (!c.mediaPath || !c.mimeType || c.byteSize === null)
-      throw new HttpError(404, "this capture has no media");
-    return {
-      path: this.media.absolute(c.mediaPath),
-      mimeType: c.mimeType,
-      byteSize: c.byteSize,
-      etag: `"${c.sha256}"`,
-    };
+    return storedFile(this.media, c, variant, "capture");
   }
 
   /**

@@ -1,8 +1,9 @@
-import type { Transcript, TranscriptSegment, TranscriptStatus } from "@yamt/shared";
+import type { PlanningTranscript, Transcript, TranscriptSegment, TranscriptStatus } from "@yamt/shared";
 import type { Db } from "../index.ts";
 
 interface Row {
-  capture_id: string;
+  capture_id?: string;
+  input_id?: string;
   status: TranscriptStatus;
   text: string | null;
   model: string | null;
@@ -16,8 +17,10 @@ interface Row {
   updated_at: number;
 }
 
-const toTranscript = (r: Row): Transcript => ({
-  captureId: r.capture_id,
+/** A transcript without its key: what voice captures' and voice planning inputs' have in common. */
+type TranscriptFields = Omit<Transcript, "captureId">;
+
+const toFields = (r: Row): TranscriptFields => ({
   status: r.status,
   text: r.text,
   model: r.model,
@@ -31,55 +34,55 @@ const toTranscript = (r: Row): Transcript => ({
   updatedAt: r.updated_at,
 });
 
-/** One transcript per audio capture. Derived data: it can be reset and filled again. */
-export class TranscriptRepo {
-  constructor(private readonly db: Db) {}
+export interface TranscriptResult {
+  text: string;
+  model: string;
+  language: string | null;
+  durationMs: number | null;
+  segments: TranscriptSegment[] | null;
+  elapsedMs?: number | null;
+  settings?: Transcript["settings"];
+}
+
+/**
+ * One transcript per voice source, keyed by it: `transcripts` (voice captures) and
+ * `planning_transcripts` (voice planning inputs, #44) share these columns and this SQL. Derived
+ * data: it can be reset and filled again.
+ */
+abstract class TranscriptTable<T> {
+  constructor(
+    protected readonly db: Db,
+    private readonly table: "transcripts" | "planning_transcripts",
+    protected readonly key: "capture_id" | "input_id",
+  ) {}
+
+  protected abstract toTranscript(id: string, fields: TranscriptFields): T;
+
+  protected map = (r: Row): T => this.toTranscript(r[this.key]!, toFields(r));
 
   /** A `pending` transcript, or the existing one reset to `pending` (re-transcription). */
-  upsertPending(captureId: string, now = Date.now()): Transcript {
+  upsertPending(id: string, now = Date.now()): T {
     this.db
       .query(
-        `INSERT INTO transcripts (capture_id, status, created_at, updated_at) VALUES (?, 'pending', ?, ?)
-         ON CONFLICT (capture_id) DO UPDATE SET status = 'pending', text = NULL, model = NULL,
+        `INSERT INTO ${this.table} (${this.key}, status, created_at, updated_at) VALUES (?, 'pending', ?, ?)
+         ON CONFLICT (${this.key}) DO UPDATE SET status = 'pending', text = NULL, model = NULL,
            language = NULL, duration_ms = NULL, segments = NULL, elapsed_ms = NULL, settings = NULL, error = NULL,
            updated_at = excluded.updated_at`,
       )
-      .run(captureId, now, now);
-    return this.get(captureId)!;
+      .run(id, now, now);
+    return this.get(id)!;
   }
 
-  get(captureId: string): Transcript | null {
-    const r = this.db.query<Row, [string]>("SELECT * FROM transcripts WHERE capture_id = ?").get(captureId);
-    return r ? toTranscript(r) : null;
+  get(id: string): T | null {
+    const r = this.db.query<Row, [string]>(`SELECT * FROM ${this.table} WHERE ${this.key} = ?`).get(id);
+    return r ? this.map(r) : null;
   }
 
-  listForMeal(mealId: string): Transcript[] {
-    return this.db
-      .query<Row, [string]>(
-        `SELECT t.* FROM transcripts t JOIN captures c ON c.id = t.capture_id
-         WHERE c.meal_id = ? ORDER BY c.created_at, c.id`,
-      )
-      .all(mealId)
-      .map(toTranscript);
-  }
-
-  complete(
-    captureId: string,
-    t: {
-      text: string;
-      model: string;
-      language: string | null;
-      durationMs: number | null;
-      segments: TranscriptSegment[] | null;
-      elapsedMs?: number | null;
-      settings?: Transcript["settings"];
-    },
-    now = Date.now(),
-  ): Transcript | null {
+  complete(id: string, t: TranscriptResult, now = Date.now()): T | null {
     this.db
       .query(
-        `UPDATE transcripts SET status = 'done', text = ?, model = ?, language = ?, duration_ms = ?,
-           segments = ?, elapsed_ms = ?, settings = ?, error = NULL, updated_at = ? WHERE capture_id = ?`,
+        `UPDATE ${this.table} SET status = 'done', text = ?, model = ?, language = ?, duration_ms = ?,
+           segments = ?, elapsed_ms = ?, settings = ?, error = NULL, updated_at = ? WHERE ${this.key} = ?`,
       )
       .run(
         t.text,
@@ -90,15 +93,57 @@ export class TranscriptRepo {
         t.elapsedMs ?? null,
         t.settings ? JSON.stringify(t.settings) : null,
         now,
-        captureId,
+        id,
       );
-    return this.get(captureId);
+    return this.get(id);
   }
 
-  fail(captureId: string, error: string, now = Date.now()): Transcript | null {
+  fail(id: string, error: string, now = Date.now()): T | null {
     this.db
-      .query("UPDATE transcripts SET status = 'failed', error = ?, updated_at = ? WHERE capture_id = ?")
-      .run(error, now, captureId);
-    return this.get(captureId);
+      .query(`UPDATE ${this.table} SET status = 'failed', error = ?, updated_at = ? WHERE ${this.key} = ?`)
+      .run(error, now, id);
+    return this.get(id);
+  }
+}
+
+/** One transcript per voice capture (audio, a spoken answer or correction). */
+export class TranscriptRepo extends TranscriptTable<Transcript> {
+  constructor(db: Db) {
+    super(db, "transcripts", "capture_id");
+  }
+
+  protected toTranscript(captureId: string, f: TranscriptFields): Transcript {
+    return { captureId, ...f };
+  }
+
+  listForMeal(mealId: string): Transcript[] {
+    return this.db
+      .query<Row, [string]>(
+        `SELECT t.* FROM transcripts t JOIN captures c ON c.id = t.capture_id
+         WHERE c.meal_id = ? ORDER BY c.created_at, c.id`,
+      )
+      .all(mealId)
+      .map(this.map);
+  }
+}
+
+/** One transcript per voice planning input (#44). */
+export class PlanningTranscriptRepo extends TranscriptTable<PlanningTranscript> {
+  constructor(db: Db) {
+    super(db, "planning_transcripts", "input_id");
+  }
+
+  protected toTranscript(inputId: string, f: TranscriptFields): PlanningTranscript {
+    return { inputId, ...f };
+  }
+
+  listForRequest(requestId: string): PlanningTranscript[] {
+    return this.db
+      .query<Row, [string]>(
+        `SELECT t.* FROM planning_transcripts t JOIN planning_inputs i ON i.id = t.input_id
+         WHERE i.request_id = ? ORDER BY i.created_at, i.id`,
+      )
+      .all(requestId)
+      .map(this.map);
   }
 }

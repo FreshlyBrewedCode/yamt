@@ -150,7 +150,7 @@ export interface PlannedMeal {
   loggedMealId: string | null;
   /** The planned meal whose extra cooked portion this is (leftovers, #36 wave 2); null. */
   leftoverOf: string | null;
-  /** The suggestion it was picked from (#36, subtask 5 on); null. */
+  /** The suggestion it was picked from (#44); null for one planned by hand. */
   suggestionId: string | null;
   note: string | null;
   createdAt: number;
