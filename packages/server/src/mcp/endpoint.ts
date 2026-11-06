@@ -42,7 +42,12 @@ export function createMcpApp(s: Services): Hono<BearerEnv<McpPrincipal>> {
   app.use("*", localOnly, requireBearer(s.mcpTokens.verify));
 
   app.post("/", async (c) => {
-    const server = buildServer(tools, c.get("principal"));
+    // SPIKE #38: `/mcp?hide=a,b` leaves tools out (the baseline round runs without the matcher)
+    const hide = new Set((c.req.query("hide") ?? "").split(",").filter(Boolean));
+    const server = buildServer(
+      hide.size ? tools.filter((t) => !hide.has(t.name)) : tools,
+      c.get("principal"),
+    );
     const transport = new WebStandardStreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
       enableJsonResponse: true,

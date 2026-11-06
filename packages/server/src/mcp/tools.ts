@@ -18,6 +18,7 @@ import { assertTimeZone, isoLocal, localDate } from "../domain/time.ts";
 import { UpstreamError } from "../nutrition/http.ts";
 import { fetchRecipe } from "../nutrition/recipe.ts";
 import type { Services } from "../services.ts";
+import { planningTools } from "../planning/tools.ts";
 import type { McpPrincipal } from "./tokens.ts";
 
 /** Sent as the MCP `instructions` (Claude Code puts them into the system prompt). */
@@ -43,7 +44,7 @@ export interface Tool {
   run(args: Record<string, unknown>, ctx: ToolContext): Promise<unknown> | unknown;
 }
 
-function tool<S extends z.ZodObject>(def: {
+export function tool<S extends z.ZodObject>(def: {
   name: string;
   description: string;
   scope: Scope;
@@ -422,6 +423,9 @@ export function yamtTools(s: Services): Tool[] {
         return { date: on, inForce: inForce ? goalOut(inForce) : null, goals };
       },
     }),
+
+    // SPIKE #38: the meal-planning prototype tools
+    ...planningTools(s),
   ];
 }
 
