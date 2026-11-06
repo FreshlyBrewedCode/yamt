@@ -180,7 +180,7 @@ describe("/mcp", () => {
     expect(res.headers.get("content-type")).toContain("application/json");
     expect(res.headers.get("mcp-session-id")).toBeNull();
     const body = (await res.json()) as { result: { tools: unknown[] } };
-    expect(body.result.tools).toHaveLength(19);
+    expect(body.result.tools).toHaveLength(20);
     const get = await fetch(app.mcpUrl, { headers: { Authorization: `Bearer ${interactive}` } });
     expect(get.status).toBe(405);
     expect(get.headers.get("allow")).toBe("POST");
@@ -210,6 +210,7 @@ describe("/mcp", () => {
       "match_ingredients",
       "save_round_outline",
       "save_suggestion",
+      "save_starters",
       "fail_suggestion",
     ]);
     const save = tools.find((t) => t.name === "save_meal_revision")!;

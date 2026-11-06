@@ -457,3 +457,140 @@ describe("planning tools", () => {
     expect(garlic!.candidates[1]!.processed).toEqual(["granuliert"]);
   });
 });
+
+describe("save_starters (#48)", () => {
+  /** A running round of a nightly request, with its run's token. */
+  function nightlyRound() {
+    const { request } = s.planningRequests.create({ filters: { count: 1 }, tz: TZ }, "nightly");
+    const { round } = s.planningRequests.suggest(request.id);
+    const runId = newId();
+    s.repos.planningRuns.insert({
+      id: runId,
+      roundId: round.id,
+      jobId: null,
+      attempt: 1,
+      harness: "custom",
+      model: null,
+      effort: null,
+      startedAt: Date.now(),
+    });
+    s.planningRequests.startRound(round.id, runId);
+    return { request, round, token: s.mcpTokens.mintPlanRun({ runId, roundId: round.id }) };
+  }
+  const starter = (over: Record<string, unknown> = {}) => ({
+    kind: "other",
+    text: "Something new",
+    detail: "Made up",
+    ...over,
+  });
+
+  test("a nightly round's 4–6 starters, references checked, a second save replacing the set", async () => {
+    const meal = s.meals.create({});
+    s.meals.addJson(meal.id, { kind: "text", text: "Lachs" });
+    s.revisions.save({
+      mealId: meal.id,
+      runId: null,
+      title: "Lachs mit Kartoffeln",
+      summary: "",
+      eatenAt: null,
+      assumptions: [],
+      items: [
+        {
+          description: "Lachs",
+          grams: 150,
+          estimatePer100g: { energyKcal: 200, protein: 20, fat: 13, carbohydrate: 0 },
+          provenance: "estimate",
+          confidence: "medium",
+        },
+      ],
+      questions: [],
+    });
+    const { round, token } = nightlyRound();
+    const client = await connect(token);
+    // the context of a nightly round says what starters it wants; recent meals carry their ids
+    const ctx = await ok<{
+      nightly: { starters: { min: number; max: number; kinds: string[] } };
+      recentMeals: { mealId: string; title: string }[];
+    }>(client, "get_planning_context", { roundId: round.id });
+    expect(ctx.nightly.starters).toMatchObject({ min: 4, max: 6 });
+    expect(ctx.nightly.starters.kinds).toContain("protein_gap");
+    expect(ctx.recentMeals.find((m) => m.title === "Lachs mit Kartoffeln")?.mealId).toBe(meal.id);
+
+    expect((await call(client, "save_starters", { roundId: round.id, starters: [starter()] })).error).toMatch(
+      /4|too small/,
+    );
+    const unknown = newId();
+    expect(
+      (
+        await call(client, "save_starters", {
+          roundId: round.id,
+          starters: [starter({ kind: "variety", ref: { mealId: unknown } }), starter(), starter(), starter()],
+        })
+      ).error,
+    ).toContain(`starters[0].ref.mealId: nothing has the id ${unknown}`);
+    expect(
+      (
+        await call(client, "save_starters", {
+          roundId: round.id,
+          starters: [starter({ text: "x", ref: { leftoverId: unknown } }), starter(), starter(), starter()],
+        })
+      ).error,
+    ).toContain("leftoverId");
+
+    const first = await ok<{ saved: { position: number; kind: string }[] }>(client, "save_starters", {
+      roundId: round.id,
+      starters: [
+        starter({ kind: "protein_gap", text: "High protein tonight", filters: { when: "today" } }),
+        starter({ kind: "variety", text: "Fish again", ref: { mealId: meal.id } }),
+        starter({ kind: "season", text: "Kürbis" }),
+        starter(),
+        starter(),
+      ],
+    });
+    expect(first.saved.map((x) => x.kind)).toEqual(["protein_gap", "variety", "season", "other", "other"]);
+    await ok(client, "save_starters", {
+      roundId: round.id,
+      starters: [
+        starter({ kind: "variety", text: "Fish again", ref: { mealId: meal.id } }),
+        starter({ kind: "protein_gap", text: "High protein tonight" }),
+        starter({ kind: "season", text: "Kürbis" }),
+        starter({ kind: "like_meal", text: "Like Lachs", ref: { mealId: meal.id } }),
+      ],
+    });
+    // the view: nothing while the run is off; on, the latest set, each reference read now (the app
+    // computes the number from it)
+    expect(s.nightly.view().starters).toEqual([]);
+    s.repos.settings.set(PLANNING_SETTINGS_KEY, {
+      ...DEFAULT_PLANNING_SETTINGS,
+      nightly: { ...DEFAULT_PLANNING_SETTINGS.nightly, enabled: true },
+    });
+    const view = s.nightly.view();
+    expect(view.starters.map((x) => [x.position, x.kind])).toEqual([
+      [0, "variety"],
+      [1, "protein_gap"],
+      [2, "season"],
+      [3, "like_meal"],
+    ]);
+    expect(view.starters[0]!.meal).toEqual({
+      id: meal.id,
+      title: "Lachs mit Kartoffeln",
+      eatenAt: meal.eatenAt,
+    });
+    // removed since: the reference names nothing any more
+    s.meals.remove(meal.id);
+    expect(s.nightly.view().starters[0]!.meal).toBeNull();
+    // older than STARTERS_MAX_AGE_MS: not offered
+    s.repos.db.query("UPDATE planning_starters SET created_at = created_at - ?").run(49 * 3_600_000);
+    expect(s.nightly.view().starters).toEqual([]);
+    s.repos.settings.set(PLANNING_SETTINGS_KEY, DEFAULT_PLANNING_SETTINGS);
+  });
+
+  test("only a nightly round saves starters", async () => {
+    const { round, token } = runningRound();
+    const r = await call(await connect(token), "save_starters", {
+      roundId: round.id,
+      starters: [starter(), starter(), starter(), starter()],
+    });
+    expect(r.error).toContain("starters come with the nightly run");
+  });
+});

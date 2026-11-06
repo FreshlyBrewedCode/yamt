@@ -6,8 +6,8 @@ meal capture, #10, the meal detail with questions and corrections, #11, the day 
 goals and weight, #12, Web Push notifications, #13, the guided goal setup, #24, paste and
 the iOS Shortcut share target, #26, the agent settings, #28, logging a meal again, #30, the
 calendar, #33, removing a meal, the data underneath meal planning, #39, planning requests,
-#44, the suggestion job that fills their rounds, #45, planning settings, #46, and the planning
-screens, #47), how it
+#44, the suggestion job that fills their rounds, #45, planning settings, #46, the planning
+screens, #47, and the nightly run with agent-written starters, #48), how it
 fits together, and what comes after wave 1. Why it is built this way:
 [ADR 0001](adr/0001-wave-1-architecture.md), for planning [ADR 0003](adr/0003-meal-planning.md). Commands and conventions: [AGENTS.md](../AGENTS.md).
 The design: [design/design.md](design/design.md).
@@ -78,7 +78,11 @@ packages/shared/src/      contracts shared by server and web (no runtime deps bu
                           `ResolvedPlanningFilters` / `PLANNING_DEFAULTS`, `requestTitle`, the input, round and
                           suggestion enums and types (`PlanningSuggestionView` with `SuggestionFit`), the bodies
   api-planning-settings.ts  Settings → Planning (#46): `planningSettingsPaths`, `PlanningSettingsBody`
-                          (count, source mode, portions, `PlanningPreferences`), `DEFAULT_PLANNING_SETTINGS`
+                          (count, source mode, portions, `PlanningPreferences`, `NightlySettings` #48),
+                          `DEFAULT_PLANNING_SETTINGS`
+  api-planning-nightly.ts the nightly run (#48): `planningNightlyPaths`, `STARTER_KINDS`, `StarterInput`
+                          (`StarterFilters`, `StarterRef`), `PlanningStarterView`, `NightlyResponse`,
+                          `RegenerateNightlyBody`, `STARTERS_MAX_AGE_MS`
   api-runs.ts             analysis runs and trace lines: `runPaths`, `AnalysisRun`, `TraceEntry`
   api-push.ts             Web Push: `pushPaths`, `PUSH_EVENTS`, `SubscribeBody`, `PushEventsBody`,
                           `PushPayload` (what the service worker receives)
@@ -113,7 +117,8 @@ packages/server/src/
   auth/identity.ts        requireTailnetIdentity: the Tailscale-User-Login check, dev bypass
   auth/bearer.ts          requireBearer: token auth for machine clients (/mcp)
   http/                   api.ts (mounts), meals.ts, runs.ts, weight.ts, goals.ts, push.ts, share.ts, agent.ts,
-                          planning.ts, planning-requests.ts and planning-settings.ts (routes), file-response.ts
+                          planning.ts, planning-requests.ts, planning-settings.ts and planning-nightly.ts
+                          (routes), file-response.ts
                           (media, ranges), middleware.ts (sameOrigin, errors, readJson, readUpload),
                           origin.ts (originAllowed, publicOrigin), static.ts
   domain/                 errors.ts (HttpError), meals.ts (MealService: captures, retract, analyse,
@@ -125,7 +130,9 @@ packages/server/src/
                           the share target), recipes.ts (RecipeService: save and view), planning.ts
                           (PlanningService: planned meals, the plan, "Ate it", #36), planning-requests.ts
                           (PlanningRequestService: requests, inputs, rounds, suggestions, picking, #44),
-                          planning-settings.ts (the `planning` setting, #46), time.ts (days and local times)
+                          planning-settings.ts (the `planning` setting, #46), nightly.ts (NightlyService:
+                          the schedule, the run, Regenerate, superseding, starters, #48), time.ts (days and
+                          local times)
   nutrition/              nutrients.ts (OFF/FDC → core set), totals.ts (re-exports the shared totals), ranking.ts,
                           off.ts / fdc.ts (clients), http.ts (timeouts, size caps, rate limits,
                           User-Agent), recipe.ts (fetch + schema.org Recipe JSON-LD)
@@ -138,7 +145,8 @@ packages/server/src/
                           repos/ (one per aggregate: meals, captures, transcripts, jobs, weight,
                           foods, revisions, runs (analysis and planning runs), goals, profile, push,
                           settings, recipes, planned-meals,
-                          planning-requests, planning-inputs, planning-rounds (rounds and their suggestions);
+                          planning-requests, planning-inputs, planning-rounds (rounds and their suggestions),
+                          planning-starters (#48);
                           transcripts.ts holds both transcript tables)
   push/                   vapid.ts (the key pair in vapid.json), sender.ts (PushSender: encrypt, sign,
                           deliver, 404/410 cleanup), messages.ts (what a meal's and a planning round's
@@ -146,7 +154,8 @@ packages/server/src/
   planning/               the suggestion job (#45): job.ts (PlanJob, settleRound, the turn's cap),
                           prompt.ts (the round's prompt), tools.ts (the planning MCP tools), context.ts
                           (get_planning_context; preferences from #46's setting, leftovers `[]` until
-                          #49), budget.ts (the slot budget), matcher.ts (match_ingredients: routing and ranking)
+                          #49), budget.ts (the slot budget), matcher.ts (match_ingredients: routing and
+                          ranking), nightly.ts (NightlyJob: the scheduled `nightly` handler, #48)
 packages/server/test/     bun tests, temp dirs only; fixtures/ holds made-up images and, in
                           nutrition/, recorded OFF/FDC answers and a trimmed recipe page
                           (record.ts re-records them; the gate never hits the network);
@@ -163,7 +172,8 @@ packages/web/
   sw.js                   the service worker template (vite.config.ts fills in the build's files)
   test/                   bun tests: the upload queue, the recorder's logic, the trace parser, the weight
                           trend, the clipboard mapping, the plan's reading (planning), the planning
-                          requests' filters, sentence, pick target and starters (plan-request)
+                          requests' filters, sentence, pick target and starters (plan-request), the
+                          nightly section's state and the agent starters' numbers (nightly)
 packages/web/src/
   main.tsx                router + query client, starts the upload queue, registers the worker
   routes/                 TanStack file routes: __root.tsx, index.tsx (the overview),
@@ -191,7 +201,10 @@ packages/web/src/
                           (#54's follow-up): how an open request stands (requestState), whether it is
                           past (isPastRequest), its open rows (stripRows) folded to one per state
                           (groupStripRows)
-  lib/starters.ts         the entry screen's code-computed starters (computeStarters, SEASON)
+  lib/starters.ts         the entry screen's starters (computeStarters: the nightly run's first, then
+                          code's; agentStarter and liveNumber: an agent starter's number, computed here; SEASON)
+  lib/nightly.ts          the Tonight section's state (nightlyState: which nightly request it shows while
+                          one regenerates), its words, Pick's words, the overview's quiet row (#48)
   lib/plan-draft.ts       the composers' drafts (in memory, per composer) and sendDraft (into the queue)
   lib/sw.ts, ids.ts, format.ts  worker registration and its messages, client UUIDv7s, number/date formatting
   lib/push.ts             this browser's push support, permission and subscription (subscribeDevice)
@@ -212,7 +225,8 @@ packages/web/src/
                           sheets, #40), recipe-detail (a planned meal's recipe, a suggestion's), composer
                           (the planning dock and composer, #47), plan-request (starter bands, the filter
                           summary and form, the slots slab, You asked, the suggestion, placeholder and
-                          failed rows, the overview's Planning strip, #47); ui/ (shadcn:
+                          failed rows, the overview's Planning strip, #47), nightly (the Tonight section,
+                          its compact rows, Regenerate, the strip's quiet row, #48); ui/ (shadcn:
                           button, input, sheet)
   index.css               Tailwind 4 + the D · Slab theme tokens (light/dark)
 e2e/                      Playwright specs (phone viewport); calendar-seed.ts makes four made-up months for the
@@ -438,6 +452,12 @@ new value never needs a table rebuild.
   reason, or "didn't complete"), `verdict` (`picked` | `rejected` | null), `planned_meal_id` (the
   pick's; set null when it is unplanned), timestamps. Not insert-only: a retried attempt replaces
   the outline, a second save of a position its recipe, and verdicts come and go.
+- **planning_starters** (#48): the starters a nightly round wrote: `round_id`, `position` (unique
+  per round), `kind` (`protein_gap` | `use_up` | `variety` | `like_meal` | `season` |
+  `last_request` | `other`), `text`, `detail`, `filters` (JSON `StarterFilters`: what a tap
+  applies, days relative), `ref` (JSON `StarterRef`: `mealId`, `requestId`, `recipeId`,
+  `leftoverId`), `created_at`. No number: the app computes it. Derived: a second save of the round
+  replaces its set.
 
 ### Media
 
@@ -464,12 +484,14 @@ new value never needs a table rebuild.
 
 `jobs` (`db/repos/jobs.ts`) is a small SQLite queue for one in-process worker loop (analyse,
 transcribe, plan). Types and payloads: `transcribe {captureId}` or `{inputId}` (a voice planning
-input, #44), `analyse {mealId}`, `plan {roundId}` (#44 enqueues it, #45's `PlanJob` runs it).
+input, #44), `analyse {mealId}`, `plan {roundId}` (#44 enqueues it, #45's `PlanJob` runs it),
+`nightly {}` (#48: the scheduled nightly run, `NightlyJob`).
 
 - `enqueue(type, payload, {dedupeKey, runAfter, maxAttempts})` is idempotent per `dedupe_key`
   while a job is `queued` (a partial unique index backs it): one open `analyse:<meal>` per meal,
   one `transcribe:<capture>` per audio capture, one `transcribe:input:<input>` per voice planning
-  input, one `plan:<request>` per planning request (its rounds run one after the other). A request while the keyed job *runs* queues a new
+  input, one `plan:<request>` per planning request (its rounds run one after the other), one
+  `nightly` (the next nightly run, #48). A request while the keyed job *runs* queues a new
   one, which is not claimed until the running one ends (it may have missed new captures).
 - `claim({types})` takes the oldest due job in an IMMEDIATE transaction → `running`, attempt + 1.
 - `complete(id)` → `done`. `fail(id, error, {retryable})` → back to `queued` after 30 s, 2 min,
@@ -485,15 +507,16 @@ input, #44), `analyse {mealId}`, `plan {roundId}` (#44 enqueues it, #45's `PlanJ
   `running` count a failed attempt and are queued again.
 - Producers: an audio capture (or voice planning input) enqueues `transcribe` (with its pending
   transcript, in the same transaction); `POST /api/meals/:id/analyse` sets the meal `queued` and
-  enqueues `analyse`; a planning round (`…/suggest`, `…/more`) enqueues `plan`. Adding
+  enqueues `analyse`; a planning round (`…/suggest`, `…/more`) enqueues `plan`; the nightly
+  schedule (`NightlyService.schedule`) keeps one `nightly` job queued at its next time. Adding
   captures to an `analysed`/`needs_input` meal does not queue it; the client calls analyse again.
   Both poke the worker (`services.queue.wake`) so it doesn't wait for its next poll.
 
 **The worker loop** (`jobs/worker.ts`, `JobWorker`): one per server process, started by
 `createServer({worker: true})` (`yamt start` does, unless `--no-worker`; tests and tools that
 only need the API don't, so they never spawn an agent or an STT process). Handlers register by
-job type with their own concurrency (`analyse`: 1; `plan`: 1; `transcribe`: 1 batch; each lane
-runs alongside the others).
+job type with their own concurrency (`analyse`: 1; `plan`: 1; `nightly`: 1; `transcribe`: 1
+batch; each lane runs alongside the others).
 Every poll (1 s, or at once after `wake()`) fills each type's lane with `claim({types: [type]})`;
 a batch handler (`runBatch`, `batchSize`) claims up to that many due jobs per slot and returns one
 outcome each. The queue already keeps two jobs with the same key (one meal) from running together. A handler
@@ -954,6 +977,8 @@ All behind the identity check, writes also same-origin; paths in `mealPaths` / `
   `more`, `POST /api/planning/inputs/:id/retract`, `POST /api/planning/suggestions/:id/pick` /
   `reject` / `unreject`, `GET /api/planning/media/:inputId[/jpeg]`: see
   [Planning requests](#planning-requests-44).
+- **The nightly run** (#48, `planningNightlyPaths`): `GET /api/planning/nightly`, `POST
+  /api/planning/nightly/regenerate`: see [The nightly run](#the-nightly-run-48).
 
 - **Profile and guided goals** (#24, `profilePaths`): `GET /api/profile` (`{profile}`, null before
   the first guided setup), `PUT /api/profile` (`ProfileBody`), `POST /api/goals/guided`
@@ -1167,8 +1192,10 @@ force. Design: spike #31's direction D · Plan ([design.md](design/design.md#com
 Planning meals on the phone (epic #36, [ADR 0003](adr/0003-meal-planning.md)). #39 is the data
 underneath: recipes, planned meals, the plan and "Ate it", with interactive MCP tools as the side
 door. Planning requests, rounds and suggestions (#44, [below](#planning-requests-44)) build on it,
-the suggestion job (#45, [below](#the-suggestion-job-45)) fills the rounds, and Settings → Planning
-(#46, [below](#planning-settings-46)) holds the defaults and preferences both of them read.
+the suggestion job (#45, [below](#the-suggestion-job-45)) fills the rounds, Settings → Planning
+(#46, [below](#planning-settings-46)) holds the defaults and preferences both of them read, and the
+nightly run (#48, [below](#the-nightly-run-48)) prepares today's suggestions and the starters
+without being asked.
 
 - **Recipes** (`RecipeService`, `domain/recipes.ts`): saved with items matched to foods
   (`resolveItems`, the same validation as `RevisionService.save`: a food with an energy value, or
@@ -1244,7 +1271,7 @@ a round is [below](#the-suggestion-job-45).
   before today are a 400, a span over `MAX_PLAN_DAYS` too). The title is code's (`requestTitle`:
   "Dinners Tue–Thu", "Lunch and dinner Fri", dates once the days span a week; weekdays rather than
   "tonight" so it stays true), until an outline names one. `text` becomes the first input. `origin`
-  is `user` (`nightly` for #48).
+  is `user`, or `nightly` for one the nightly run made (#48, [below](#the-nightly-run-48)).
 - **Inputs** (`POST …/:id/inputs`: multipart `file` + `id`, `kind` (audio, image, file),
   `capturedAt`, or JSON `text` / `link`): stored like captures through the same code (`storeUpload`:
   sniffing, the original byte for byte, EXIF time, a JPEG for HEIC), idempotent with a client id
@@ -1367,6 +1394,8 @@ ends. Spike #38's numbers shaped it ([ADR 0003](adr/0003-meal-planning.md), 11�
     day with it (kcal left, protein open), the slot's budget and `fitToSlot`, how many items are
     estimates, a warning over the request's time cap, and what to do next.
   - `fail_suggestion {roundId, position, reason}`: an idea given up, with the reason the user reads.
+  - `save_starters {roundId, starters (4–6)}`: a nightly round's starters (#48,
+    [below](#the-nightly-run-48)).
 - **The slot budget** (`planning/budget.ts`, `slotBudget`): per target, what is open (target −
   projected, never below 0), minus room for a snack while none is eaten or planned that day
   (`SNACK_RESERVE_SHARE`, 10 % of the target), shared by weight (`SLOT_WEIGHTS`, breakfast 25,
@@ -1386,10 +1415,12 @@ ends. Spike #38's numbers shaped it ([ADR 0003](adr/0003-meal-planning.md), 11�
   with numbers only from the tools.
 - **Push**: `PlanJob.settled` calls `notifyPlan` once the job is `done` or `failed` for good (and
   the server at startup for one that failed while none ran); see [Notifications](#notifications-13).
+  A nightly request's first round sends none (#48).
 - **Fakes**: `test/fake-agent.ts` plays planning rounds when the prompt names one, scripted by the
   request's last `fake:plan…` text (`plan`, `plan-match`, `plan-partial`, `plan-none`, `plan-once`,
-  `plan-slow:<ms>`, `plan-crash`, `plan-hang`, `plan-auth`; see its header). The e2e server runs
-  planning on it too (`YAMT_PLANNING_HARNESS=custom`).
+  `plan-slow:<ms>`, `plan-crash`, `plan-hang`, `plan-auth`; see its header); a nightly round (no
+  text) by `FAKE_ACP_NIGHTLY`, and it saves four made-up starters (#48). The e2e server runs
+  planning on it too (`YAMT_PLANNING_HARNESS=custom`; nightly rounds `plan-slow:2500`).
 
 ### Planning settings (#46)
 
@@ -1407,8 +1438,10 @@ replace like the Agent setting.
   something is saved; a PUT is a whole replace, zod-validated like every other write.
 - **Applying**: `requestDefaults` (`domain/planning-requests.ts`) layers `count`, `sourceMode` and
   `portionsCooked` over `PLANNING_DEFAULTS` for a new request's `resolveFilters`; `preferences`
-  reaches the agent through `planningPreferences` → `get_planning_context` (above). The nightly
-  options (#48) are not here.
+  reaches the agent through `planningPreferences` → `get_planning_context` (above). `nightly`
+  (#48: `enabled`, default off; `time`, `HH:MM` in the server's zone, default 03:00; `count`, 1–5,
+  default 3) drives the nightly run ([below](#the-nightly-run-48)); a value saved before it existed
+  gets its defaults (`planningSettings`), and a PUT reschedules the run at once.
 - **The skill** (`.agents/skills/plan-meals/SKILL.md`): `neverEat` is a hard rule (a suggestion
   with one is wrong), as is missing `equipment` and, on a weekday, `weekdayCookingMin` as a second
   time cap; `dislikes` are avoided and `favouriteSites` are looked at first for a real recipe.
@@ -1425,6 +1458,54 @@ replace like the Agent setting.
   stepper for the count, choice rows for the source mode, a stepper for portions, and a
   preferences list whose rows open a small sheet (a text field, one line each; a number field for
   the cooking time).
+
+### The nightly run (#48)
+
+Every morning there are fresh, complete suggestions for today and starters written by the agent,
+without asking (`NightlyService`, `domain/nightly.ts`; the job `NightlyJob`, `planning/nightly.ts`;
+contracts in `api-planning-nightly.ts`).
+
+- **The schedule**: a `nightly {}` job in the existing queue (dedupe key `nightly`), queued with
+  `runAfter` at the next run time while Settings → Planning's `nightly.enabled` is on
+  (`NightlyService.schedule`: at startup, after every PUT of the settings, after each run).
+  `nextNightlyRun`: `nightly.time` today in the server's zone if that is still ahead, else
+  tomorrow, never on a day that already has a nightly request (one run a day; a Regenerate counts);
+  `localTimeAt` is DST-safe. Off cancels the queued job; a new time replaces it. A job overdue at
+  startup (the server was down at its time) runs then. The job reads the setting when it runs (off:
+  `cancelled`, nothing made) and, once it has ended for good, queues the next day's.
+- **The run** (`NightlyService.run`): the open nightly requests for past days, or without a ready
+  suggestion, are archived (a running round is stopped); then today's open main slots from the plan
+  (`openSlots` ∩ breakfast, lunch, dinner; none: nothing is made, the job is `done`), and a request
+  with `origin: nightly`: those slots, today, the planning defaults (`requestDefaults`) with
+  `count` from `nightly.count`, the server's zone, no input. Its first round is queued as for any
+  request (`suggest`): outline → suggestions → done, on the planning agent. From then on it is an
+  ordinary thread (steer, more, pick).
+- **Superseding**: once a nightly request's first round is `done` (`PlanJob.settled` →
+  `NightlyService.supersede`), the earlier open nightly requests are archived (what was picked from
+  them stays planned). So after Regenerate today's suggestions stay until the new ones arrive; if
+  the new round fails, they stay.
+- **Regenerate** (`POST /api/planning/nightly/regenerate {id?}`, 201; a retry with the same client
+  `id` answers that request with 200): the run, now, whether or not the schedule is on; 409 "nothing
+  is open today" when every main slot is eaten or planned.
+- **Starters**: the run also calls `save_starters` (scope `plan`, only a running nightly round, 4–6,
+  a second call replaces the round's set) with, per starter, `kind` (`protein_gap`, `use_up`,
+  `variety`, `like_meal`, `season`, `last_request`, `other`), `text`, `detail`, the `filters` a tap
+  applies (`StarterFilters`: `when` today / tomorrow / week, slots, time cap, constraints, use-up
+  texts, source mode, portions, count) and a `ref` (`mealId`, `requestId`, `recipeId`; `leftoverId`
+  until #49 names nothing, so it is refused), each checked to exist. **No number**: the app computes
+  it when the screen opens. `get_planning_context` of a nightly round adds `nightly` (the starters'
+  bounds and kinds, the user's recent requests with ids) and every recent meal carries its
+  `mealId`; the prompt says it is the nightly round; the plan-meals skill's §7 says how.
+- **`GET /api/planning/nightly`** (`NightlyResponse`): the setting, the zone, `nextRunAt` (the
+  queued job's time; null while off), the open nightly requests for today or later as threads
+  (newest first: two while a regenerated one hasn't finished), and, while the run is on, the
+  latest starters at most `STARTERS_MAX_AGE_MS` (48 h) old, each with what its reference names now
+  (`meal`: title and time, null once removed; `request`: title and time).
+- **No push** for a nightly request's first round (see [Notifications](#notifications-13)); the
+  entry screen and the overview's quiet row show it.
+- **The phone**: the entry screen's Tonight section, agent starters first among the starters, the
+  overview's quiet row, Settings → Planning's nightly options: see
+  [Screens](#screens-10-11-12-13-24-30-33-40-47).
 
 ## Notifications (#13)
 
@@ -1454,7 +1535,9 @@ opens the request.
   sessions saving a revision over MCP don't notify, nor does logging a meal again (#30).
   `PlanJob.settled` calls `notifyPlan` the same way when a round's job is `done` or `failed` for
   good: the event `planning` (its own toggle, "Suggestions"; a missing key counts as on), nothing
-  for an archived request (the user ended it), nothing for a retry or a wait.
+  for an archived request (the user ended it), nothing for a retry or a wait, and nothing for a
+  nightly request's first round (#48: nobody asked, and it would be a 3 a.m. notification; rounds
+  the user starts from it notify as any).
 - **What it says** (`push/messages.ts`; personal data only inside the encrypted payload):
   analysed "<title> · <kcal> kcal" with "Protein · Fat · Carbs" (from the revision view, i.e.
   `computeTotals`); needs input "<title> · needs input" with the first question ("(+1 more)");
@@ -1547,7 +1630,11 @@ square corners. The tokens are in `index.css` (shadcn's names mapped onto the pa
   state fold into one row instead of one each: the count in words ("3 requests with suggestions"),
   their titles in the sub-line, opening the entry screen (`/plan`), where every open request is
   listed. A request whose filter days are all before today (the phone's zone; `isPastRequest`) drops
-  off the strip, and a request whose suggestions all have a verdict leaves it.
+  off the strip, and a request whose suggestions all have a verdict leaves it. Nightly requests
+  (#48) never count as waiting: while today's nightly suggestions wait for a verdict, a quiet row
+  of their own closes the strip (`NightlyStripRow`, `nightlyStripRow`, `useNightly`: "Tonight · 3
+  suggestions", their titles, "Made at 03:00"; not lime, nobody asked), opening the entry screen;
+  the strip's meta adds "tonight".
   Goals come from `GET /api/goals` (`useGoals`), resolved per day with `goalInForce`.
 - **Day view** (`/days/:date`, `useDay` → `GET /api/days/:date?tz=<the phone's zone>`): the
   totals slab with the day's goal and per-target "left" / "over", the meals not counted yet, a
@@ -1613,8 +1700,26 @@ square corners. The tokens are in `index.css` (shadcn's names mapped onto the pa
   changed), then **Skip it** (the planned meal shows as skipped, Unskip undoes it) and **Unplan**
   (an inline confirm; a DELETE, then the plan view).
 - **Planning entry** (#47, `/plan`, "What to cook?"; `routes/plan.index.tsx`): the header with back
-  and the plan view's calendar, then **starter bands** (`StarterBand`, `lib/starters.ts`, computed
-  by code from what the app has: what is open tonight (protein, else kcal, against the goal in force,
+  and the plan view's calendar, then the **Tonight** section (#48, `NightlySection`,
+  `components/nightly.tsx`, `useNightly`, key under `meals`, polling while a nightly round runs):
+  today's nightly suggestions as compact bands (title, the first why-line, kcal, the day's bar with
+  it, time · protein against what is open · source; **Pick · tonight** in ink, or "Pick · lunch",
+  and No; picked: tint, "Planned · tonight", Unplan; rejected: folded with Undo; the title opens the
+  suggestion's recipe), "Steer or ask for more" (the request's thread) and **Regenerate**
+  (`useRegenerateNightly`, one request with a client id, never queued). The strip says "3
+  suggestions · made 03:00" and is titled "Tonight" when every suggestion is for today's dinner,
+  else "Today". While a regenerated request has nothing ready (`nightlyState`), the earlier
+  suggestions stay, quiet and without buttons, under "Started 09:14. These stay until the new ones
+  arrive."; a regenerated round that failed says so above the earlier ones. With no request today:
+  when the next run comes and **Suggest now**; with the run off and none today: a muted row
+  "Nightly suggestions for today are off." to the settings. Then **starter bands** (`StarterBand`,
+  `lib/starters.ts`): the nightly run's first, in its order (#48, `agentStarter`: its text, detail
+  and filters as written, the number computed here by `liveNumber` from the kind and the reference:
+  the protein or kcal open tonight like code's, "4× logged in 30 days" or "12 days since you had it"
+  for the referenced meal, the month for the season, the weekday of the referenced request, none
+  (a sparkles mark) for `use_up` until #49, `other` or a reference that is gone; the strip's meta
+  "ideas from last night"), then those computed by code of a kind the run didn't write, at most
+  `MAX_SHOWN_STARTERS` (6). The code's, from what the app has: what is open tonight (protein, else kcal, against the goal in force,
   from `usePlan` of today and tomorrow; tomorrow once tonight's dinner is eaten or planned), the meal
   logged most in 30 days ("Like Linsen-Dal, but different", `useRepeatable`), what is in season this
   month (a static German list in code, `SEASON`), the last request ("Dinners Tue–Thu, like last
@@ -1627,7 +1732,8 @@ square corners. The tokens are in `index.css` (shadcn's names mapped onto the pa
   disabled while nothing is typed or attached, while no day is picked (a tint hint says so) and
   until Settings → Planning has loaded (its defaults complete the filters). Sending queues the
   request (`sendDraft`, see [the upload queue](#the-upload-queue-liboutbox)) and opens its thread.
-  Nightly suggestions and agent-written starters (#48) and leftovers (#49) are not there yet.
+  The open requests listed are the user's; nightly ones are in the Tonight section. Leftovers (#49)
+  are not there yet.
 - **Composer** (#47, `components/composer.tsx`): attachments above the row as 44 px chips (a photo's
   thumbnail, a voice memo's length "voice · transcribed later", a link's host and path, a file's
   name; each removable), then **plus** (a top sheet: Photo, the camera or library; Link, the link
@@ -1797,7 +1903,10 @@ square corners. The tokens are in `index.css` (shadcn's names mapped onto the pa
   round (2–5), choice rows for the recipe source (real recipes only, based on a real recipe,
   free), a stepper for portions to cook (1–4), and a preferences list (never eat, dislikes,
   equipment, favourite sites, weekday cooking time) whose rows open a small sheet — a text field,
-  one line each, or a number field for the cooking time.
+  one line each, or a number field for the cooking time. Between portions and preferences,
+  **Tonight's suggestions** (#48): a switch "Suggest for today each night" (off by default; what a
+  run costs said under it), and while on the time (a row opening a sheet with a time field, "the
+  server's time") and how many (a stepper, 1–5).
 - **Live status:** the overview polls `GET /api/meals` every 3 s while a meal is
   queued, analysing or has a pending transcript, the meal screen polls its meal likewise; the
   planning list and a thread poll while a round is queued or running (#47). A push arriving while

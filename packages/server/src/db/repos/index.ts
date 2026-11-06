@@ -8,6 +8,7 @@ import { PlannedMealRepo } from "./planned-meals.ts";
 import { PlanningInputRepo } from "./planning-inputs.ts";
 import { PlanningRequestRepo } from "./planning-requests.ts";
 import { PlanningRoundRepo } from "./planning-rounds.ts";
+import { PlanningStarterRepo } from "./planning-starters.ts";
 import { ProfileRepo } from "./profile.ts";
 import { PushSubscriptionRepo } from "./push.ts";
 import { RecipeRepo } from "./recipes.ts";
@@ -42,5 +43,6 @@ export function createRepos(db: Db) {
     planningTranscripts: new PlanningTranscriptRepo(db),
     planningRounds: new PlanningRoundRepo(db),
     planningRuns: new PlanningRunRepo(db),
+    planningStarters: new PlanningStarterRepo(db),
   };
 }

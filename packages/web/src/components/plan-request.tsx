@@ -34,7 +34,7 @@ import {
   X,
 } from "lucide-react";
 import type * as React from "react";
-import { useState } from "react";
+import { type ComponentProps, useState } from "react";
 import { formatNumber, formatTime, formatWeekday, localDate, plural, shortUrl } from "@/lib/format";
 import { uuidv7 } from "@/lib/ids";
 import type { PlanInputEntry, PlanningEntry } from "@/lib/outbox";
@@ -60,6 +60,7 @@ import { planError, usePickSuggestion, useRejectSuggestion, useUnplanMeal } from
 import { formatDuration } from "@/lib/recorder";
 import type { Starter } from "@/lib/starters";
 import { Chips, ChoiceList, ChoiceRow } from "./choice";
+import { NightlyStripRow } from "./nightly";
 import { FitBar } from "./planning";
 import { Band, Label, Strip } from "./slab";
 
@@ -90,12 +91,17 @@ export function StarterBand({
           ink ? "bg-ink py-5 text-ink-foreground" : tone === "tint" ? "bg-tint py-4" : "py-4",
         )}
         data-testid="starter"
-        data-starter={s.id}
+        data-starter={s.by === "code" ? s.id : s.kind}
+        data-by={s.by}
       >
         <span className={cn("shrink-0", ink ? "w-[120px]" : "w-[104px]")}>
-          <span className={cn("display block truncate", ink ? "text-[56px]" : "text-[36px]")}>
-            {s.number}
-          </span>
+          {s.number === null ? (
+            <Sparkles className={cn("block", ink ? "size-12" : "size-9")} strokeWidth={2.5} aria-hidden />
+          ) : (
+            <span className={cn("display block truncate", ink ? "text-[56px]" : "text-[36px]")}>
+              {s.number}
+            </span>
+          )}
           <Label className={cn("mt-1.5 block text-[10px] leading-tight", muted)}>{s.unit}</Label>
         </span>
         <span className="min-w-0 flex-1">
@@ -1093,21 +1099,28 @@ function PlanningGroupRow({ kind, group }: { kind: RequestState["kind"]; group: 
 export function PlanningStrip({
   requests,
   queued,
+  nightly = null,
   today = localDate(Date.now()),
 }: {
   requests: readonly PlanningRequestSummary[];
   /** Requests made on this phone the server doesn't have yet. */
   queued: readonly { requestId: string; title: string; refused: boolean }[];
+  /** Today's nightly suggestions still waiting (#48): a quiet row of their own, last. */
+  nightly?: ComponentProps<typeof NightlyStripRow>["row"] | null;
   /** The phone's today, to drop requests whose days are all behind it. */
   today?: string;
 }) {
   const rows = stripRows(requests, today);
-  if (rows.length === 0 && queued.length === 0) return null;
+  if (rows.length === 0 && queued.length === 0 && !nightly) return null;
   const groups = groupStripRows(rows);
+  const count = rows.length + queued.length;
+  const meta = [count > 0 ? plural(count, "request") : "", nightly ? nightly.title.toLowerCase() : ""]
+    .filter(Boolean)
+    .join(" · ");
 
   return (
     <section aria-label="Planning" data-testid="planning-strip">
-      <Strip title="Planning" meta={plural(rows.length + queued.length, "request")} />
+      <Strip title="Planning" meta={meta} />
       <ul className="divide-y divide-border">
         {queued.map((q) => (
           <li key={q.requestId} className={cn(q.refused && "bg-orange text-orange-foreground")}>
@@ -1137,6 +1150,7 @@ export function PlanningStrip({
             <PlanningGroupRow key={kind} kind={kind} group={rows} />
           ),
         )}
+        {nightly && <NightlyStripRow row={nightly} />}
       </ul>
     </section>
   );

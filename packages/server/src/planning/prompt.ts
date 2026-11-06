@@ -46,6 +46,11 @@ export async function buildPlanPrompt(
     "",
     `- Start with get_planning_context (roundId "${round.id}"): the request with its filters and inputs, the earlier rounds and the user's verdicts, each day with its slot budgets, the goal, the recent meals.`,
   ];
+  if (request.origin === "nightly" && round.number === 1) {
+    lines.push(
+      "- This is the nightly round: nobody asked, it prepares today. Plan for the request's slots as usual, and also save the starters with save_starters (the plan-meals instructions' nightly section), before or after the suggestions.",
+    );
+  }
   if (round.kind === "steer") {
     lines.push(
       "- This round steers: the inputs marked newThisRound are what the user added since the last round. Start from the earlier rounds, keep what the new input doesn't object to and change what it asks for.",

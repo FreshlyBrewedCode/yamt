@@ -61,6 +61,27 @@ export class PlanningRequestRepo {
       .map(toRequest);
   }
 
+  /** The open requests of an origin, newest first (the nightly ones, #48). */
+  listOpenOf(origin: PlanningOrigin): PlanningRequest[] {
+    return this.db
+      .query<Row, [string]>(
+        `SELECT * FROM planning_requests WHERE archived_at IS NULL AND origin = ?
+         ORDER BY created_at DESC, id DESC`,
+      )
+      .all(origin)
+      .map(toRequest);
+  }
+
+  /** The newest request of an origin, archived or not (the last nightly run, #48). */
+  latestOf(origin: PlanningOrigin): PlanningRequest | null {
+    const r = this.db
+      .query<Row, [string]>(
+        "SELECT * FROM planning_requests WHERE origin = ? ORDER BY created_at DESC, id DESC LIMIT 1",
+      )
+      .get(origin);
+    return r ? toRequest(r) : null;
+  }
+
   setTitle(id: string, title: string, now = Date.now()): PlanningRequest | null {
     this.db.query("UPDATE planning_requests SET title = ?, updated_at = ? WHERE id = ?").run(title, now, id);
     return this.get(id);

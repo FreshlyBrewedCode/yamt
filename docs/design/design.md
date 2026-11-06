@@ -246,7 +246,22 @@ Units sit next to numbers smaller and muted (`28g`, `72 /160`).
   tonight", "logged in 30 days", "Kürbis, Grünkohl, Rosenkohl, Birnen"), the idea in display 19 px
   (24 px on ink) with one muted why-line, an arrow. The first starter is the entry screen's ink slab,
   the rest alternate tint and plain, separated by dividers. Only starters with real data show
-  (no goal, no "protein open"); a tap fills the composer and the filters, never sends.
+  (no goal, no "protein open"); a tap fills the composer and the filters, never sends. The nightly
+  run's starters (#48) come first and look the same; their number is computed by the app when the
+  screen opens, and one without a number to show carries a sparkles mark in its place.
+- **Tonight section** (#48, the planning entry's top, G): a tint strip "Tonight" (or "Today" when
+  not every suggestion is a dinner) with "3 suggestions · made 03:00", then compact suggestion bands:
+  the title in display 19 px with the first why-line, kcal in display 26 px on the right, a 8 px day
+  bar, a micro-label line (time · "35 of 82 g P" in the foreground · source), **Pick · tonight**
+  (ink, like Pick everywhere) and No (tint). Picked: the band turns tint with "Planned · tonight"
+  and Unplan. Then plain rows with a bold caps label and a muted note: "Steer or ask for more", and
+  **Regenerate** ("runs now"). Regenerating: a pulse in the strip's meta, a tint line "Started
+  09:14. These stay until the new ones arrive.", the earlier bands muted and without buttons, the
+  Regenerate icon spinning. Nobody asked for these, so nothing in the section is lime. Off: one
+  muted row under the header, "Nightly suggestions for today are off. Settings ›".
+- **Nightly row** (#48, the overview's Planning strip, last): quiet like a row still suggesting, a
+  moon micro-label "Tonight · 3 suggestions", the titles in display 19 px, "Made at 03:00", an
+  arrow; it never counts as a request waiting and is never lime.
 - **Filter summary + composer dock** (#47, the planning entry and the request thread): the sticky
   footer on the page colour. Above the composer on the entry screen a 48 px tint row: "For" as a
   muted micro-label, the filters in bold 14 px joined by " · " ("Tonight · Dinner · ≤ 30 min · cook

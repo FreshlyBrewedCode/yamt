@@ -3,6 +3,7 @@ import { addDays, requestTitle } from "@yamt/shared";
 import { CalendarDays, ChevronRight } from "lucide-react";
 import { useMemo } from "react";
 import { Composer, Dock } from "@/components/composer";
+import { NightlySection } from "@/components/nightly";
 import { FilterSummary, StarterBand } from "@/components/plan-request";
 import { BackButton, iconButtonClass, Label, Strip } from "@/components/slab";
 import { formatLongDate, localDate } from "@/lib/format";
@@ -12,6 +13,7 @@ import { clearDraft, ENTRY_DRAFT, sendDraft, useDraft } from "@/lib/plan-draft";
 import { draftProblem, filterDefaults, requestState, resolveDraft, summaryWords } from "@/lib/plan-request";
 import {
   browserZone,
+  useNightly,
   usePlan,
   usePlanningRequest,
   usePlanningRequests,
@@ -25,10 +27,11 @@ export const Route = createFileRoute("/plan/")({ component: PlanEntry });
 const TONES = ["ink", "tint", "plain"] as const;
 
 /**
- * "What to cook?" (#47, G's entry): starters computed from what the app knows (a tap fills the
- * composer and the filters), the open requests, and docked at the bottom the filter summary (to the
- * filter page) over the composer. Sending queues the request, its inputs and its first round, and
- * opens its thread.
+ * "What to cook?" (#47, G's entry): tonight's nightly suggestions (#48: Pick / No, Regenerate, the
+ * thread; a settings hint while the run is off), starters (the nightly run's, then code's, each
+ * number computed here; a tap fills the composer and the filters), the open requests, and docked
+ * at the bottom the filter summary (to the filter page) over the composer. Sending queues the
+ * request, its inputs and its first round, and opens its thread.
  */
 function PlanEntry() {
   const navigate = useNavigate();
@@ -38,6 +41,7 @@ function PlanEntry() {
   const plan = usePlan(today, addDays(today, 1));
   const repeatable = useRepeatable();
   const requests = usePlanningRequests();
+  const nightly = useNightly();
   const queued = usePlanningOutbox();
   const [draft, setDraft] = useDraft(ENTRY_DRAFT);
   const lastSummary = requests.data?.requests.find((r) => r.request.origin === "user");
@@ -64,6 +68,7 @@ function PlanEntry() {
     days: plan.data?.days ?? [],
     repeatable: repeatable.data?.meals ?? [],
     last,
+    agent: nightly.data?.starters ?? [],
   });
 
   const pick = (s: Starter) => setDraft((d) => ({ ...d, text: s.composerText, filters: s.draft }));
@@ -80,7 +85,8 @@ function PlanEntry() {
   const onPhone = queued.entries.flatMap((e) =>
     e.type === "plan-request" && !known.has(e.requestId) ? [e] : [],
   );
-  const open = requests.data?.requests ?? [];
+  // the nightly ones are in their own section
+  const open = (requests.data?.requests ?? []).filter((r) => r.request.origin === "user");
 
   return (
     <>
@@ -96,12 +102,16 @@ function PlanEntry() {
       </header>
 
       <main className="flex-1">
+        {nightly.data && <NightlySection nightly={nightly.data} days={plan.data?.days} today={today} />}
         <section aria-label="Start from">
-          <Strip title="Start from" meta="from your days" />
+          <Strip
+            title="Start from"
+            meta={starters.some((s) => s.by === "agent") ? "ideas from last night" : "from your days"}
+          />
           <ul className="divide-y divide-border" data-testid="starters">
             {starters.map((s, i) => (
               <StarterBand
-                key={s.id}
+                key={`${s.by}-${s.id}`}
                 s={s}
                 tone={i === 0 ? "ink" : (TONES[1 + ((i - 1) % 2)] ?? "plain")}
                 onPick={pick}

@@ -274,6 +274,8 @@ export class PlanJob implements JobHandler<"plan"> {
 
   settled(job: JobOf<"plan">): void {
     settleRound(this.s, job);
+    // a nightly request's first round is done: today's earlier nightly suggestions make way (#48)
+    if (job.status === "done") this.s.nightly.supersede(job.payload.roundId);
     // done or failed for good: the round's final state; a retry or a reschedule is not the end
     if (job.status === "done" || job.status === "failed") {
       void notifyPlan(this.s, job.payload.roundId).catch((e: unknown) =>

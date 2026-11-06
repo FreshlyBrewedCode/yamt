@@ -78,6 +78,7 @@ describe("GET/PUT /api/planning/settings", () => {
         weekdayCookingMin: 30,
         favouriteSites: ["chefkoch.de"],
       },
+      nightly: { enabled: true, time: "05:30", count: 2 },
     };
     const put = await call<PlanningSettingsResponse>("PUT", planningSettingsPaths.settings, settings);
     expect(put.status).toBe(200);

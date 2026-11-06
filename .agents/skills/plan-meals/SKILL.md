@@ -1,6 +1,6 @@
 ---
 name: plan-meals
-description: Fill a yamt planning round with meal suggestions the user will actually cook - recipes (published, adapted or composed) whose ingredients are matched to real foods so yamt computes their macros - fitting the request's text and filters, the slot budgets of the days, the goal, recent meals (variety), earlier rounds and the user's verdicts, leftovers and preferences; outline first, then one suggestion at a time, saved with the yamt MCP tools. Use for yamt's background planning rounds, and whenever the user asks to plan meals or suggest recipes in yamt.
+description: Fill a yamt planning round with meal suggestions the user will actually cook - recipes (published, adapted or composed) whose ingredients are matched to real foods so yamt computes their macros - fitting the request's text and filters, the slot budgets of the days, the goal, recent meals (variety), earlier rounds and the user's verdicts, leftovers and preferences; outline first, then one suggestion at a time, saved with the yamt MCP tools; a nightly round also saves the starters the planning screen offers. Use for yamt's background planning rounds, and whenever the user asks to plan meals or suggest recipes in yamt.
 ---
 
 # Plan meals
@@ -22,6 +22,7 @@ The tools (yamt MCP server, `mcp__yamt__*`):
 - `search_foods` / `get_food` / `create_food`: for the few ingredients the matcher misses.
 - `fetch_recipe`: a recipe page's ingredients, yield and steps. Web search finds pages.
 - `save_suggestion`: one finished suggestion. `fail_suggestion`: give one idea up, with a reason.
+- `save_starters`: a nightly round's starters (§7).
 
 ## 1. Read the request (one call)
 
@@ -162,6 +163,37 @@ It returns yamt's numbers per portion and the fit; you don't need to repeat them
 
 After the last idea, end with one short sentence. A round with at least one saved suggestion
 counts; if you run out of time or ideas, save what you have rather than nothing.
+
+## 7. The nightly round
+
+A request with `origin: "nightly"` (the context also has a `nightly` part) was made by yamt at
+night, not by the user: its first round prepares **today** for the main slots still open. Nobody
+asked, so there is no text: plan from the day, the goal, the recent meals and the preferences.
+
+- **Suggestions**: as for any round, over the request's slots. With fewer ideas than slots, dinner
+  first (the meal cooked at home), then lunch, then breakfast; a breakfast or lunch idea must be
+  quick (≤ 15 min active). Never propose what is planned or eaten today already.
+- **Starters**: also call `save_starters` once (before the outline or after the last suggestion)
+  with 4–6 ideas the planning screen offers until the next night. Each is a starting point the user
+  taps to make a request of their own: `kind`, `text` (the idea as a short headline, **English
+  like the app**, dishes and produce in German: "Lachs mal wieder", "High protein tonight"),
+  `detail` (one line why, from the context: "Last fish 12 days ago" is wrong, "Your last fish was
+  Lachs mit Kartoffeln" is right), the `filters` a tap applies (only what the idea needs: `when`
+  today / tomorrow / week, `slots`, `timeCapMin`, `constraints`, `useUp` texts, `count`) and
+  `ref`, the id it is about. **No numbers in text or detail**: the app computes each starter's
+  number when the screen opens (the protein open now, how long since that meal, the leftover's
+  amount), so the run never states one.
+- **Kinds**, varied (at most two of one kind), each only when the context backs it:
+  - `protein_gap`: a high-protein idea for tonight when the goal has a protein target (filters:
+    today, dinner, `high_protein`).
+  - `use_up`: something to use up: a leftover (`ref.leftoverId` from `leftovers`) or produce a
+    recent input or request names (`filters.useUp`).
+  - `variety`: a dish type or protein missing from `recentMeals` for a while; `ref.mealId` is the
+    last meal that had it, if there is one.
+  - `like_meal`: a twist on a meal logged often (`ref.mealId`: the newest of them).
+  - `season`: what is in season this month in Germany.
+  - `last_request`: a `recentRequests` request worth asking again (`ref.requestId`; its filters).
+  - `other`: anything else that fits the user (preferences, the weekday).
 
 ## Background runs and interactive sessions
 

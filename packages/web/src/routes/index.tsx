@@ -9,9 +9,10 @@ import { iconButtonClass, Label, Strip } from "@/components/slab";
 import { TotalsSlab } from "@/components/totals-slab";
 import { dayLabel, formatLongDate, formatNumber, localDate, plural, startOfDay } from "@/lib/format";
 import { uuidv7 } from "@/lib/ids";
+import { nightlyStripRow } from "@/lib/nightly";
 import { useOutbox, usePlanningOutbox } from "@/lib/outbox";
 import { stillPlanned, withPlanned } from "@/lib/planning";
-import { useGoals, useMeals, usePlan, usePlanningRequests } from "@/lib/queries";
+import { useGoals, useMeals, useNightly, usePlan, usePlanningRequests } from "@/lib/queries";
 
 export const Route = createFileRoute("/")({ component: Overview });
 
@@ -23,9 +24,9 @@ const DAYS = 14;
  * meals by day (each day header opens that day, with its kcal against its own goal); today's
  * planned meals (#40) follow its eaten ones as quiet rows with Ate it, and the totals say what the
  * day comes to with them. Under the totals, the Planning strip (#47): requests whose suggestions
- * wait, that are still suggesting or failed. The bottom slab is Log | Plan (the planning entry
- * screen). The header's calendar opens the month (#33), the scale goals and weight, the cog the
- * settings.
+ * wait, that are still suggesting or failed, and tonight's nightly suggestions as a quiet row
+ * (#48). The bottom slab is Log | Plan (the planning entry screen). The header's calendar opens the
+ * month (#33), the scale goals and weight, the cog the settings.
  */
 function Overview() {
   const navigate = useNavigate();
@@ -42,6 +43,7 @@ function Overview() {
   const planned = stillPlanned(planToday);
   const [ate, setAte] = useState<string | null>(null);
   const requests = usePlanningRequests();
+  const nightly = useNightly();
   const planningQueue = usePlanningOutbox();
   const knownRequests = new Set((requests.data?.requests ?? []).map((r) => r.request.id));
   const queuedRequests = planningQueue.entries.flatMap((e) =>
@@ -112,7 +114,12 @@ function Overview() {
           />
         </Link>
 
-        <PlanningStrip requests={requests.data?.requests ?? []} queued={queuedRequests} today={todayDate} />
+        <PlanningStrip
+          requests={requests.data?.requests ?? []}
+          queued={queuedRequests}
+          nightly={nightlyStripRow(nightly.data?.requests ?? [])}
+          today={todayDate}
+        />
 
         {meals.isError && !meals.data && (
           <p className="px-5 py-6 font-medium text-muted-foreground">

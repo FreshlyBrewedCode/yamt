@@ -1,9 +1,9 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { PUSH_EVENTS, type PushEvent, type PushSubscriptionView } from "@yamt/shared";
-import { cn } from "cn";
 import { Bell, BellOff, Check, ClipboardPaste, Copy, Info, Share, SquarePlus } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import { AgentSettings } from "@/components/agent-settings";
+import { Switch } from "@/components/choice";
 import { PlanningSettings } from "@/components/planning-settings";
 import {
   BackButton,
@@ -264,26 +264,6 @@ function EventToggles({ subscription }: { subscription: PushSubscriptionView }) 
         );
       })}
     </ul>
-  );
-}
-
-/** A square switch: foreground when on, tint when off (lime stays for what wants the user). */
-function Switch({ on }: { on: boolean }) {
-  return (
-    <span
-      aria-hidden
-      className={cn(
-        "flex h-8 w-14 shrink-0 items-center p-1 transition-colors",
-        on ? "bg-foreground" : "bg-tint",
-      )}
-    >
-      <span
-        className={cn(
-          "size-6 transition-transform",
-          on ? "translate-x-6 bg-background" : "translate-x-0 bg-muted-foreground",
-        )}
-      />
-    </span>
   );
 }
 

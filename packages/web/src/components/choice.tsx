@@ -7,6 +7,26 @@ import { Check, Minus, Plus } from "lucide-react";
 import type * as React from "react";
 import { Label } from "./slab";
 
+/** A square switch: foreground when on, tint when off (lime stays for what wants the user). */
+export function Switch({ on }: { on: boolean }) {
+  return (
+    <span
+      aria-hidden
+      className={cn(
+        "flex h-8 w-14 shrink-0 items-center p-1 transition-colors",
+        on ? "bg-foreground" : "bg-tint",
+      )}
+    >
+      <span
+        className={cn(
+          "size-6 transition-transform",
+          on ? "translate-x-6 bg-background" : "translate-x-0 bg-muted-foreground",
+        )}
+      />
+    </span>
+  );
+}
+
 /** The square check of a choice row (the goals screen's "Fix a typo" toggle uses the same). */
 export function CheckSquare({ on, className }: { on: boolean; className?: string }) {
   return (
