@@ -1,5 +1,6 @@
 import {
   addDays,
+  leftoverAmount,
   MAX_STARTERS,
   type MealSlot,
   MIN_STARTERS,
@@ -7,6 +8,7 @@ import {
   type PlanningPreferences,
   type PlanningSuggestionView,
   STARTER_KINDS,
+  type UseUp,
 } from "@yamt/shared";
 import { isVoiceInput } from "../db/repos/planning-inputs.ts";
 import { HttpError } from "../domain/errors.ts";
@@ -20,22 +22,56 @@ export const RECENT_DAYS = 14;
 /** Main items listed per recent meal or earlier suggestion (the biggest by kcal). */
 const MAIN_ITEMS = 4;
 
-/** A leftover to use up (#49's list); until then the list is empty. */
-export interface PlanningLeftover {
-  leftoverId: string;
-  description: string;
-  grams: number | null;
-  note: string | null;
-}
-
 /** The user's planning preferences (#36's Settings → Planning, #46): the saved setting's, or its defaults. */
 export function planningPreferences(s: Services): PlanningPreferences {
   return planningSettings(s.repos.settings).preferences;
 }
 
-/** Until #49: none. */
-export function planningLeftovers(_s: Services): PlanningLeftover[] {
-  return [];
+/**
+ * The open leftovers (#49) as the agent reads them: what, how much (a cooked one's portions not
+ * planned yet, and its recipe and day), where it comes from. Oldest first.
+ */
+export function planningLeftovers(s: Services) {
+  return s.leftovers.list().map((l) => ({
+    leftoverId: l.id,
+    source: l.source,
+    description: l.description,
+    ...(l.quantity ? { quantity: l.quantity } : {}),
+    ...(l.grams !== null ? { grams: l.grams } : {}),
+    ...(l.source === "cooked"
+      ? {
+          portionsLeft: l.portions,
+          portionsNotPlanned: l.available,
+          cookedOn: l.cookedOn,
+          recipeId: l.recipeId,
+          ...(l.perPortion
+            ? {
+                perPortion: {
+                  kcal: l.perPortion.nutrients.energyKcal,
+                  protein: l.perPortion.nutrients.protein,
+                },
+              }
+            : {}),
+        }
+      : {}),
+    ...(l.food ? { food: { foodId: l.food.id, name: l.food.name } } : {}),
+    ...(l.note ? { note: l.note } : {}),
+  }));
+}
+
+/** A request's use-up filters with its leftovers named (one gone from the list says so). */
+function useUpOut(s: Services, useUp: readonly UseUp[]) {
+  return useUp.map((u) => {
+    if ("text" in u) return u;
+    const l = s.repos.leftovers.get(u.leftoverId);
+    if (!l) return { leftoverId: u.leftoverId, description: "(a leftover no longer on the list)" };
+    return {
+      leftoverId: l.id,
+      description: l.description,
+      ...(leftoverAmount(l) ? { amount: leftoverAmount(l) } : {}),
+      ...(l.status !== "open" ? { status: l.status } : {}),
+    };
+  });
 }
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -152,7 +188,7 @@ export function planningContext(s: Services, roundId: string) {
       requestId: request.id,
       title: request.title,
       origin: request.origin,
-      filters: request.filters,
+      filters: { ...request.filters, useUp: useUpOut(s, request.filters.useUp) },
     },
     inputs,
     round: {

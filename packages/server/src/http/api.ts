@@ -7,6 +7,7 @@ import { HttpError } from "../domain/errors.ts";
 import type { Services } from "../services.ts";
 import { agentRoutes } from "./agent.ts";
 import { goalRoutes } from "./goals.ts";
+import { leftoverRoutes } from "./leftovers.ts";
 import { mealRoutes } from "./meals.ts";
 import { handleError, sameOrigin } from "./middleware.ts";
 import { planningRoutes } from "./planning.ts";
@@ -16,6 +17,7 @@ import { planningSettingsRoutes } from "./planning-settings.ts";
 import { pushRoutes } from "./push.ts";
 import { runRoutes } from "./runs.ts";
 import { shareRoutes } from "./share.ts";
+import { shoppingRoutes } from "./shopping.ts";
 import { weightRoutes } from "./weight.ts";
 
 export interface ApiDeps {
@@ -51,6 +53,8 @@ export function createApi(deps: ApiDeps): Hono<IdentityEnv> {
   api.route("/", planningRequestRoutes(deps.services));
   api.route("/", planningSettingsRoutes(deps.services));
   api.route("/", planningNightlyRoutes(deps.services));
+  api.route("/", leftoverRoutes(deps.services));
+  api.route("/", shoppingRoutes(deps.services));
 
   api.all("*", () => {
     throw new HttpError(404, "not found");

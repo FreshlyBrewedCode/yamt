@@ -8,11 +8,13 @@ import {
   type MealItem,
   type MealSlot,
   type PlanDay,
+  type PlanLeftoverBody,
   type PlanMeal,
   type PlannedMeal,
   type PlannedMealView,
   type PlanQuery,
   type PlanResponse,
+  PORTION_EPSILON,
   portionItems,
   type Recipe,
   type RecipeItem,
@@ -24,6 +26,7 @@ import { computeTotals, type TotalsItem } from "../nutrition/totals.ts";
 import { goalsByDate } from "./calendar.ts";
 import { HttpError } from "./errors.ts";
 import { requestZone } from "./goals.ts";
+import { LeftoverService, leftoverAfterLog, leftoverOffers } from "./leftovers.ts";
 import { CLOCK_SKEW_MS, nutrientTotals } from "./meals.ts";
 import { recipeTotals } from "./recipes.ts";
 import type { RevisionService } from "./revisions.ts";
@@ -58,15 +61,21 @@ const list = (xs: readonly string[]) =>
  * skipped or unplanned while `planned`, and logged with "Ate it" (a new meal whose revision of
  * kind `plan` holds the recipe's items for the portion eaten, like Log again: no run, no model).
  * The plan reads days like the calendar: eaten (analysed meals) + planned, against the goal.
+ * Leftovers (#49): "Ate it" keeps extra cooked portions as a leftover, "Plan it" puts one on a slot
+ * (a planned meal with `leftoverOf`, nothing cooked), and the plan offers the open ones.
  */
 export class PlanningService {
+  private readonly leftovers: LeftoverService;
+
   constructor(
     private readonly repos: Repos,
     private readonly revisions: RevisionService,
     /** The server's zone: the default for the days. */
     private readonly timeZone: string,
     private readonly now: () => number = Date.now,
-  ) {}
+  ) {
+    this.leftovers = new LeftoverService(repos, now);
+  }
 
   /**
    * A recipe onto a date's slot, at its end. Idempotent with a client `id`: the stored one is
@@ -107,6 +116,12 @@ export class PlanningService {
    */
   update(id: string, body: UpdatePlannedMealBody): PlannedMealView {
     const p = this.open(id, "changed");
+    if (p.leftoverOf !== null) {
+      if (body.portionsCooked !== undefined && body.portionsCooked !== p.portionsCooked) {
+        throw new HttpError(400, "portionsCooked: a leftover was cooked with another meal");
+      }
+      if (body.portionEaten !== undefined) this.checkLeftoverPortion(p, body.portionEaten);
+    }
     const now = this.now();
     const updated = this.repos.db.transaction(() => {
       let cur = p;
@@ -235,10 +250,61 @@ export class PlanningService {
       });
       return {
         meal: this.repos.meals.setCurrentRevision(meal.id, revision.id, "analysed", now)!,
-        planned: this.repos.plannedMeals.markLogged(p.id, meal.id, factor, now)!,
+        planned: this.markLogged(p.id, meal.id, factor, now),
       };
     })();
     return { plannedMeal: this.view(planned), meal, revision: this.revisions.current(meal)!, created: true };
+  }
+
+  /**
+   * "Plan it" (#49): a cooked leftover onto a day's slot, as a planned meal of its recipe naming the
+   * planned meal it was cooked with (`leftoverOf`), nothing cooked, eating one portion or what is
+   * left when less. Only an open cooked leftover with portions not planned yet (409 otherwise).
+   * Idempotent with a client `id` (the planned meal's).
+   */
+  planLeftover(
+    leftoverId: string,
+    body: PlanLeftoverBody,
+  ): { plannedMeal: PlannedMealView; created: boolean } {
+    const leftover = this.leftovers.get(leftoverId);
+    if (body.id) {
+      const existing = this.repos.plannedMeals.get(body.id);
+      if (existing) {
+        if (existing.leftoverOf === null || existing.leftoverOf !== leftover.plannedMealId)
+          throw new HttpError(409, "id: another planned meal has this id");
+        return { plannedMeal: this.view(existing), created: false };
+      }
+    }
+    if (leftover.source !== "cooked" || !leftover.plannedMealId || !leftover.recipeId) {
+      throw new HttpError(
+        409,
+        "only a cooked leftover can be planned",
+        "use it up through a planning request",
+      );
+    }
+    if (leftover.status !== "open") throw new HttpError(409, `the leftover is ${leftover.status}`);
+    const available = leftover.available ?? 0;
+    if (available < PORTION_EPSILON) {
+      throw new HttpError(409, "the leftover is planned already", "change the planned meal that eats it");
+    }
+    const portionEaten = body.portionEaten ?? Math.max(0.1, Math.min(1, available));
+    if (portionEaten > available + PORTION_EPSILON) {
+      throw new HttpError(400, `portionEaten: only ${available} of it is left to plan`);
+    }
+    const recipe = this.recipe(leftover.recipeId);
+    const planned = this.repos.plannedMeals.insert({
+      id: body.id,
+      date: body.date,
+      slot: body.slot,
+      recipeId: recipe.id,
+      title: recipe.title,
+      portionsCooked: 0,
+      portionEaten,
+      note: null,
+      leftoverOf: leftover.plannedMealId,
+      now: this.now(),
+    });
+    return { plannedMeal: this.view(planned), created: true };
   }
 
   /**
@@ -320,9 +386,30 @@ export class PlanningService {
         goal: goalOn(date),
         openSlots,
         mostlyKnown: date < today || openSlots.length === 0,
+        leftoverOffers: [],
       };
     });
-    return { from: q.from, to: q.to, timeZone, today, days };
+    const leftovers = this.leftovers.list();
+    const offers = leftoverOffers(leftovers, days, today);
+    for (const d of days) d.leftoverOffers = offers.get(d.date) ?? [];
+    return { from: q.from, to: q.to, timeZone, today, days, leftovers };
+  }
+
+  /** "Ate it"'s mark, with what it does to leftovers (#49), in the caller's transaction. */
+  private markLogged(id: string, mealId: string, portionEaten: number, now: number): PlannedMeal {
+    const planned = this.repos.plannedMeals.markLogged(id, mealId, portionEaten, now)!;
+    leftoverAfterLog(this.repos, planned, now);
+    return planned;
+  }
+
+  /** A leftover planned meal eats at most what is left of its leftover besides what it eats already. */
+  private checkLeftoverPortion(p: PlannedMeal, portionEaten: number): void {
+    const l = p.leftoverOf ? this.repos.leftovers.ofPlannedMeal(p.leftoverOf) : null;
+    if (!l) return;
+    const free = (this.leftovers.get(l.id).available ?? 0) + p.portionEaten;
+    if (portionEaten > free + PORTION_EPSILON) {
+      throw new HttpError(400, `portionEaten: only ${Math.round(free * 100) / 100} of the leftover is left`);
+    }
   }
 
   /** The recipes of some planned meals with their items, in two queries. */

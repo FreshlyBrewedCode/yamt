@@ -53,6 +53,7 @@ function day(over: Partial<PlanDay> = {}): PlanDay {
     } as unknown as PlanDay["goal"],
     openSlots: ["breakfast", "lunch", "dinner"],
     mostlyKnown: false,
+    leftoverOffers: [],
     ...over,
   };
 }
@@ -592,5 +593,101 @@ describe("save_starters (#48)", () => {
       starters: [starter(), starter(), starter(), starter()],
     });
     expect(r.error).toContain("starters come with the nightly run");
+  });
+});
+
+describe("note_leftover (#49)", () => {
+  test("a pack a suggestion leaves over joins the list once that dish is cooked; one at home at once", async () => {
+    const { round, token } = runningRound({ count: 1 });
+    const client = await connect(token);
+    await ok(client, "save_round_outline", { roundId: round.id, ideas: ideas(1) });
+    const food = lentils();
+    await ok(client, "save_suggestion", suggestion(round.id, 0, food, 250));
+    const noted = await ok<{
+      leftover: { leftoverId: string; grams: number };
+      replaced: boolean;
+      listed: string;
+    }>(client, "note_leftover", {
+      roundId: round.id,
+      position: 0,
+      description: "Rote Linsen",
+      quantity: "½ Packung",
+      grams: 250,
+      foodId: food,
+      note: "Rest vom Linsen-Dal",
+    });
+    expect(noted).toMatchObject({ replaced: false, listed: "once the user has cooked that suggestion" });
+    // not cooked yet: nothing is left over
+    expect(s.leftovers.list().map((l) => l.id)).not.toContain(noted.leftover.leftoverId);
+    // a retry notes it again: replaced, not doubled
+    const again = await ok<{ leftover: { leftoverId: string; grams: number }; replaced: boolean }>(
+      client,
+      "note_leftover",
+      { roundId: round.id, position: 0, description: "rote linsen", grams: 200, foodId: food },
+    );
+    expect(again).toMatchObject({
+      replaced: true,
+      leftover: { leftoverId: noted.leftover.leftoverId, grams: 200 },
+    });
+    // something already at home (no position): on the list at once, and in the context
+    const home = await ok<{ leftover: { leftoverId: string } }>(client, "note_leftover", {
+      roundId: round.id,
+      description: "Feta",
+      grams: 100,
+      note: "Kühlschrankfoto",
+    });
+    const ctx = await ok<{
+      leftovers: { leftoverId: string; source: string; description: string; grams: number }[];
+    }>(client, "get_planning_context", { roundId: round.id });
+    expect(ctx.leftovers).toContainEqual(
+      expect.objectContaining({
+        leftoverId: home.leftover.leftoverId,
+        source: "pack",
+        description: "Feta",
+        grams: 100,
+      }),
+    );
+    expect(ctx.leftovers.map((l) => l.leftoverId)).not.toContain(noted.leftover.leftoverId);
+
+    // the run's own round only, and a position of its outline
+    expect((await call(client, "note_leftover", { description: "Feta" })).error).toContain(
+      "may only use planning round",
+    );
+    expect(
+      (await call(client, "note_leftover", { roundId: round.id, position: 3, description: "Feta" })).error,
+    ).toContain("no idea 3");
+
+    // picked and cooked ("Ate it"): the remainder is on the list
+    const x = s.repos.planningRounds.suggestionAt(round.id, 0)!;
+    const { plannedMeal } = s.planningRequests.pick(x.id, {});
+    s.planning.log(plannedMeal.id, { eatenAt: Date.now(), excludeItemIds: [] });
+    expect(s.leftovers.list()).toContainEqual(
+      expect.objectContaining({ id: noted.leftover.leftoverId, description: "Rote Linsen", grams: 200 }),
+    );
+    for (const id of [noted.leftover.leftoverId, home.leftover.leftoverId]) s.leftovers.setStatus(id, "gone");
+  });
+
+  test("a request's leftovers to use up are named in the context; an interactive session notes without a round", async () => {
+    const interactive = await connect(s.mcpTokens.interactiveToken());
+    const { leftover } = await ok<{ leftover: { leftoverId: string } }>(interactive, "note_leftover", {
+      description: "Hokkaido",
+      quantity: "½",
+      grams: 500,
+    });
+    const { round, token } = runningRound({
+      useUp: [{ leftoverId: leftover.leftoverId }, { text: "Spinat" }],
+    });
+    const ctx = await ok<{ request: { filters: { useUp: unknown[] } } }>(
+      await connect(token),
+      "get_planning_context",
+      {
+        roundId: round.id,
+      },
+    );
+    expect(ctx.request.filters.useUp).toEqual([
+      { leftoverId: leftover.leftoverId, description: "Hokkaido", amount: "½ · ≈ 500 g" },
+      { text: "Spinat" },
+    ]);
+    s.leftovers.setStatus(leftover.leftoverId, "used");
   });
 });

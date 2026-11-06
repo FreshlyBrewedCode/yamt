@@ -16,6 +16,7 @@ import {
 import type { Repos } from "../db/repos/index.ts";
 import { dedupeKeys, type Job } from "../db/repos/jobs.ts";
 import { HttpError } from "./errors.ts";
+import { LeftoverService } from "./leftovers.ts";
 import type { PlanningService } from "./planning.ts";
 import type { PlanningRequestService } from "./planning-requests.ts";
 import { planningSettings } from "./planning-settings.ts";
@@ -65,6 +66,8 @@ export type ParsedStarter = Required<Pick<StarterInput, "kind" | "text">> &
  * offers with a number the app computes.
  */
 export class NightlyService {
+  private readonly leftovers: LeftoverService;
+
   constructor(
     private readonly repos: Repos,
     private readonly planning: PlanningService,
@@ -72,7 +75,9 @@ export class NightlyService {
     /** The server's zone: the run's time and "today". */
     private readonly timeZone: string,
     private readonly now: () => number = Date.now,
-  ) {}
+  ) {
+    this.leftovers = new LeftoverService(repos, now);
+  }
 
   settings(): NightlySettings {
     return planningSettings(this.repos.settings).nightly;
@@ -187,8 +192,7 @@ export class NightlyService {
       if (mealId && (!meal || meal.removedAt !== null)) throw refError(i, "mealId", mealId);
       if (requestId && !this.repos.planningRequests.get(requestId)) throw refError(i, "requestId", requestId);
       if (recipeId && !this.repos.recipes.get(recipeId)) throw refError(i, "recipeId", recipeId);
-      // the leftovers list is #49's: until then no id names one
-      if (leftoverId) throw refError(i, "leftoverId", leftoverId);
+      if (leftoverId && !this.repos.leftovers.get(leftoverId)) throw refError(i, "leftoverId", leftoverId);
     }
     return this.repos.planningStarters.replace(
       roundId,
@@ -234,7 +238,14 @@ export class NightlyService {
       ...s,
       meal: meal && meal.removedAt === null ? { id: meal.id, title, eatenAt: meal.eatenAt } : null,
       request: request ? { id: request.id, title: request.title, createdAt: request.createdAt } : null,
+      leftover: this.openLeftover(s.ref.leftoverId),
     };
+  }
+
+  /** A starter's leftover while it is open (#49); null once used or gone. */
+  private openLeftover(id: string | undefined): PlanningStarterView["leftover"] {
+    const l = id ? this.repos.leftovers.get(id) : null;
+    return l?.status === "open" ? this.leftovers.get(l.id) : null;
   }
 
   private hasReady(requestId: string): boolean {

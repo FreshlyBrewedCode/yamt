@@ -272,6 +272,64 @@ export function planningTools(s: Services): Tool[] {
     }),
 
     tool({
+      name: "note_leftover",
+      scope: "plan",
+      description:
+        'Note a remainder the user will have at home after cooking a suggestion that uses part of a pack ("½ Hokkaido", "Feta 100 g", "Kokosmilch 200 ml"), with the suggestion\'s position: it joins the leftovers list once the user has cooked that suggestion (logged its planned meal), and then the next plans use it up and the shopping list counts it as at home. Without a position (something already at home, e.g. on a fridge photo) it joins the list at once. Only real remainders of packs or pieces the recipe opens, not staples; German description like a food name ("Hokkaido", "Feta"). The same description noted again for the same suggestion replaces the earlier note (a retry). A planning run passes its roundId; an interactive session may leave it out.',
+      schema: z.object({
+        roundId: roundId.optional(),
+        position: z
+          .number()
+          .int()
+          .min(0)
+          .max(MAX_SUGGESTIONS - 1)
+          .optional()
+          .describe("The outline idea whose recipe leaves it over (0 = first)."),
+        description: z.string().trim().min(1).max(120).describe('What is left: "Hokkaido", "Feta".'),
+        quantity: z.string().trim().max(40).optional().describe('As said: "½", "1 Stück", "1 Bund".'),
+        grams: z.number().positive().max(100_000).optional().describe("About how much, when known."),
+        foodId: z.uuid().optional().describe("The food it is (from match_ingredients), when known."),
+        note: z
+          .string()
+          .trim()
+          .max(200)
+          .optional()
+          .describe('Where it comes from: "Rest vom Kürbis-Curry (Di)".'),
+      }),
+      run(args, ctx) {
+        if (args.roundId) {
+          const { round, request } = roundOf(s, args.roundId);
+          if (request.archivedAt !== null) throw new ToolError("the planning request was archived");
+          if (round.status !== "running" && ctx.principal.kind === "plan")
+            throw new ToolError(`the round is ${round.status}, not running`);
+        }
+        const { leftover, replaced } = s.leftovers.note(
+          {
+            position: args.position,
+            description: args.description,
+            quantity: args.quantity,
+            grams: args.grams,
+            foodId: args.foodId,
+            note: args.note,
+          },
+          args.roundId ?? null,
+        );
+        return {
+          leftover: {
+            leftoverId: leftover.id,
+            description: leftover.description,
+            quantity: leftover.quantity,
+            grams: leftover.grams,
+          },
+          replaced,
+          listed: leftover.suggestionId
+            ? "once the user has cooked that suggestion"
+            : "now: it is on the leftovers list",
+        };
+      },
+    }),
+
+    tool({
       name: "fail_suggestion",
       scope: "plan",
       description:
