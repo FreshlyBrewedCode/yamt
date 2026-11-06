@@ -61,6 +61,7 @@ const day = (more: Partial<PlanDay> = {}): PlanDay => ({
   goal: goal(160),
   openSlots: ["breakfast", "lunch", "dinner"],
   mostlyKnown: false,
+  leftoverOffers: [],
   ...more,
 });
 

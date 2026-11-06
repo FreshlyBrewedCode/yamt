@@ -34,6 +34,7 @@ import { heicToJpeg } from "../media/heic.ts";
 import type { MediaStore } from "../media/store.ts";
 import { type MediaFile, storedFile, storeUpload } from "../media/upload.ts";
 import { HttpError } from "./errors.ts";
+import { leftoverAfterLog, leftoverAfterUnlog } from "./leftovers.ts";
 import { type RevisionService, totalsOf } from "./revisions.ts";
 import { assertTimeZone, localDate, localTimeZone } from "./time.ts";
 
@@ -411,7 +412,8 @@ export class MealService {
    * onto a removed meal is refused), and so are the queued transcriptions of its voice captures.
    * A meal whose analysis was stopped stands where that analysis started from: its current
    * revision's status, or `draft` without one; a restore brings it back like that. A meal logged
-   * from the plan puts its planned meal back to `planned`.
+   * from the plan puts its planned meal back to `planned` and takes its leftover back unless something
+   * was eaten from it (#49); one that ate a leftover gives the portion back.
    */
   remove(mealId: string, now = Date.now()): RemoveMealResponse {
     const before = this.meal(mealId);
@@ -424,8 +426,10 @@ export class MealService {
       }
       const current = before.currentRevisionId ? this.repos.revisions.get(before.currentRevisionId) : null;
       const status = busy ? (current?.status ?? "draft") : before.status;
-      // a meal logged from the plan ("Ate it", #36): its planned meal is planned again
-      this.repos.plannedMeals.unlogMeal(mealId, now);
+      // a meal logged from the plan ("Ate it", #36): its planned meal is planned again, and its
+      // leftover (#49) is taken back unless eaten from, or what it ate of one given back
+      const unlogged = this.repos.plannedMeals.unlogMeal(mealId, now);
+      if (unlogged) leftoverAfterUnlog(this.repos, unlogged, unlogged.portionEaten, now);
       return { meal: this.repos.meals.remove(mealId, status, now)!, cancelled };
     })();
     const stopped = this.stopAnalysis(mealId);
@@ -436,8 +440,8 @@ export class MealService {
    * Undoes a removal; idempotent. The meal is back as it was removed (status, revision, time).
    * Voice captures whose transcription the removal cancelled are queued again; a stopped
    * analysis is not (the user presses Analyse: a run costs money). A meal logged from the plan
-   * marks its planned meal `logged` again if it is still `planned`; otherwise it stays a meal of
-   * its own.
+   * marks its planned meal `logged` again if it is still `planned` (with its leftover, #49);
+   * otherwise it stays a meal of its own.
    */
   restore(mealId: string, now = Date.now()): RestoreMealResponse {
     const before = this.meal(mealId);
@@ -447,7 +451,8 @@ export class MealService {
       // logged from the plan: logged again, unless its planned meal was logged, skipped or unplanned since
       const planned = meal.sourcePlannedMealId ? this.repos.plannedMeals.get(meal.sourcePlannedMealId) : null;
       if (planned?.status === "planned") {
-        this.repos.plannedMeals.markLogged(planned.id, mealId, planned.portionEaten, now);
+        const logged = this.repos.plannedMeals.markLogged(planned.id, mealId, planned.portionEaten, now)!;
+        leftoverAfterLog(this.repos, logged, now);
       }
       const pending = new Set(
         this.repos.transcripts

@@ -64,6 +64,8 @@ export class PlannedMealRepo {
     note: string | null;
     /** The suggestion it was picked from (#44). */
     suggestionId?: string | null;
+    /** A leftover planned meal (#49): the planned meal whose extra portions it eats. */
+    leftoverOf?: string | null;
     now?: number;
   }): PlannedMeal {
     const id = p.id ?? newId();
@@ -71,8 +73,8 @@ export class PlannedMealRepo {
     this.db
       .query(
         `INSERT INTO planned_meals (id, date, slot, position, recipe_id, title, portions_cooked, portion_eaten,
-           suggestion_id, note, created_at, updated_at)
-         VALUES (?, ?, ?, (SELECT count(*) FROM planned_meals WHERE date = ? AND slot = ?), ?, ?, ?, ?, ?, ?, ?, ?)`,
+           suggestion_id, leftover_of, note, created_at, updated_at)
+         VALUES (?, ?, ?, (SELECT count(*) FROM planned_meals WHERE date = ? AND slot = ?), ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
@@ -85,6 +87,7 @@ export class PlannedMealRepo {
         p.portionsCooked,
         p.portionEaten,
         p.suggestionId ?? null,
+        p.leftoverOf ?? null,
         p.note,
         now,
         now,
@@ -105,6 +108,25 @@ export class PlannedMealRepo {
       )
       .all(from, to)
       .map(toPlannedMeal);
+  }
+
+  /** The planned meals that eat a planned meal's extra portions (#49), every status. */
+  leftoversOf(plannedMealId: string): PlannedMeal[] {
+    return this.db
+      .query<Row, [string]>("SELECT * FROM planned_meals WHERE leftover_of = ? ORDER BY date, id")
+      .all(plannedMealId)
+      .map(toPlannedMeal);
+  }
+
+  /** The last date with a meal still `planned`, from `from` on; null when there is none. */
+  lastPlannedDate(from: string): string | null {
+    return (
+      this.db
+        .query<{ d: string | null }, [string]>(
+          "SELECT max(date) AS d FROM planned_meals WHERE status = 'planned' AND date >= ?",
+        )
+        .get(from)?.d ?? null
+    );
   }
 
   /** Portions and the note. */

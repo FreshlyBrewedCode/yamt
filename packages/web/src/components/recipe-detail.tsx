@@ -89,8 +89,11 @@ export function RecipeDetail({
   const { base, open } = openBefore(day, planned);
   const target = day?.goal?.targets.energyKcal ?? null;
   const dayWord = planned.date === today ? "today" : dayLabel(dateStart(planned.date), now);
-  const leftover = cook - eat;
-  const lead = status === "logged" ? "Logged" : status === "skipped" ? "Skipped" : "Planned";
+  // a leftover planned meal (#49) was cooked with another one: nothing to cook, only what to eat
+  const fromLeftover = planned.leftoverOf !== null;
+  const leftover = fromLeftover ? 0 : cook - eat;
+  const lead =
+    status === "logged" ? "Logged" : status === "skipped" ? "Skipped" : fromLeftover ? "Leftover" : "Planned";
 
   const setPortions = (v: { cook: number; eat: number }) => {
     setPending(v);
@@ -124,7 +127,7 @@ export function RecipeDetail({
           )}
         </div>
         <Label className="mt-4 text-muted-foreground" data-testid="planned-when">
-          {lead} · {whenWords(planned, now)} · cook {cook}, eat {portions(eat)}
+          {lead} · {whenWords(planned, now)} · {fromLeftover ? "" : `cook ${cook}, `}eat {portions(eat)}
         </Label>
         <h1 className="display mt-1 text-[32px] leading-[0.95]" data-testid="recipe-title">
           {r.title}
@@ -165,10 +168,19 @@ export function RecipeDetail({
         <RecipeNotes recipe={r} extra={planned.note ? [{ label: "Your note", text: planned.note }] : []} />
 
         <section aria-label="Portions">
-          <Strip title="Portions" meta={leftover > 0 ? plural(leftover, "leftover") : "nothing left over"} />
+          <Strip
+            title="Portions"
+            meta={
+              fromLeftover
+                ? "a leftover, cooked already"
+                : leftover > 0
+                  ? plural(leftover, "leftover")
+                  : "nothing left over"
+            }
+          />
           <div className="px-5 pt-4 pb-4" data-testid="portions">
             <PortionChips
-              cook={cook}
+              cook={fromLeftover ? null : cook}
               eat={eat}
               onChange={setPortions}
               disabled={status !== "planned" || update.isPending}
@@ -195,7 +207,7 @@ export function RecipeDetail({
           )}
         </section>
 
-        <RecipeIngredients recipe={recipe} cook={cook} />
+        <RecipeIngredients recipe={recipe} cook={fromLeftover ? eat : cook} leftover={fromLeftover} />
         <RecipeSteps recipe={r} />
         <RecipeSourceFooter recipe={r} />
       </main>
@@ -374,11 +386,22 @@ function RecipeNotes({
   );
 }
 
-/** The ingredients for the portions cooked (optional ones marked). */
-function RecipeIngredients({ recipe, cook }: { recipe: RecipeView; cook: number }) {
+/** The ingredients for the portions cooked (optional ones marked); a leftover's: in the portion eaten. */
+function RecipeIngredients({
+  recipe,
+  cook,
+  leftover = false,
+}: {
+  recipe: RecipeView;
+  cook: number;
+  leftover?: boolean;
+}) {
   return (
     <section aria-label="Ingredients">
-      <Strip title="Ingredients" meta={`for ${plural(cook, "portion")} cooked`} />
+      <Strip
+        title="Ingredients"
+        meta={leftover ? `in ${plural(cook, "portion")}` : `for ${plural(cook, "portion")} cooked`}
+      />
       <ul className="divide-y divide-border" data-testid="ingredients">
         {recipe.items.map((i) => (
           <li key={i.id} className="flex min-h-12 items-center gap-3 px-5 py-2" data-testid="ingredient">

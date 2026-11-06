@@ -7,7 +7,8 @@ goals and weight, #12, Web Push notifications, #13, the guided goal setup, #24, 
 the iOS Shortcut share target, #26, the agent settings, #28, logging a meal again, #30, the
 calendar, #33, removing a meal, the data underneath meal planning, #39, planning requests,
 #44, the suggestion job that fills their rounds, #45, planning settings, #46, the planning
-screens, #47, and the nightly run with agent-written starters, #48), how it
+screens, #47, the nightly run with agent-written starters, #48, and leftovers with the shopping
+list, #49), how it
 fits together, and what comes after wave 1. Why it is built this way:
 [ADR 0001](adr/0001-wave-1-architecture.md), for planning [ADR 0003](adr/0003-meal-planning.md). Commands and conventions: [AGENTS.md](../AGENTS.md).
 The design: [design/design.md](design/design.md).
@@ -83,6 +84,10 @@ packages/shared/src/      contracts shared by server and web (no runtime deps bu
   api-planning-nightly.ts the nightly run (#48): `planningNightlyPaths`, `STARTER_KINDS`, `StarterInput`
                           (`StarterFilters`, `StarterRef`), `PlanningStarterView`, `NightlyResponse`,
                           `RegenerateNightlyBody`, `STARTERS_MAX_AGE_MS`
+  api-leftovers.ts        leftovers (#49): `leftoverPaths`, `LeftoverView`, `LeftoverOffer`, the bodies
+                          (`CreateLeftoverBody`, `UpdateLeftoverBody`, `PlanLeftoverBody`), `leftoverAmount`
+  api-shopping.ts         the shopping list (#49): `shoppingPaths`, `AISLES` / `AISLE_NAME`, `ShoppingQuery`,
+                          `ShoppingLine`, `ShoppingListResponse`, `ShoppingCheckBody`, `AddShoppingLineBody`
   api-runs.ts             analysis runs and trace lines: `runPaths`, `AnalysisRun`, `TraceEntry`
   api-push.ts             Web Push: `pushPaths`, `PUSH_EVENTS`, `SubscribeBody`, `PushEventsBody`,
                           `PushPayload` (what the service worker receives)
@@ -131,11 +136,14 @@ packages/server/src/
                           (PlanningService: planned meals, the plan, "Ate it", #36), planning-requests.ts
                           (PlanningRequestService: requests, inputs, rounds, suggestions, picking, #44),
                           planning-settings.ts (the `planning` setting, #46), nightly.ts (NightlyService:
-                          the schedule, the run, Regenerate, superseding, starters, #48), time.ts (days and
-                          local times)
+                          the schedule, the run, Regenerate, superseding, starters, #48), leftovers.ts
+                          (LeftoverService, what "Ate it" and removing a meal do to leftovers, the plan's
+                          offers, #49), shopping.ts (ShoppingService and the pure `shoppingLines`, #49),
+                          time.ts (days and local times)
   nutrition/              nutrients.ts (OFF/FDC → core set), totals.ts (re-exports the shared totals), ranking.ts,
                           off.ts / fdc.ts (clients), http.ts (timeouts, size caps, rate limits,
-                          User-Agent), recipe.ts (fetch + schema.org Recipe JSON-LD)
+                          User-Agent), recipe.ts (fetch + schema.org Recipe JSON-LD), aisles.ts (a food's
+                          shopping aisle: its categories, else keywords, #49)
   mcp/                    endpoint.ts (/mcp: auth, stateless transport), tools.ts (the tools,
                           scopes, instructions), tokens.ts (interactive and per-run tokens)
   media/                  store.ts (write-once files), detect.ts (type sniffing), exif.ts,
@@ -146,14 +154,14 @@ packages/server/src/
                           foods, revisions, runs (analysis and planning runs), goals, profile, push,
                           settings, recipes, planned-meals,
                           planning-requests, planning-inputs, planning-rounds (rounds and their suggestions),
-                          planning-starters (#48);
+                          planning-starters (#48), leftovers and shopping (#49);
                           transcripts.ts holds both transcript tables)
   push/                   vapid.ts (the key pair in vapid.json), sender.ts (PushSender: encrypt, sign,
                           deliver, 404/410 cleanup), messages.ts (what a meal's and a planning round's
                           notification says, notifyMeal, notifyPlan)
   planning/               the suggestion job (#45): job.ts (PlanJob, settleRound, the turn's cap),
                           prompt.ts (the round's prompt), tools.ts (the planning MCP tools), context.ts
-                          (get_planning_context; preferences from #46's setting, leftovers `[]` until
+                          (get_planning_context; preferences from #46's setting, the open leftovers,
                           #49), budget.ts (the slot budget), matcher.ts (match_ingredients: routing and
                           ranking), nightly.ts (NightlyJob: the scheduled `nightly` handler, #48)
 packages/server/test/     bun tests, temp dirs only; fixtures/ holds made-up images and, in
@@ -183,7 +191,8 @@ packages/web/src/
                           plan.days.tsx (the plan view, /plan/days, #40), planned.$id.tsx (a planned
                           meal's recipe, /planned/:id), plan.index.tsx (the planning entry, /plan, #47),
                           plan.filters.tsx (the filter page), plan.requests.$id.index.tsx (a request's
-                          thread), plan.requests.$id.suggestions.$suggestionId.tsx (a suggestion's recipe);
+                          thread), plan.requests.$id.suggestions.$suggestionId.tsx (a suggestion's recipe),
+                          plan.shopping.tsx (the shopping list, /plan/shopping?from&to, #49);
                           routeTree.gen.ts
                           is generated
   lib/api.ts, queries.ts  the fetch client and every TanStack Query hook
@@ -203,6 +212,10 @@ packages/web/src/
                           (groupStripRows)
   lib/starters.ts         the entry screen's starters (computeStarters: the nightly run's first, then
                           code's; agentStarter and liveNumber: an agent starter's number, computed here; SEASON)
+  lib/leftovers.ts        leftovers on the phone (#49): a leftover's line (leftoverLine), the plan's offers by
+                          leftover (offersOf), Ate it's sentence (keptWords), a starter's number (leftoverNumber)
+  lib/shopping.ts         the shopping list's aisles with their counts (byAisle), "½ Hokkaido at home"
+                          (atHomeWords), the range sheet's days (rangeDays)
   lib/nightly.ts          the Tonight section's state (nightlyState: which nightly request it shows while
                           one regenerates), its words, Pick's words, the overview's quiet row (#48)
   lib/plan-draft.ts       the composers' drafts (in memory, per composer) and sendDraft (into the queue)
@@ -226,7 +239,8 @@ packages/web/src/
                           (the planning dock and composer, #47), plan-request (starter bands, the filter
                           summary and form, the slots slab, You asked, the suggestion, placeholder and
                           failed rows, the overview's Planning strip, #47), nightly (the Tonight section,
-                          its compact rows, Regenerate, the strip's quiet row, #48); ui/ (shadcn:
+                          its compact rows, Regenerate, the strip's quiet row, #48), leftovers (the offered
+                          row with Plan it, the Leftovers list and its sheets, the shopping row, #49); ui/ (shadcn:
                           button, input, sheet)
   index.css               Tailwind 4 + the D · Slab theme tokens (light/dark)
 e2e/                      Playwright specs (phone viewport); calendar-seed.ts makes four made-up months for the
@@ -424,8 +438,8 @@ new value never needs a table rebuild.
 - **planned_meals** (#39): `date` (local `YYYY-MM-DD`, like goals), `slot` (`breakfast` | `lunch` |
   `dinner` | `snack`), `position` (0, 1, … within the date's slot), `recipe_id`, `title` (the
   recipe's), `portions_cooked` (default 1), `portion_eaten` (a factor of one portion, default 1),
-  `status` (`planned` → `logged` | `skipped`), `logged_meal_id` (unique), `leftover_of` (the
-  planned meal whose extra portion this is; for #36's leftovers, null for now), `suggestion_id`
+  `status` (`planned` → `logged` | `skipped`), `logged_meal_id` (unique), `leftover_of` (#49: the
+  planned meal whose extra cooked portions it eats; then `portions_cooked` is 0), `suggestion_id`
   (the suggestion it was picked from, #44; null for one planned by hand), `note`. Only a `planned`
   one can be deleted (unplanned; a trigger keeps logged and skipped ones).
 - **planning_requests** (#44): `title` (`requestTitle` from the filters, or the outline's), `origin`
@@ -458,6 +472,18 @@ new value never needs a table rebuild.
   applies, days relative), `ref` (JSON `StarterRef`: `mealId`, `requestId`, `recipeId`,
   `leftoverId`), `created_at`. No number: the app computes it. Derived: a second save of the round
   replaces its set.
+- **leftovers** (#49): `description`, `food_id` (optional), `quantity` (as said: "½", "1 bunch"),
+  `grams`, `portions` (a cooked one's portions still left), `source` (`cooked` | `pack` | `user`),
+  for a cooked one `planned_meal_id` (unique: one per planned meal; set null if that is unplanned),
+  `recipe_id` and `cooked_on` (its date), for a pack the agent noted `round_id` and, when noted for
+  a suggestion, `suggestion_id` (listed only once a planned meal of it is logged), `note`, `status`
+  (`open` → `used` | `gone`, and back), `closed_at`, timestamps. A short list, not a pantry; a
+  cooked one taken back (its meal removed before anything was eaten from it) is deleted.
+- **shopping_items** (#49): what the user did to a shopping list, which is otherwise computed: a
+  `check` of a computed line (`line_key`, the `grams` to buy when checked) or a `line` of their own
+  (`text`, `checked`), each with the range it was made for (`range_from`, `range_to`); a row applies
+  to every range that overlaps its own. User data: own lines are deleted when removed, checks when
+  unchecked.
 
 ### Media
 
@@ -979,6 +1005,10 @@ All behind the identity check, writes also same-origin; paths in `mealPaths` / `
   [Planning requests](#planning-requests-44).
 - **The nightly run** (#48, `planningNightlyPaths`): `GET /api/planning/nightly`, `POST
   /api/planning/nightly/regenerate`: see [The nightly run](#the-nightly-run-48).
+- **Leftovers and the shopping list** (#49, `leftoverPaths`, `shoppingPaths`): `GET` / `POST
+  /api/leftovers`, `PATCH /api/leftovers/:id`, `POST /api/leftovers/:id/plan`, `GET /api/shopping`,
+  `POST /api/shopping/check`, `POST /api/shopping/lines`, `DELETE /api/shopping/lines/:id`: see
+  [Leftovers and the shopping list](#leftovers-and-the-shopping-list-49).
 
 - **Profile and guided goals** (#24, `profilePaths`): `GET /api/profile` (`{profile}`, null before
   the first guided setup), `PUT /api/profile` (`ProfileBody`), `POST /api/goals/guided`
@@ -1184,7 +1214,7 @@ force. Design: spike #31's direction D · Plan ([design.md](design/design.md#com
   the days with totals, the mean kcal share of each day's own target, the goal in force on the
   last day. The weight: per day with entries the day's mean and the 7-day average
   (`dailyWeights`, the same as the goals screen's trend).
-- **The screen** (`/calendar?month&day`): see [Screens](#screens-10-11-12-13-24-30-33-40-47). The web
+- **The screen** (`/calendar?month&day`): see [Screens](#screens-10-11-12-13-24-30-33-40-47-49). The web
   app classifies with the same shared functions; the server sends inputs, not verdicts.
 
 ## Planning (#36)
@@ -1195,7 +1225,8 @@ door. Planning requests, rounds and suggestions (#44, [below](#planning-requests
 the suggestion job (#45, [below](#the-suggestion-job-45)) fills the rounds, Settings → Planning
 (#46, [below](#planning-settings-46)) holds the defaults and preferences both of them read, and the
 nightly run (#48, [below](#the-nightly-run-48)) prepares today's suggestions and the starters
-without being asked.
+without being asked; leftovers and the shopping list (#49,
+[below](#leftovers-and-the-shopping-list-49)) close the loop.
 
 - **Recipes** (`RecipeService`, `domain/recipes.ts`): saved with items matched to foods
   (`resolveItems`, the same validation as `RevisionService.save`: a food with an energy value, or
@@ -1245,7 +1276,7 @@ without being asked.
   planned rows on the overview and the day view and the split Log | Plan slab; planning requests
   (#47): the entry screen with its starters, the filter page, the composer, the request thread and a
   suggestion's recipe, and the overview's Planning strip: see
-  [Screens](#screens-10-11-12-13-24-30-33-40-47). It reads the plan with the calendar's functions and
+  [Screens](#screens-10-11-12-13-24-30-33-40-47-49). It reads the plan with the calendar's functions and
   previews "Ate it" with the shared `computeTotals`; the server's numbers are the ones saved.
 - **`GET /api/recipes/:id`**: the recipe with its items (grams and nutrients for the whole recipe
   and per portion, the matched food or the estimate), `perPortion` and `whole` totals, steps,
@@ -1366,7 +1397,8 @@ ends. Spike #38's numbers shaped it ([ADR 0003](adr/0003-meal-planning.md), 11�
     source, why, failure, **the user's verdict**, per-portion kcal and protein, main ingredients),
     each requested day (meals eaten with their slot, meals planned, eaten, projected, open slots)
     with **a budget per requested slot** (`slotBudget`), the goal in force, the analysed meals of
-    the last 14 days with their main items (variety), `leftovers` (`[]` until #49) and
+    the last 14 days with their main items (variety), `leftovers` (the open ones, #49: what, how
+    much, a cooked one's portions not planned yet; the request's `useUp` ids named) and
     `preferences` (#46's Settings → Planning setting, `planningPreferences`: dislikes, never eat,
     equipment, weekday cooking time, favourite sites; its defaults — all empty — until saved).
   - `match_ingredients` (scope `food`) `{ingredients (≤ 30: name, grams for the whole recipe, state
@@ -1394,6 +1426,11 @@ ends. Spike #38's numbers shaped it ([ADR 0003](adr/0003-meal-planning.md), 11�
     day with it (kcal left, protein open), the slot's budget and `fitToSlot`, how many items are
     estimates, a warning over the request's time cap, and what to do next.
   - `fail_suggestion {roundId, position, reason}`: an idea given up, with the reason the user reads.
+  - `note_leftover {roundId?, position?, description, quantity?, grams?, foodId?, note?}` (#49): a
+    pack remainder ("½ Hokkaido") a suggestion leaves over, with its `position`: listed once a
+    planned meal of that suggestion is logged; without one (a fridge photo) at once. The same
+    description for the same round and suggestion replaces the earlier note. An interactive session
+    may leave out the round.
   - `save_starters {roundId, starters (4–6)}`: a nightly round's starters (#48,
     [below](#the-nightly-run-48)).
 - **The slot budget** (`planning/budget.ts`, `slotBudget`): per target, what is open (target −
@@ -1491,8 +1528,8 @@ contracts in `api-planning-nightly.ts`).
   a second call replaces the round's set) with, per starter, `kind` (`protein_gap`, `use_up`,
   `variety`, `like_meal`, `season`, `last_request`, `other`), `text`, `detail`, the `filters` a tap
   applies (`StarterFilters`: `when` today / tomorrow / week, slots, time cap, constraints, use-up
-  texts, source mode, portions, count) and a `ref` (`mealId`, `requestId`, `recipeId`; `leftoverId`
-  until #49 names nothing, so it is refused), each checked to exist. **No number**: the app computes
+  texts, source mode, portions, count) and a `ref` (`mealId`, `requestId`, `recipeId`, `leftoverId`),
+  each checked to exist. **No number**: the app computes
   it when the screen opens. `get_planning_context` of a nightly round adds `nightly` (the starters'
   bounds and kinds, the user's recent requests with ids) and every recent meal carries its
   `mealId`; the prompt says it is the nightly round; the plan-meals skill's §7 says how.
@@ -1500,12 +1537,67 @@ contracts in `api-planning-nightly.ts`).
   queued job's time; null while off), the open nightly requests for today or later as threads
   (newest first: two while a regenerated one hasn't finished), and, while the run is on, the
   latest starters at most `STARTERS_MAX_AGE_MS` (48 h) old, each with what its reference names now
-  (`meal`: title and time, null once removed; `request`: title and time).
+  (`meal`: title and time, null once removed; `request`: title and time; `leftover`, #49, while it
+  is open).
 - **No push** for a nightly request's first round (see [Notifications](#notifications-13)); the
   entry screen and the overview's quiet row show it.
 - **The phone**: the entry screen's Tonight section, agent starters first among the starters, the
   overview's quiet row, Settings → Planning's nightly options: see
-  [Screens](#screens-10-11-12-13-24-30-33-40-47).
+  [Screens](#screens-10-11-12-13-24-30-33-40-47-49).
+
+### Leftovers and the shopping list (#49)
+
+What is left over feeds the next plan, and the plan becomes a shopping list. Code computes both;
+the agent only notes what a recipe leaves of a pack.
+
+- **Leftovers** (`LeftoverService`, `domain/leftovers.ts`; contracts in `api-leftovers.ts`): a short
+  list, not a pantry. `cooked`: extra portions of a planned meal; `pack`: a remainder the planning
+  agent noted (`note_leftover`, [above](#the-suggestion-job-45)); `user`: added on the plan view
+  (`POST /api/leftovers` `{id?, description, quantity?, grams?, note?}`, idempotent). `PATCH
+  /api/leftovers/:id {status}`: `used`, `gone`, or `open` again. `GET /api/leftovers` and the plan
+  (`PlanResponse.leftovers`) list the open ones, oldest first, as `LeftoverView` (a cooked one with
+  `available`: its portions not planned yet, `plannedFor` and one portion's totals).
+- **Cooked portions** (in `PlanningService.log`'s transaction, `leftoverAfterLog`): "Ate it" with
+  portions cooked > eaten makes a `cooked` leftover of the rest (to 0.01; the recipe's title, its
+  planned meal, recipe and date). **Plan it** (`POST /api/leftovers/:id/plan {id?, date, slot,
+  portionEaten?}`, `PlanningService.planLeftover`, idempotent): a planned meal of the recipe with
+  `leftover_of` (the planned meal it was cooked with), `portions_cooked` 0 and one portion, or
+  what is left when less; 409 for a leftover that isn't cooked, open, or has nothing left to plan.
+  Its portions cooked can't change (400), nor can it eat more than is left. Logging it takes its
+  portion off the leftover, `used` once none is left. **Removing** a meal (`MealService.remove`,
+  `leftoverAfterUnlog`): one that ate a leftover gives the portion back (open again); one whose
+  planned meal made a leftover takes it back (deleted) unless something was eaten from it. A
+  restore does it again.
+- **Offers** (`leftoverOffers`, in `PlanningService.plan`): each open cooked leftover with
+  portions not planned is offered on the first day of the plan from the day after it was cooked
+  (today at the earliest) whose lunch is open, else dinner; one per slot, the oldest first
+  (`PlanDay.leftoverOffers`). An offer isn't a planned meal: it counts nowhere until Plan it.
+- **The agent**: `get_planning_context` lists the open leftovers and names the request's
+  `useUp` ids; the use-up filter offers the open ingredient leftovers (not cooked dishes, the plan
+  offers those) as `{leftoverId}`; a nightly starter may reference one (`ref.leftoverId`), and the
+  code starters offer the oldest ingredient leftover (`use_up`). The plan-meals skill says when to
+  note a pack and to use open leftovers first when asked.
+- **The shopping list** (`ShoppingService`, `domain/shopping.ts`; contracts in `api-shopping.ts`):
+  `GET /api/shopping?from&to&tz` (default today to the last day with a planned meal from `from`,
+  at most `MAX_PLAN_DAYS`) adds up, in code (`shoppingLines`, pure), every item of the planned
+  meals still `planned` in the range for the portions cooked (item grams ÷ servings × portions
+  cooked; leftover planned meals need nothing), by line key (`food:<id>`, else `name:<words>` of
+  the description without its amount and unit, `ingredientName`), with which planned meals need
+  how much. Each open `pack` or `user` leftover is matched to the first line (by grams) of the same
+  food (its food id, else the same words) and subtracted ("½ Hokkaido at home"); one without grams
+  covers the line, which then shows muted and isn't counted. **Aisles** (`nutrition/aisles.ts`):
+  the food's Open Food Facts `categories_tags` (now fetched) or USDA food category, else keywords
+  (German and English) in the food's name, then the description, else "Other"; deterministic and
+  tested. Lines by aisle, then grams; own lines; covered ones last. `toBuy` and `inBasket` count
+  the lines not covered.
+- **Checks and own lines** (`shopping_items`): `POST /api/shopping/check {from, to, key, checked}`
+  stores a check of a computed line with its grams; it applies to every range overlapping the one
+  it was made for, while the line exists and needs no more than it did (a plan change elsewhere
+  keeps it; more of it needed opens it again). `POST /api/shopping/lines {id?, from, to, text}` (a
+  line of the user's own, idempotent; aisle by keyword) and `DELETE /api/shopping/lines/:id`.
+  Every write answers the list for its range. Online only: no upload queue, an error says so.
+- **The phone**: the plan view's offered rows, the Leftovers list and the shopping row; the
+  shopping list with its range sheet: see [Screens](#screens-10-11-12-13-24-30-33-40-47-49).
 
 ## Notifications (#13)
 
@@ -1600,7 +1692,7 @@ square corners. The tokens are in `index.css` (shadcn's names mapped onto the pa
 `ink`, `lime`, `lime-soft`, `tint`, `orange` and their foregrounds); the primitives (`Band`,
 `Strip`, `Label`, `SlabButton`, `BottomSlab`, `StatusLabel`) in `components/slab.tsx`.
 
-### Screens (#10, #11, #12, #13, #24, #30, #33, #40, #47)
+### Screens (#10, #11, #12, #13, #24, #30, #33, #40, #47, #49)
 
 - **Overview** (`/`): today's totals as the ink slab against the goal in force today (kcal,
   protein, fat, carbs, fibre with what's left; "N meals not counted yet" for those without an
@@ -1666,8 +1758,31 @@ square corners. The tokens are in `index.css` (shadcn's names mapped onto the pa
   eaten · rest open", or the date) and its planned meals in every status (planned, "Logged ·
   Dinner" with its meal's kcal, "Skipped · Dinner" struck through), today's with Ate it, or
   "Nothing planned". The bottom slab is lime **Ate it · Dinner** while today has a planned meal to
-  log, else none. Leftovers and the shopping list (#36 wave 2) are left out until they exist, and
-  so is a "Plan <day>" row (the planning entry screen is the overview's Plan, #47).
+  log, else none. A "Plan <day>" row is left out (the planning entry screen is the overview's Plan,
+  #47). **Leftovers** (#49, `components/leftovers.tsx`, from `PlanResponse.leftovers` and each
+  day's `leftoverOffers`): a cooked leftover the plan offers is a quiet row after the day's planned
+  meals ("Leftover · 1 portion", the title muted, "Cooked Thu · offered for lunch", one portion's
+  kcal) with a 64 px tint **Plan it** square (`POST /api/leftovers/:id/plan` with a client id per
+  row), and the day's strip counts it ("1 planned · 1 leftover · rest open"); a leftover planned
+  meal reads "Leftover · Lunch", "From the leftovers · eat 1". After the days the **Leftovers** list
+  (strip "at home now"): each open one as a plain row (the name, where it comes from: "After Thu ·
+  offered for lunch today", the note, "Added by you"; how much on the right, `leftoverAmount`); a
+  tap opens its top sheet (lime **Plan it · Today lunch** for an offered one, then **Used it** and
+  **Gone**), and **Add a leftover** opens a sheet (what, how much as said, grams). Last the tint
+  **Shopping list** row ("Fri–Sun · 13 to buy →", the default range's list).
+- **Shopping list** (#49, `/plan/shopping?from&to`, `useShopping` → `GET /api/shopping`, key under
+  `meals`; online only): back, "Plan · needs yamt online" / "Shopping list"; the ink slab "2 /15 in
+  the basket" with the range ("Fri–Sun") and "3 recipes · change ›" on the right (opens the **range
+  sheet**: the days from today to the last planned day, a week at least, as **From** and
+  **Through** chips; lime "Show Fri–Sun" replaces the search params) and "Amounts for the portions
+  cooked · 2 lines already at home" under a thin line. Then per aisle a tint strip ("Produce", "1
+  of 6") and the lines: a 28 px check square (`POST /api/shopping/check`; the square answers at
+  once, the list the server answers replaces it), the name (struck through and muted in the
+  basket) with "½ Hokkaido at home" or "Added by you" under it, the grams to buy in display 20 px;
+  a line the leftovers cover is muted without a square, "200 g Feta at home" on the right. A tap
+  on the name opens the line on tint: the recipes that need it with their grams, "At home · ½
+  Hokkaido −500 g", Remove for an own line. The bottom slab is a tint **Add a line** (a top sheet,
+  one field). Offline it says it needs yamt.
 - **Planned meal** (#40, `/planned/:id`, `usePlannedMeal` → `GET /api/planned-meals/:id`, the
   recipe by `useRecipe` (cached for good: recipes never change) and the plan of its date;
   `components/recipe-detail.tsx`, to be reused for suggestions): the header with back and a tint
@@ -1680,7 +1795,9 @@ square corners. The tokens are in `index.css` (shadcn's names mapped onto the pa
   past the target after a 2 px gap), the macros against what is open, the times. Changes against
   the source, the recipe's notes and the planned meal's note on tint when present; **Cook / Eat**
   portion chips (PATCH at once, while planned) with "1 portion (774 kcal) more than you eat: a
-  leftover."; the ingredients for the portions cooked (optional ones marked); numbered steps; the
+  leftover." (a leftover planned meal, #49: "Leftover · …", only the Eat chips, "a leftover, cooked
+  already", the ingredients in the portion eaten); the ingredients for the portions cooked
+  (optional ones marked); numbered steps; the
   source footer ("nutrition computed from the matched ingredients, not from the page"). The bottom
   slab: lime **Ate it** when due (today or earlier, still planned), tint **Change day · portions**
   ahead of time, tint **Unskip** when skipped, tint **Open the logged meal** when logged. A planned
@@ -1688,7 +1805,8 @@ square corners. The tokens are in `index.css` (shadcn's names mapped onto the pa
 - **Ate-it sheet** (#40, the top sheet, "Ate it · Today, dinner" over the title): the recipe's items
   as check rows (all on; a tap switches one off, struck through) with their grams for the portion,
   the portion chips relative to the plan (0.5× Half / 1× As planned / 1.5× More / 2× Double, "of 2
-  cooked", the leftover line), the time (now; an earlier day's meal starts at its slot's usual
+  cooked", "from the leftovers" for a leftover planned meal; the leftover line with the fork and
+  knife, "1 portion (648 kcal) kept as a leftover: the plan offers it from tomorrow.", #49), the time (now; an earlier day's meal starts at its slot's usual
   hour), the kcal and macros of what will be logged (`ateItTotals`: the shared `portionItems` and
   `computeTotals`, which the server runs again on save), lime **Log it** (`POST …/log` with a client
   id per opening, the excluded item ids and the portion; not with everything off) → the new meal. A
@@ -1716,8 +1834,9 @@ square corners. The tokens are in `index.css` (shadcn's names mapped onto the pa
   `lib/starters.ts`): the nightly run's first, in its order (#48, `agentStarter`: its text, detail
   and filters as written, the number computed here by `liveNumber` from the kind and the reference:
   the protein or kcal open tonight like code's, "4× logged in 30 days" or "12 days since you had it"
-  for the referenced meal, the month for the season, the weekday of the referenced request, none
-  (a sparkles mark) for `use_up` until #49, `other` or a reference that is gone; the strip's meta
+  for the referenced meal, the month for the season, the weekday of the referenced request, how
+  much of the referenced leftover is left ("500 g Hokkaido at home", #49), none (a sparkles mark)
+  for `other` or a reference that is gone; the strip's meta
   "ideas from last night"), then those computed by code of a kind the run didn't write, at most
   `MAX_SHOWN_STARTERS` (6). The code's, from what the app has: what is open tonight (protein, else kcal, against the goal in force,
   from `usePlan` of today and tomorrow; tomorrow once tonight's dinner is eaten or planned), the meal
@@ -1732,8 +1851,8 @@ square corners. The tokens are in `index.css` (shadcn's names mapped onto the pa
   disabled while nothing is typed or attached, while no day is picked (a tint hint says so) and
   until Settings → Planning has loaded (its defaults complete the filters). Sending queues the
   request (`sendDraft`, see [the upload queue](#the-upload-queue-liboutbox)) and opens its thread.
-  The open requests listed are the user's; nightly ones are in the Tonight section. Leftovers (#49)
-  are not there yet.
+  The open requests listed are the user's; nightly ones are in the Tonight section. Code's starters
+  include the oldest ingredient leftover ("Use up the Hokkaido", #49, its id into the filters).
 - **Composer** (#47, `components/composer.tsx`): attachments above the row as 44 px chips (a photo's
   thumbnail, a voice memo's length "voice · transcribed later", a link's host and path, a file's
   name; each removable), then **plus** (a top sheet: Photo, the camera or library; Link, the link
@@ -1751,7 +1870,9 @@ square corners. The tokens are in `index.css` (shadcn's names mapped onto the pa
   ≤ 30 min total, no oven, using ½ Hokkaido. 3 suggestions, based on a real recipe, 2 portions each
   (eat one, keep the rest).") and what else it reads; then toggle chips for **when** (Today,
   Tomorrow, Rest of the week, Pick days: the next seven as chips), **which meals**, **time** (≤ 20 /
-  30 / 45 min, any), **only** (`PLANNING_CONSTRAINTS`), **use up** (typed, one chip each), the
+  30 / 45 min, any), **only** (`PLANNING_CONSTRAINTS`), **use up** (the open ingredient leftovers
+  as chips with their amount, off until tapped, sent as `{leftoverId}`, #49; then typed ones, one
+  chip each), the
   **recipe source** as choice rows ("default · …" from Settings → Planning), **portions to cook**
   and **suggestions per round** as preset chips (the default one labelled). Changes apply at once;
   "Back to the defaults" clears them; lime **Done** goes back. The filters are overrides

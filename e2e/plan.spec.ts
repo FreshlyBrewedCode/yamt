@@ -88,7 +88,9 @@ test("ate it from the overview: one ingredient off at 1.5× logs those items; th
   );
   await sheet.getByRole("button", { name: /More/ }).click();
   await expect(page.getByTestId("ate-it-kcal")).toHaveText(/600/);
-  await expect(sheet.getByTestId("ate-it-leftover")).toContainText("0.5 portions stay a leftover");
+  await expect(sheet.getByTestId("ate-it-leftover")).toContainText(
+    "0.5 portions (265 kcal) kept as a leftover",
+  );
   await sheet.getByRole("button", { name: "Log it" }).click();
 
   // the new meal: those items, no analysis, from the plan

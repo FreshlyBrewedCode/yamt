@@ -145,6 +145,56 @@ export class FoodRepo {
     return new Map(rows.map((r) => [r.id, toFood(r)]));
   }
 
+  /**
+   * What the shopping list's aisles read off foods (#49): the name, and from the source payload the
+   * Open Food Facts categories (`categories_tags`) or the USDA food category (`foodCategory`, a
+   * branded food's `brandedFoodCategory`), without parsing the whole payload.
+   */
+  aisleData(ids: readonly string[]): Map<string, { name: string; source: FoodSource; categories: string[] }> {
+    if (ids.length === 0) return new Map();
+    const unique = [...new Set(ids)];
+    const rows = this.db
+      .query<
+        {
+          id: string;
+          name: string;
+          source: FoodSource;
+          off: string | null;
+          fdc: string | null;
+          fdc_name: string | null;
+          branded: string | null;
+        },
+        string[]
+      >(
+        `SELECT id, name, source,
+           CASE WHEN json_valid(raw) THEN json_extract(raw, '$.categories_tags') END AS off,
+           CASE WHEN json_valid(raw) THEN json_extract(raw, '$.foodCategory') END AS fdc,
+           CASE WHEN json_valid(raw) THEN json_extract(raw, '$.foodCategory.description') END AS fdc_name,
+           CASE WHEN json_valid(raw) THEN json_extract(raw, '$.brandedFoodCategory') END AS branded
+         FROM foods WHERE id IN (${unique.map(() => "?").join(", ")})`,
+      )
+      .all(...unique);
+    return new Map(
+      rows.map((r) => {
+        const categories: string[] = [];
+        if (r.off) {
+          try {
+            const tags = JSON.parse(r.off) as unknown;
+            if (Array.isArray(tags))
+              categories.push(...tags.filter((t): t is string => typeof t === "string"));
+          } catch {
+            // not a list: no categories
+          }
+        }
+        // a search hit's foodCategory is a string, a food detail's an object with a description
+        const fdc = r.fdc_name ?? (r.fdc && !r.fdc.startsWith("{") ? r.fdc : null);
+        if (fdc) categories.push(fdc);
+        if (r.branded) categories.push(r.branded);
+        return [r.id, { name: r.name, source: r.source, categories }];
+      }),
+    );
+  }
+
   /** The source payload as stored (JSON), for debugging and re-mapping. */
   raw(id: string): unknown {
     const r = this.db.query<{ raw: string | null }, [string]>("SELECT raw FROM foods WHERE id = ?").get(id);

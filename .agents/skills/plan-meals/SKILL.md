@@ -41,6 +41,12 @@ Call `get_planning_context` with the round id from the prompt. Then decide, with
 - **Soft wishes**: leftovers to use up (`useUp`, `leftovers`; use at least one in most
   suggestions, in amounts a leftover really has), dislikes (avoid), favourite sites (look there
   first for a real recipe).
+- **Leftovers** (`leftovers`, oldest first): what is at home. A `cooked` one is a dish with
+  `portionsNotPlanned`; the app offers it on the plan itself, so don't suggest cooking it again,
+  but count it as a meal the user may eat (a slot it would fill needs nothing new). A `pack` or
+  `user` one is an ingredient ("½ Hokkaido", "Feta 200 g"). When the request's text or `useUp`
+  says to use something up, build on the open leftovers first; otherwise prefer them when a
+  suggestion fits anyway.
 - **Photos and voice**: a photo of the fridge or a package says what is there; a transcript is the
   user speaking. Open photos by their path when they are not attached.
 
@@ -158,6 +164,17 @@ before saving; don't loop.
   `optional: true` for what the recipe marks optional.
 
 It returns yamt's numbers per portion and the fit; you don't need to repeat them.
+
+**What's left of a pack**: when a suggestion uses part of a pack or a piece the user has to open
+("½ Hokkaido" of a whole one, 100 g of a 200 g Feta, half a can of Kokosmilch), note the rest
+with `note_leftover` and the suggestion's `position` (German description like a food name,
+`quantity` and/or `grams`, the `foodId` you matched, a short `note` like "Rest vom
+Kürbis-Curry"), once per remainder, right after its `save_suggestion`. It joins the leftovers once
+the user has cooked that dish; then the next plans use it up and the shopping list counts it as
+at home. Something the inputs show is already at home (a fridge photo) is noted without a
+`position`.
+Not for staples (oil, spices, flour) and not for a cooked dish's extra portions (yamt keeps those
+itself when the user logs the meal).
 
 ## 6. End
 

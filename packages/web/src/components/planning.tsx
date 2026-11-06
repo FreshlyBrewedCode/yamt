@@ -11,7 +11,7 @@ import {
   type PlannedMealView,
 } from "@yamt/shared";
 import { cn } from "cn";
-import { Check, ChefHat, Clock, Plus, SkipForward, Trash2 } from "lucide-react";
+import { Check, ChefHat, Clock, Plus, SkipForward, Trash2, Utensils } from "lucide-react";
 import { useEffect, useState } from "react";
 import {
   dateStart,
@@ -24,6 +24,7 @@ import {
   toLocalInput,
 } from "@/lib/format";
 import { uuidv7 } from "@/lib/ids";
+import { keptWords } from "@/lib/leftovers";
 import {
   ateItTotals,
   defaultEatenAt,
@@ -94,12 +95,13 @@ export function PlannedRow({
   className?: string;
 }) {
   const status = planned.status;
+  const leftover = planned.leftoverOf !== null;
   const label =
     status === "logged"
       ? `Logged · ${SLOT_NAME[planned.slot]}`
       : status === "skipped"
         ? `Skipped · ${SLOT_NAME[planned.slot]}`
-        : `Planned · ${SLOT_NAME[planned.slot]}`;
+        : `${leftover ? "Leftover" : "Planned"} · ${SLOT_NAME[planned.slot]}`;
   const kcal =
     status === "logged"
       ? (loggedKcal ?? planned.eaten.nutrients.energyKcal)
@@ -119,6 +121,8 @@ export function PlannedRow({
           <Label className="flex items-center gap-2 text-muted-foreground">
             {status === "logged" ? (
               <Check className="size-3.5 shrink-0" strokeWidth={3} />
+            ) : leftover ? (
+              <Utensils className="size-3.5 shrink-0" strokeWidth={2.5} />
             ) : (
               <ChefHat className="size-3.5 shrink-0" strokeWidth={2.5} />
             )}
@@ -136,7 +140,9 @@ export function PlannedRow({
           <div className="mt-1.5 font-medium text-muted-foreground text-xs">
             {status === "skipped"
               ? "Not counted"
-              : `Cook ${planned.portionsCooked} · eat ${portions(planned.portionEaten)}`}
+              : leftover
+                ? `From the leftovers · eat ${portions(planned.portionEaten)}`
+                : `Cook ${planned.portionsCooked} · eat ${portions(planned.portionEaten)}`}
           </div>
         </div>
         <div className={cn("shrink-0 text-right", status !== "logged" && "text-muted-foreground")}>
@@ -385,6 +391,7 @@ function AteItForm({
   const n = totals.nutrients;
   const nothing = without.size >= data.items.length;
   const left = planned.portionsCooked - eat;
+  const fromLeftover = planned.leftoverOf !== null;
   const toggle = (itemId: string) => {
     const next = new Set(without);
     if (next.has(itemId)) next.delete(itemId);
@@ -442,12 +449,21 @@ function AteItForm({
       </ul>
       <div className="px-5 pt-4 pb-5">
         <Label className="mb-2 text-muted-foreground">
-          Portion{planned.portionsCooked > 1 ? ` · of ${planned.portionsCooked} cooked` : ""}
+          Portion
+          {fromLeftover
+            ? " · from the leftovers"
+            : planned.portionsCooked > 1
+              ? ` · of ${planned.portionsCooked} cooked`
+              : ""}
         </Label>
         <Chips label="Portion" options={ATE_PORTIONS} value={factor} onChange={setFactor} />
         {left > 0 && (
-          <p className="mt-2 font-medium text-muted-foreground text-sm" data-testid="ate-it-leftover">
-            {portions(left)} {left === 1 ? "portion stays" : "portions stay"} a leftover.
+          <p
+            className="mt-2 flex items-start gap-2 font-medium text-muted-foreground text-sm"
+            data-testid="ate-it-leftover"
+          >
+            <Utensils className="mt-0.5 size-4 shrink-0" strokeWidth={2.5} />
+            {keptWords(left, data.perPortion.nutrients.energyKcal, planned.date, localDate(Date.now()))}
           </p>
         )}
         <div className="mt-3 flex min-h-11 items-center justify-between gap-3">
@@ -501,12 +517,27 @@ export function PortionChips({
   disabled = false,
   eatLabel = "Eat",
 }: {
-  cook: number;
+  /** Null for a leftover planned meal (#49): nothing is cooked, only the Eat chips show. */
+  cook: number | null;
   eat: number;
   onChange: (v: { cook: number; eat: number }) => void;
   disabled?: boolean;
   eatLabel?: string;
 }) {
+  if (cook === null) {
+    return (
+      <div>
+        <Label className="mb-2 text-muted-foreground">{eatLabel}</Label>
+        <Chips
+          label="Portion to eat"
+          options={withValue(EAT, eat).map((p) => ({ value: p, label: "", sub: `${portions(p)}×` }))}
+          value={eat}
+          disabled={disabled}
+          onChange={(e) => onChange({ cook: 0, eat: e })}
+        />
+      </div>
+    );
+  }
   return (
     <div className="grid grid-cols-2 gap-5">
       <div>
@@ -664,9 +695,9 @@ function PlanForForm({
           </p>
         )}
         <div className="mt-4">
-          <PortionChips cook={p.cook} eat={p.eat} onChange={setP} />
+          <PortionChips cook={planned.leftoverOf ? null : p.cook} eat={p.eat} onChange={setP} />
         </div>
-        {p.cook - p.eat > 0 && (
+        {!planned.leftoverOf && p.cook - p.eat > 0 && (
           <p className="mt-2 font-medium text-muted-foreground text-sm">
             {portions(p.cook - p.eat)} {p.cook - p.eat === 1 ? "portion" : "portions"} left over.
           </p>

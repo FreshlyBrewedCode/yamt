@@ -82,11 +82,13 @@ export function readDay(day: PlanDay): DayReading {
 export const stillPlanned = (day: PlanDay | undefined): PlannedMealView[] =>
   day?.plannedMeals.filter((p) => p.status === "planned") ?? [];
 
-/** "1 planned · 2 eaten · rest open" for a day's strip. */
+/** "1 planned · 1 leftover · 2 eaten · rest open" for a day's strip (leftovers the plan offers, #49). */
 export function dayMeta(day: PlanDay): string {
   const parts: string[] = [];
   const planned = stillPlanned(day).length;
+  const offered = day.leftoverOffers.length;
   if (planned) parts.push(`${planned} planned`);
+  if (offered) parts.push(`${offered} ${offered === 1 ? "leftover" : "leftovers"}`);
   if (day.meals.length) parts.push(`${day.meals.length} eaten`);
   if (planned || day.meals.length) parts.push(readDay(day).words);
   return parts.join(" · ");

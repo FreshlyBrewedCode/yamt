@@ -69,7 +69,9 @@ function PlanEntry() {
     repeatable: repeatable.data?.meals ?? [],
     last,
     agent: nightly.data?.starters ?? [],
+    leftovers: plan.data?.leftovers ?? [],
   });
+  const names = new Map((plan.data?.leftovers ?? []).map((l) => [l.id, l.description]));
 
   const pick = (s: Starter) => setDraft((d) => ({ ...d, text: s.composerText, filters: s.draft }));
 
@@ -157,7 +159,7 @@ function PlanEntry() {
               </Label>
             )}
             <FilterSummary
-              words={summaryWords(filters, defaults, today)}
+              words={summaryWords(filters, defaults, today, names)}
               onOpen={() => void navigate({ to: "/plan/filters" })}
             />
           </>

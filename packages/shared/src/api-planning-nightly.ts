@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { LeftoverView } from "./api-leftovers.ts";
 import { type MealSlot, MealSlot as MealSlotEnum, RecipeSourceMode } from "./api-planning.ts";
 import {
   MAX_SUGGESTIONS,
@@ -103,6 +104,8 @@ export interface PlanningStarterView extends PlanningStarter {
   meal: { id: string; title: string | null; eatenAt: number } | null;
   /** The referenced request: when it was made. */
   request: Pick<PlanningRequest, "id" | "title" | "createdAt"> | null;
+  /** The referenced leftover (#49) while it is open: how much is left. */
+  leftover: LeftoverView | null;
 }
 
 /** `GET /api/planning/nightly`. */

@@ -13,6 +13,7 @@ import { dedupeKeys } from "./db/repos/jobs.ts";
 import { CalendarService } from "./domain/calendar.ts";
 import { FoodService } from "./domain/foods.ts";
 import { GoalService } from "./domain/goals.ts";
+import { LeftoverService } from "./domain/leftovers.ts";
 import { MEAL_REMOVED, MealService } from "./domain/meals.ts";
 import { NightlyService } from "./domain/nightly.ts";
 import { PlanningService } from "./domain/planning.ts";
@@ -20,6 +21,7 @@ import { PlanningRequestService, REQUEST_ARCHIVED } from "./domain/planning-requ
 import { RecipeService } from "./domain/recipes.ts";
 import { RevisionService } from "./domain/revisions.ts";
 import { ShareService } from "./domain/share.ts";
+import { ShoppingService } from "./domain/shopping.ts";
 import { localTimeZone } from "./domain/time.ts";
 import { McpTokens } from "./mcp/tokens.ts";
 import { MediaStore } from "./media/store.ts";
@@ -51,6 +53,10 @@ export interface Services {
   planningRequests: PlanningRequestService;
   /** The nightly run (#48): its schedule, today's nightly requests, Regenerate, the starters. */
   nightly: NightlyService;
+  /** The leftovers list (#49): the user's own lines, used / gone, the packs the agent notes. */
+  leftovers: LeftoverService;
+  /** The shopping list (#49): computed from the plan, checks and own lines stored. */
+  shopping: ShoppingService;
   /** Bearer tokens for /mcp: the interactive one and per-run ones (#8 mints and revokes). */
   mcpTokens: McpTokens;
   /** Outbound fetch (food databases, recipe pages); a fixture-backed fake in tests. */
@@ -155,6 +161,8 @@ export function createServices(opts: ServicesOptions): Services {
     planning,
     planningRequests,
     nightly: new NightlyService(repos, planning, planningRequests, timeZone),
+    leftovers: new LeftoverService(repos),
+    shopping: new ShoppingService(repos, timeZone),
     mcpTokens,
     fetch: fetchFn,
     timeZone,

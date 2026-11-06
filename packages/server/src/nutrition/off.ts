@@ -17,6 +17,8 @@ export const OFF_FIELDS = [
   "nutriments",
   "nutrition_data_per",
   "countries_tags",
+  // the shopping list's aisles (#49)
+  "categories_tags",
 ].join(",");
 
 export const OFF_URLS = {

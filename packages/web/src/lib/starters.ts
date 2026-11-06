@@ -1,11 +1,12 @@
 // The entry screen's starters (#47, G's starter bands): ideas with a live number. The nightly run
 // (#48) writes some (the agent picks the idea, its kind and what it is about); code computes the
 // others from what the app already has (the plan of today and tomorrow, the meals logged most, the
-// month, the last request). Every number is computed here, when the screen renders, never by the
-// run. A tap fills the composer and the filters; leftovers (#49) come later. Pure, so it is tested
+// month, the last request, a leftover to use up, #49). Every number is computed here, when the
+// screen renders, never by the run. A tap fills the composer and the filters. Pure, so it is tested
 // without a screen.
 import {
   addDays,
+  type LeftoverView,
   type PlanDay,
   type PlanningRequest,
   type PlanningStarterView,
@@ -13,10 +14,11 @@ import {
   type StarterKind,
 } from "@yamt/shared";
 import { dateStart, dayLabel, formatNumber, formatWeekday, localDate, plural, startOfDay } from "./format";
+import { leftoverNumber } from "./leftovers";
 import type { FilterDraft } from "./plan-request";
 
 /** The code-computed starters' ids. */
-export type CodeStarterId = "protein" | "kcal" | "again" | "season" | "last";
+export type CodeStarterId = "protein" | "kcal" | "leftover" | "again" | "season" | "last";
 
 export interface Starter {
   /** A code starter's id, or the agent's starter's. */
@@ -83,6 +85,8 @@ export interface StarterInput {
   last: LastRequest | null;
   /** The nightly run's starters (#48), in its order; none without. */
   agent?: readonly PlanningStarterView[];
+  /** The open leftovers (#49), oldest first. */
+  leftovers?: readonly LeftoverView[];
 }
 
 /** At most this many starter bands. */
@@ -92,11 +96,12 @@ export const MAX_SHOWN_STARTERS = 6;
  * The starters, in the order the screen shows them (the first is the screen's ink slab): the
  * nightly run's (#48) first, in its order, then the code-computed ones of a kind it didn't write:
  * what is open tonight (protein, else kcal; tomorrow once tonight's dinner is eaten or planned), the
- * meal logged most ("like …, but different"), the season, the last request. A code starter only
- * when its data is there: nothing is invented.
+ * oldest leftover to use up (not a cooked dish: the plan offers those itself), the meal logged most
+ * ("like …, but different"), the season, the last request. A code starter only when its data is
+ * there: nothing is invented.
  */
 export function computeStarters(i: StarterInput): Starter[] {
-  const code = [openStarter(i), againStarter(i), seasonStarter(i), lastStarter(i)].filter(
+  const code = [openStarter(i), leftoverStarter(i), againStarter(i), seasonStarter(i), lastStarter(i)].filter(
     (s): s is Starter => s !== null,
   );
   const agent = (i.agent ?? []).map((s) => agentStarter(s, i));
@@ -126,6 +131,8 @@ export function agentStarter(s: PlanningStarterView, i: StarterInput): Starter {
       ...(f.timeCapMin !== undefined ? { timeCapMin: f.timeCapMin } : {}),
       ...(f.constraints ? { constraints: f.constraints } : {}),
       ...(f.useUp ? { useUp: f.useUp } : {}),
+      // the leftover it is about, while it is open, to use up
+      ...(s.leftover ? { leftovers: [s.leftover.id] } : {}),
       ...(f.sourceMode ? { sourceMode: f.sourceMode } : {}),
       ...(f.portionsCooked ? { portionsCooked: f.portionsCooked } : {}),
       ...(f.count ? { count: f.count } : {}),
@@ -136,11 +143,11 @@ export function agentStarter(s: PlanningStarterView, i: StarterInput): Starter {
 /**
  * An agent starter's number, by its kind, from the app's data as it is now: the protein (or kcal)
  * open tonight, how often or how long ago the referenced meal was eaten, the month, when the
- * referenced request was made. Null where there is nothing to count (`use_up` until #49's
- * leftovers, `other`, a reference that is gone).
+ * referenced request was made, how much of the referenced leftover is left. Null where there is
+ * nothing to count (`other`, a reference that is gone).
  */
 export function liveNumber(
-  s: Pick<PlanningStarterView, "kind" | "meal" | "request" | "filters">,
+  s: Pick<PlanningStarterView, "kind" | "meal" | "request" | "filters" | "leftover">,
   i: StarterInput,
 ): { number: string | null; unit: string; why: string } {
   switch (s.kind) {
@@ -184,6 +191,7 @@ export function liveNumber(
       };
     }
     case "use_up": {
+      if (s.leftover) return { ...leftoverNumber(s.leftover), why: s.leftover.note ?? "" };
       const first = s.filters.useUp?.[0];
       return { number: null, unit: first ? `use up ${first}` : "to use up", why: "" };
     }
@@ -236,6 +244,22 @@ function openStarter({ today, days }: StarterInput): Starter | null {
     why: `${formatNumber(eaten?.energyKcal ?? 0)} of ${formatNumber(kcalTarget)} kcal${after}`,
     composerText: `Something for ${when}`,
     draft,
+  };
+}
+
+/** The oldest leftover that is an ingredient (a pack, the user's own) as a starter to use it up. */
+function leftoverStarter({ leftovers = [] }: StarterInput): Starter | null {
+  const l = leftovers.find((x) => x.source !== "cooked" && x.status === "open");
+  if (!l) return null;
+  return {
+    id: "leftover",
+    kind: "use_up",
+    by: "code",
+    ...leftoverNumber(l),
+    text: `Use up the ${l.description}`,
+    why: l.note ?? "On your leftovers list",
+    composerText: `Something with the ${l.description}`,
+    draft: { leftovers: [l.id] },
   };
 }
 
@@ -295,6 +319,7 @@ function lastStarter({ last, today }: StarterInput): Starter | null {
     timeCapMin: f.timeCapMin,
     constraints: f.constraints,
     useUp: f.useUp.flatMap((u) => ("text" in u ? [u.text] : [])),
+    leftovers: f.useUp.flatMap((u) => ("leftoverId" in u ? [u.leftoverId] : [])),
     sourceMode: f.sourceMode,
     portionsCooked: f.portionsCooked,
     count: f.count,

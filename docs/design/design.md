@@ -215,7 +215,8 @@ Units sit next to numbers smaller and muted (`28g`, `72 /160`).
   portion: no analysis. Switch off what you left out."), the items as 48 px check rows between
   dividers (the 28 px check square, bold description, grams in display 18 px; off = tint square and
   struck through, muted), then "Portion · of 2 cooked" with 0.5× Half / 1× As planned / 1.5× More /
-  2× Double, the leftover line, "Now · change time" with the kcal (display 28 px) and a line of
+  2× Double, the leftover line (the fork and knife, "1 portion (648 kcal) kept as a leftover: the
+  plan offers it from tomorrow."), "Now · change time" with the kcal (display 28 px) and a line of
   macro grams, and the lime **Log it**. Everything off disables it with a tint hint; a failure is an
   orange line above it.
 - **Plan-for sheet** (#40, top sheet, "Plan for" over the title): Day chips (number over the
@@ -262,6 +263,31 @@ Units sit next to numbers smaller and muted (`28g`, `72 /160`).
 - **Nightly row** (#48, the overview's Planning strip, last): quiet like a row still suggesting, a
   moon micro-label "Tonight · 3 suggestions", the titles in display 19 px, "Made at 03:00", an
   arrow; it never counts as a request waiting and is never lime.
+- **Leftover offer row** (#49, the plan view, after a day's planned meals, G): quiet like a planned
+  row, "Leftover · 1 portion" with the fork and knife, the title muted, "Cooked Thu · offered for
+  lunch", one portion's kcal muted with "kcal"; the right edge a 64 px tint **Plan it** square (plus
+  over a micro-label, lime while pressed), like Ate it. Planned, it is a planned row reading
+  "Leftover · Lunch", "From the leftovers · eat 1". The day's strip counts it ("1 leftover").
+- **Leftovers list** (#49, the plan view, after the days): a strip "Leftovers · at home now", plain
+  56 px rows (the name bold, a cooked dish muted; under it where it comes from, muted 12 px: "After
+  Thu · offered for lunch today", "Bought Saturday", "Added by you"; how much on the right, bold
+  14 px: "1 portion", "½ · ≈ 500 g", "1 bunch"), and a last plain row "+ Add a leftover". A tap opens
+  a top sheet ("Leftover · ½ · ≈ 500 g" over the name): lime **Plan it · Today lunch** only for an
+  offered dish, then two plain 56 px rows **Used it** (check) and **Gone** (trash), each with a
+  muted line. No swipes. Then the tint **Shopping list** row (basket icon, caps title; "Fri–Sun · 13
+  to buy →" as the micro-label meta).
+- **Shopping list** (#49, G): the ink slab is the basket, "2" in display 64 px and "/15" in display
+  28 px muted, "in the basket"; the range on the right in display 28 px with "3 recipes · change ›",
+  and a thin line over "Amounts for the portions cooked · 2 lines already at home". Aisles as tint
+  strips with "1 of 6"; lines as plain 56 px rows: a 28 px check square (tint, the foreground fill
+  with a check once in the basket) in a 68 px column, the name bold with "½ Hokkaido at home" or
+  "Added by you" muted under it, the grams to buy in display 20 px with a small "g". In the basket
+  the name and grams are struck through and muted. A line the leftovers cover is muted, without a
+  square, "200 g Feta at home" on the right. A tap on the name opens it on tint: each recipe that
+  needs it with its grams, "At home · ½ Hokkaido −500 g", **Remove** for an own line. The bottom
+  slab is tint **+ Add a line** (it doesn't want the user); online only, so the header says "needs
+  yamt online". The **range sheet** (top, "Shopping for" / "Which days"): **From** and **Through**
+  as day chips (number over the weekday, "Today"), lime **Show Fri–Sun**.
 - **Filter summary + composer dock** (#47, the planning entry and the request thread): the sticky
   footer on the page colour. Above the composer on the entry screen a 48 px tint row: "For" as a
   muted micro-label, the filters in bold 14 px joined by " · " ("Tonight · Dinner · ≤ 30 min · cook
@@ -282,7 +308,8 @@ Units sit next to numbers smaller and muted (`28g`, `72 /160`).
   as a muted micro-label under an `ink-line` divider. Then groups of **toggle chips** (a micro-label,
   44 px chips wrapping with 2 px gaps, tint, the chosen ones in the foreground fill with a check:
   a choice, not lime): When (with the next seven days as 60 px chips once "Pick days" is chosen),
-  Which meals, Time, Only, Use up (the typed ones as chosen chips, a tint field to add one). A
+  Which meals, Time, Only, Use up (the open leftovers first, #49, the name bold and the amount at
+  70 % in the chip; then the typed ones as chosen chips, a tint field to add one). A
   "Recipes" strip (meta "default · based on a real recipe") with choice rows, a "Portions" strip
   with preset chips for Cook and Suggestions per round (the default chip says "default"). The lime
   bottom slab **Done**; "Back to the defaults" as a plain 56 px row when something changed.

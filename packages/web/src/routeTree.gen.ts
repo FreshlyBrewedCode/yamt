@@ -19,6 +19,7 @@ import { Route as MealsMealIdRouteImport } from './routes/meals.$mealId'
 import { Route as PlanIndexRouteImport } from './routes/plan.index'
 import { Route as PlanDaysRouteImport } from './routes/plan.days'
 import { Route as PlanFiltersRouteImport } from './routes/plan.filters'
+import { Route as PlanShoppingRouteImport } from './routes/plan.shopping'
 import { Route as PlannedIdRouteImport } from './routes/planned.$id'
 import { Route as PlanRequestsIdIndexRouteImport } from './routes/plan.requests.$id.index'
 import { Route as PlanRequestsIdSuggestionsSuggestionIdRouteImport } from './routes/plan.requests.$id.suggestions.$suggestionId'
@@ -73,6 +74,11 @@ const PlanFiltersRoute = PlanFiltersRouteImport.update({
   path: '/plan/filters',
   getParentRoute: () => rootRouteImport,
 } as any)
+const PlanShoppingRoute = PlanShoppingRouteImport.update({
+  id: '/plan/shopping',
+  path: '/plan/shopping',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const PlannedIdRoute = PlannedIdRouteImport.update({
   id: '/planned/$id',
   path: '/planned/$id',
@@ -100,6 +106,7 @@ export interface FileRoutesByFullPath {
   '/meals/$mealId': typeof MealsMealIdRoute
   '/plan/days': typeof PlanDaysRoute
   '/plan/filters': typeof PlanFiltersRoute
+  '/plan/shopping': typeof PlanShoppingRoute
   '/planned/$id': typeof PlannedIdRoute
   '/plan/': typeof PlanIndexRoute
   '/plan/requests/$id/': typeof PlanRequestsIdIndexRoute
@@ -115,6 +122,7 @@ export interface FileRoutesByTo {
   '/meals/$mealId': typeof MealsMealIdRoute
   '/plan/days': typeof PlanDaysRoute
   '/plan/filters': typeof PlanFiltersRoute
+  '/plan/shopping': typeof PlanShoppingRoute
   '/planned/$id': typeof PlannedIdRoute
   '/plan': typeof PlanIndexRoute
   '/plan/requests/$id': typeof PlanRequestsIdIndexRoute
@@ -131,6 +139,7 @@ export interface FileRoutesById {
   '/meals/$mealId': typeof MealsMealIdRoute
   '/plan/days': typeof PlanDaysRoute
   '/plan/filters': typeof PlanFiltersRoute
+  '/plan/shopping': typeof PlanShoppingRoute
   '/planned/$id': typeof PlannedIdRoute
   '/plan/': typeof PlanIndexRoute
   '/plan/requests/$id/': typeof PlanRequestsIdIndexRoute
@@ -148,6 +157,7 @@ export interface FileRouteTypes {
     | '/meals/$mealId'
     | '/plan/days'
     | '/plan/filters'
+    | '/plan/shopping'
     | '/planned/$id'
     | '/plan/'
     | '/plan/requests/$id/'
@@ -163,6 +173,7 @@ export interface FileRouteTypes {
     | '/meals/$mealId'
     | '/plan/days'
     | '/plan/filters'
+    | '/plan/shopping'
     | '/planned/$id'
     | '/plan'
     | '/plan/requests/$id'
@@ -178,6 +189,7 @@ export interface FileRouteTypes {
     | '/meals/$mealId'
     | '/plan/days'
     | '/plan/filters'
+    | '/plan/shopping'
     | '/planned/$id'
     | '/plan/'
     | '/plan/requests/$id/'
@@ -194,6 +206,7 @@ export interface RootRouteChildren {
   MealsMealIdRoute: typeof MealsMealIdRoute
   PlanDaysRoute: typeof PlanDaysRoute
   PlanFiltersRoute: typeof PlanFiltersRoute
+  PlanShoppingRoute: typeof PlanShoppingRoute
   PlannedIdRoute: typeof PlannedIdRoute
   PlanIndexRoute: typeof PlanIndexRoute
   PlanRequestsIdIndexRoute: typeof PlanRequestsIdIndexRoute
@@ -272,6 +285,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PlanFiltersRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/plan/shopping': {
+      id: '/plan/shopping'
+      path: '/plan/shopping'
+      fullPath: '/plan/shopping'
+      preLoaderRoute: typeof PlanShoppingRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/planned/$id': {
       id: '/planned/$id'
       path: '/planned/$id'
@@ -306,6 +326,7 @@ const rootRouteChildren: RootRouteChildren = {
   MealsMealIdRoute: MealsMealIdRoute,
   PlanDaysRoute: PlanDaysRoute,
   PlanFiltersRoute: PlanFiltersRoute,
+  PlanShoppingRoute: PlanShoppingRoute,
   PlannedIdRoute: PlannedIdRoute,
   PlanIndexRoute: PlanIndexRoute,
   PlanRequestsIdIndexRoute: PlanRequestsIdIndexRoute,
