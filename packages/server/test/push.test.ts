@@ -241,6 +241,7 @@ describe("mealNotification", () => {
     currentRevisionId: "r1",
     analysisError: null,
     sourceMealId: null,
+    sourcePlannedMealId: null,
     removedAt: null,
     createdAt: 0,
     updatedAt: 0,
