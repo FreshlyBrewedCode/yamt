@@ -1,7 +1,14 @@
 import { afterAll, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { type CaptureResponse, mealPaths, type TranscribeResponse, type Transcript } from "@yamt/shared";
+import {
+  type CaptureResponse,
+  mealPaths,
+  type PlanningInputResponse,
+  planningRequestPaths,
+  type TranscribeResponse,
+  type Transcript,
+} from "@yamt/shared";
 import { DEFAULT_STT_SETTINGS, dataPaths } from "../src/config.ts";
 import { openDb } from "../src/db/index.ts";
 import { createRepos } from "../src/db/repos/index.ts";
@@ -20,6 +27,7 @@ setDefaultTimeout(30_000);
 
 const FAKE_STT = [process.execPath, join(import.meta.dir, "fake-stt.ts")];
 const FAKE_FFMPEG = join(import.meta.dir, "fake-ffmpeg.ts");
+const HOUR = 3_600_000;
 const MEMO = fixture("memo-de.m4a"); // made up: espeak-ng reading a German lunch, AAC in M4A
 
 async function waitFor<T>(what: string, fn: () => T | null | undefined | false, timeoutMs = 10_000) {
@@ -468,6 +476,53 @@ describe("transcription in the server", () => {
     ffmpegMissing = true;
     const memo = await uploadMemo(meal());
     expect((await settled(memo, "failed")).error).toBe("ffmpeg not found: install it");
+  });
+
+  test("a planning voice memo is transcribed like a meal's, and nudges the plan job of its round", async () => {
+    writeFileSync(scriptFile, "slow:400");
+    const { request } = s.planningRequests.create({ filters: {} });
+    const form = new FormData();
+    form.set("file", new Blob([MEMO], { type: "audio/mp4" }), "memo.m4a");
+    const res = await api<PlanningInputResponse>("POST", planningRequestPaths.inputs(request.id), form);
+    expect(res.status).toBe(201);
+    const input = res.body.input;
+    expect(input).toMatchObject({ kind: "audio", mimeType: "audio/mp4" });
+    expect(res.body.transcript).toMatchObject({ inputId: input.id, status: "pending" });
+    // the round takes the memo while it is transcribed; its plan job waits (no handler before #45)
+    const { jobId } = s.planningRequests.suggest(request.id);
+    s.repos.db.query("UPDATE jobs SET run_after = ? WHERE id = ?").run(Date.now() + HOUR, jobId);
+    const done = await waitFor("the input's transcript", () => {
+      const t = s.repos.planningTranscripts.get(input.id);
+      return t?.status === "done" && t;
+    });
+    expect(done).toMatchObject({
+      text: "Zum Frühstück achtzig Gramm Haferflocken mit Milch.",
+      model: "fake-whisper",
+    });
+    expect(s.repos.jobs.get(jobId)).toMatchObject({ status: "queued" });
+    expect(s.repos.jobs.get(jobId)!.runAfter).toBeLessThanOrEqual(Date.now());
+    expect(s.planningRequests.detail(request.id).transcripts).toMatchObject([
+      { inputId: input.id, status: "done" },
+    ]);
+    // the transcript is written as the result arrives; the job ends right after
+    const job = await waitFor("the job done", () =>
+      s.repos.jobs
+        .list({ type: "transcribe" })
+        .find((j) => j.dedupeKey === dedupeKeys.transcribeInput(input.id) && j.status === "done"),
+    );
+    expect(job.payload).toEqual({ inputId: input.id });
+
+    // a missing ffmpeg fails it at once, as for a capture
+    ffmpegMissing = true;
+    const again = new FormData();
+    again.set("file", new Blob([MEMO], { type: "audio/mp4" }), "memo.m4a");
+    const second = (await api<PlanningInputResponse>("POST", planningRequestPaths.inputs(request.id), again))
+      .body;
+    const failed = await waitFor("failed", () => {
+      const t = s.repos.planningTranscripts.get(second.input.id);
+      return t?.status === "failed" && t;
+    });
+    expect(failed.error).toBe("ffmpeg not found: install it");
   });
 
   test("an STT process that can't load its model is retried; the transcript stays pending", async () => {

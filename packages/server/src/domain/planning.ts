@@ -147,10 +147,16 @@ export class PlanningService {
     return this.view(this.repos.plannedMeals.setStatus(id, "planned", this.now())!);
   }
 
-  /** Unplans it: deleted, only while `planned` (logged and skipped ones are history). */
+  /**
+   * Unplans it: deleted, only while `planned` (logged and skipped ones are history). A suggestion
+   * it was picked from (#44) is no longer picked.
+   */
   unplan(id: string): void {
     this.open(id, "unplanned");
-    this.repos.plannedMeals.delete(id);
+    this.repos.db.transaction(() => {
+      this.repos.planningRounds.clearPick(id, this.now());
+      this.repos.plannedMeals.delete(id);
+    })();
   }
 
   /**
