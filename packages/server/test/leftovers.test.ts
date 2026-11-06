@@ -452,6 +452,7 @@ describe("ingredient names and aisles", () => {
     expect(ingredientName("ca. 200g Feta")).toBe("Feta");
     expect(ingredientName("Kichererbsen (Dose)")).toBe("Kichererbsen (Dose)");
     expect(ingredientName("3 Eier")).toBe("Eier");
+    expect(ingredientName("150 g Joghurt 3,5 %")).toBe("Joghurt 3,5 %");
     expect(ingredientName("500")).toBe("500");
     expect(lineKey({ foodId: null, description: "1 Dose Kichererbsen, abgetropft" })).toBe(
       "name:kichererbsen",

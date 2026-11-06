@@ -40,7 +40,8 @@ const AMOUNT_WITH_UNIT = /^\d+(?:[.,]\d+)?(?:g|kg|ml|l)$/;
  * leading amount and its unit ("½", "1 Dose", "2 EL", "ca. 200 g"). Never empty.
  */
 export function ingredientName(description: string): string {
-  const s = description.replace(/\([^)]*\d[^)]*\)/g, " ").split(",")[0] ?? "";
+  // a comma that starts a remark ("…, abgetropft"), not a decimal one ("Joghurt 3,5 %")
+  const s = description.replace(/\([^)]*\d[^)]*\)/g, " ").split(/,\s/)[0] ?? "";
   const tokens = s.trim().split(/\s+/).filter(Boolean);
   let i = 0;
   let amount = false;
