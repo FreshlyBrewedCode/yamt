@@ -230,13 +230,17 @@ Units sit next to numbers smaller and muted (`28g`, `72 /160`).
   overview's row says "From the plan" where Log again's says "Logged again"; the revision history
   says "logged from the plan".
 - **Planning strip** (#47, the overview, under the totals): a "Planning" strip (meta "2 requests")
-  and one 84 px row per request that wants something, built like a meal row: a request whose
-  suggestions wait for a verdict is a **full lime row** ("Suggested · 2 for you" with sparkles, the
-  title in display 19 px, "Pick or steer · round 1 · 15:58" in lime-muted, an arrow), one still
+  and **at most one 84 px row per state** (#54's follow-up), built like a meal row: a single request
+  whose suggestions wait for a verdict is a **full lime row** ("Suggested · 2 for you" with sparkles,
+  the title in display 19 px, "Pick or steer · round 1 · 15:58" in lime-muted, an arrow), one still
   suggesting is quiet ("Suggesting · 2 of 3 ready" with the pulsing square, the title muted, the
-  ready count in display 26 px over "of 3"), a failed round a **full orange row**. A request still in
-  the upload queue is a quiet row ("On this phone · waiting to send"). Nothing wants anything: no
-  strip.
+  ready count in display 26 px over "of 3"), a failed round a **full orange row**. Several requests
+  sharing a state fold into one row of the same colour instead: "Suggested" over the count in words
+  ("3 requests with suggestions"), their titles in the sub-line ("Dinner Fri · Lunch Sat · …",
+  truncated), an arrow to the entry screen, where every open request is listed. A request still in
+  the upload queue is a quiet row ("On this phone · waiting to send"), never folded. A request whose
+  filter days are all in the past drops off the strip (it stays on the entry screen until archived).
+  Nothing wants anything: no strip.
 - **Starter band** (#47, the planning entry): an idea as a full-width band: its number on the left in
   display 36 px (56 px on the ink slab) over what it is as a 10 px micro-label ("g protein open
   tonight", "logged in 30 days", "Kürbis, Grünkohl, Rosenkohl, Birnen"), the idea in display 19 px

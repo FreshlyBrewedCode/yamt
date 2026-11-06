@@ -35,7 +35,7 @@ import {
 } from "lucide-react";
 import type * as React from "react";
 import { useState } from "react";
-import { formatNumber, formatTime, formatWeekday, plural, shortUrl } from "@/lib/format";
+import { formatNumber, formatTime, formatWeekday, localDate, plural, shortUrl } from "@/lib/format";
 import { uuidv7 } from "@/lib/ids";
 import type { PlanInputEntry, PlanningEntry } from "@/lib/outbox";
 import {
@@ -43,9 +43,13 @@ import {
   constraintLabel,
   draftDays,
   type FilterDraft,
+  groupStripRows,
   MODE_LABEL,
   pickTarget,
+  type RequestState,
+  type StripRow,
   slotWords,
+  stripRows,
   TIME_CAPS,
   timeLabel,
   WHEN_LABEL,
@@ -972,51 +976,135 @@ export function RoundRows({
 
 /* ------------------------------------------------------------- the overview */
 
-/** How an open request stands, for the overview's Planning strip; null when it wants nothing. */
-export function requestState(
-  r: PlanningRequestSummary,
-): { kind: "waiting" | "suggesting" | "failed" | "added"; label: string; count: number } | null {
-  const round = r.latestRound;
-  if (!round)
-    return r.pendingInputs > 0 || r.inputs > 0 ? { kind: "suggesting", label: "Queued", count: 0 } : null;
-  if (round.status === "queued" || round.status === "running") {
-    const done = round.ready + round.failed;
-    return {
-      kind: "suggesting",
-      label:
-        round.status === "queued" && done === 0
-          ? "Queued"
-          : `Suggesting · ${round.ready} of ${round.count} ready`,
-      count: round.ready,
-    };
-  }
-  if (round.status === "failed") return { kind: "failed", label: "Failed", count: 0 };
-  const open = round.ready - round.picked - round.rejected;
-  if (open > 0) return { kind: "waiting", label: `Suggested · ${open} for you`, count: open };
-  if (r.pendingInputs > 0)
-    return { kind: "added", label: `${plural(r.pendingInputs, "addition")} · suggest with it`, count: 0 };
-  return null;
+/** The compacted row's copy for a state more than one open request shares. */
+const GROUP_COPY: Record<RequestState["kind"], { caption: string; title: (n: number) => string }> = {
+  waiting: { caption: "Suggested", title: (n) => `${plural(n, "request")} with suggestions` },
+  added: { caption: "Additions", title: (n) => `${plural(n, "request")} with additions` },
+  suggesting: { caption: "Suggesting", title: (n) => `${n} suggesting` },
+  failed: { caption: "Failed", title: (n) => `${n} failed` },
+};
+
+/** One request's row, as it reads today: the full lime / quiet / orange treatment. */
+function PlanningRequestRow({ r, state }: { r: PlanningRequestSummary; state: RequestState }) {
+  const loud = state.kind === "waiting" || state.kind === "added";
+  const failed = state.kind === "failed";
+  return (
+    <li className={cn(loud && "bg-lime text-lime-foreground", failed && "bg-orange text-orange-foreground")}>
+      <Link
+        to="/plan/requests/$id"
+        params={{ id: r.request.id }}
+        className={cn(
+          "flex min-h-[84px] w-full items-stretch gap-4 px-5 py-3 outline-none active:opacity-80 focus-visible:underline",
+          state.kind === "suggesting" && "text-muted-foreground",
+        )}
+        data-testid="planning-row"
+        data-state={state.kind}
+      >
+        <div className="min-w-0 flex-1">
+          <Label className="flex items-center gap-2">
+            {state.kind === "suggesting" ? (
+              <span className="size-2 animate-pulse bg-current" />
+            ) : (
+              <Sparkles className="size-3.5" strokeWidth={2.5} />
+            )}
+            {state.label}
+          </Label>
+          <div className="display mt-1.5 text-[19px] leading-[1.05] tracking-[-0.02em]">
+            {r.request.title}
+          </div>
+          <div className={cn("mt-1.5 font-medium text-xs", loud && "text-lime-muted")}>
+            {state.kind === "failed"
+              ? "No suggestions this time. Open it to see why, or ask again."
+              : state.kind === "waiting"
+                ? `Pick or steer · round ${r.latestRound?.number ?? 1} · ${formatTime(r.request.updatedAt)}`
+                : state.kind === "added"
+                  ? "Your additions wait for a round."
+                  : `Round ${r.latestRound?.number ?? 1} · started ${formatTime(r.request.updatedAt)}`}
+          </div>
+        </div>
+        {state.kind === "suggesting" && r.latestRound ? (
+          <div className="shrink-0 text-right">
+            <div className="display text-[26px]">{state.count}</div>
+            <Label className="text-[10px]">of {r.latestRound.count}</Label>
+          </div>
+        ) : (
+          <div className="flex shrink-0 items-center">
+            <ArrowRight className="size-6" strokeWidth={2.5} />
+          </div>
+        )}
+      </Link>
+    </li>
+  );
+}
+
+/**
+ * Several requests sharing one state, folded into one row: the count in words ("3 requests with
+ * suggestions"), their titles in the sub-line, opening the entry screen, where every open request is
+ * listed.
+ */
+function PlanningGroupRow({ kind, group }: { kind: RequestState["kind"]; group: readonly StripRow[] }) {
+  const loud = kind === "waiting" || kind === "added";
+  const failed = kind === "failed";
+  const copy = GROUP_COPY[kind];
+  return (
+    <li className={cn(loud && "bg-lime text-lime-foreground", failed && "bg-orange text-orange-foreground")}>
+      <Link
+        to="/plan"
+        className={cn(
+          "flex min-h-[84px] w-full items-stretch gap-4 px-5 py-3 outline-none active:opacity-80 focus-visible:underline",
+          kind === "suggesting" && "text-muted-foreground",
+        )}
+        data-testid="planning-row"
+        data-state={kind}
+        data-compact="true"
+      >
+        <div className="min-w-0 flex-1">
+          <Label className="flex items-center gap-2">
+            {kind === "suggesting" ? (
+              <span className="size-2 animate-pulse bg-current" />
+            ) : (
+              <Sparkles className="size-3.5" strokeWidth={2.5} />
+            )}
+            {copy.caption}
+          </Label>
+          <div className="display mt-1.5 text-[19px] leading-[1.05] tracking-[-0.02em]">
+            {copy.title(group.length)}
+          </div>
+          <div className={cn("mt-1.5 truncate font-medium text-xs", loud && "text-lime-muted")}>
+            {group.map(({ r }) => r.request.title).join(" · ")}
+          </div>
+        </div>
+        <div className="flex shrink-0 items-center">
+          <ArrowRight className="size-6" strokeWidth={2.5} />
+        </div>
+      </Link>
+    </li>
+  );
 }
 
 /**
  * The overview's Planning strip, under the totals: requests whose suggestions wait for a verdict
  * (lime, like a meal that needs input), still suggesting ("2 of 3 ready", quiet), failed (orange,
- * like a failed meal), and requests still on this phone (quiet). Nothing when nothing wants
- * attention.
+ * like a failed meal), and requests still on this phone (quiet). At most one row per state: several
+ * requests sharing a state fold into one compacted row, their titles in the sub-line, opening the
+ * entry screen. A request whose filter days are all in the past drops off (it stays listed on the
+ * entry screen until archived). Nothing when nothing wants attention.
  */
 export function PlanningStrip({
   requests,
   queued,
+  today = localDate(Date.now()),
 }: {
   requests: readonly PlanningRequestSummary[];
   /** Requests made on this phone the server doesn't have yet. */
   queued: readonly { requestId: string; title: string; refused: boolean }[];
+  /** The phone's today, to drop requests whose days are all behind it. */
+  today?: string;
 }) {
-  const rows = requests.flatMap((r) => {
-    const state = requestState(r);
-    return state ? [{ r, state }] : [];
-  });
+  const rows = stripRows(requests, today);
   if (rows.length === 0 && queued.length === 0) return null;
+  const groups = groupStripRows(rows);
+
   return (
     <section aria-label="Planning" data-testid="planning-strip">
       <Strip title="Planning" meta={plural(rows.length + queued.length, "request")} />
@@ -1042,63 +1130,13 @@ export function PlanningStrip({
             </Link>
           </li>
         ))}
-        {rows.map(({ r, state }) => {
-          const loud = state.kind === "waiting" || state.kind === "added";
-          const failed = state.kind === "failed";
-          return (
-            <li
-              key={r.request.id}
-              className={cn(
-                loud && "bg-lime text-lime-foreground",
-                failed && "bg-orange text-orange-foreground",
-              )}
-            >
-              <Link
-                to="/plan/requests/$id"
-                params={{ id: r.request.id }}
-                className={cn(
-                  "flex min-h-[84px] w-full items-stretch gap-4 px-5 py-3 outline-none active:opacity-80 focus-visible:underline",
-                  state.kind === "suggesting" && "text-muted-foreground",
-                )}
-                data-testid="planning-row"
-                data-state={state.kind}
-              >
-                <div className="min-w-0 flex-1">
-                  <Label className="flex items-center gap-2">
-                    {state.kind === "suggesting" ? (
-                      <span className="size-2 animate-pulse bg-current" />
-                    ) : (
-                      <Sparkles className="size-3.5" strokeWidth={2.5} />
-                    )}
-                    {state.label}
-                  </Label>
-                  <div className="display mt-1.5 text-[19px] leading-[1.05] tracking-[-0.02em]">
-                    {r.request.title}
-                  </div>
-                  <div className={cn("mt-1.5 font-medium text-xs", loud && "text-lime-muted")}>
-                    {state.kind === "failed"
-                      ? "No suggestions this time. Open it to see why, or ask again."
-                      : state.kind === "waiting"
-                        ? `Pick or steer · round ${r.latestRound?.number ?? 1} · ${formatTime(r.request.updatedAt)}`
-                        : state.kind === "added"
-                          ? "Your additions wait for a round."
-                          : `Round ${r.latestRound?.number ?? 1} · started ${formatTime(r.request.updatedAt)}`}
-                  </div>
-                </div>
-                {state.kind === "suggesting" && r.latestRound ? (
-                  <div className="shrink-0 text-right">
-                    <div className="display text-[26px]">{state.count}</div>
-                    <Label className="text-[10px]">of {r.latestRound.count}</Label>
-                  </div>
-                ) : (
-                  <div className="flex shrink-0 items-center">
-                    <ArrowRight className="size-6" strokeWidth={2.5} />
-                  </div>
-                )}
-              </Link>
-            </li>
-          );
-        })}
+        {groups.map(({ kind, rows }) =>
+          rows.length === 1 ? (
+            <PlanningRequestRow key={kind} r={rows[0]!.r} state={rows[0]!.state} />
+          ) : (
+            <PlanningGroupRow key={kind} kind={kind} group={rows} />
+          ),
+        )}
       </ul>
     </section>
   );

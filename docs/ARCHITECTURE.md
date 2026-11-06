@@ -187,7 +187,10 @@ packages/web/src/
                           (openBefore), what "Ate it" logs (ateItTotals, the shared computeTotals), slot clashes
   lib/plan-request.ts     a planning request on the phone (#47): filter overrides over the defaults
                           (resolveDraft), the summary and the sentence the agent reads, where Pick goes
-                          (pickTarget), how far a round is (roundMeta)
+                          (pickTarget), how far a round is (roundMeta); the overview's Planning strip
+                          (#54's follow-up): how an open request stands (requestState), whether it is
+                          past (isPastRequest), its open rows (stripRows) folded to one per state
+                          (groupStripRows)
   lib/starters.ts         the entry screen's code-computed starters (computeStarters, SEASON)
   lib/plan-draft.ts       the composers' drafts (in memory, per composer) and sendDraft (into the queue)
   lib/sw.ts, ids.ts, format.ts  worker registration and its messages, client UUIDv7s, number/date formatting
@@ -1535,12 +1538,16 @@ square corners. The tokens are in `index.css` (shadcn's names mapped onto the pa
   The bottom slab is split (#40): **Log** (lime, the meal capture; its accessible name stays "Log
   meal") | **Plan** (tint), which opens the planning entry screen (#47). Under the totals the
   **Planning strip** (#47, `PlanningStrip`, `usePlanningRequests`, key under `meals`, polling while
-  a round runs) lists the open requests that want something: suggestions waiting for a verdict
-  (lime, "Suggested · 2 for you", like a meal that needs input), additions waiting for a round
-  (lime), still suggesting (quiet, "Suggesting · 2 of 3 ready" with the count on the right), a
+  a round runs) lists at most one row per state the open requests are in (#54's follow-up,
+  `stripRows` / `groupStripRows` / `requestState` in `lib/plan-request.ts`): suggestions waiting for
+  a verdict (lime, "Suggested · 2 for you", like a meal that needs input), additions waiting for a
+  round (lime), still suggesting (quiet, "Suggesting · 2 of 3 ready" with the count on the right), a
   failed round (orange, like a failed meal), and requests still in the upload queue ("On this
-  phone · waiting to send"; orange once refused). A request whose suggestions all have a verdict
-  leaves the strip.
+  phone · waiting to send"; orange once refused, never folded). Several open requests sharing a
+  state fold into one row instead of one each: the count in words ("3 requests with suggestions"),
+  their titles in the sub-line, opening the entry screen (`/plan`), where every open request is
+  listed. A request whose filter days are all before today (the phone's zone; `isPastRequest`) drops
+  off the strip, and a request whose suggestions all have a verdict leaves it.
   Goals come from `GET /api/goals` (`useGoals`), resolved per day with `goalInForce`.
 - **Day view** (`/days/:date`, `useDay` → `GET /api/days/:date?tz=<the phone's zone>`): the
   totals slab with the day's goal and per-target "left" / "over", the meals not counted yet, a

@@ -112,7 +112,7 @@ function Overview() {
           />
         </Link>
 
-        <PlanningStrip requests={requests.data?.requests ?? []} queued={queuedRequests} />
+        <PlanningStrip requests={requests.data?.requests ?? []} queued={queuedRequests} today={todayDate} />
 
         {meals.isError && !meals.data && (
           <p className="px-5 py-6 font-medium text-muted-foreground">

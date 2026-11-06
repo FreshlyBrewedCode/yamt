@@ -3,6 +3,9 @@ import type {
   NutrientTotals,
   PlanDay,
   PlanGoal,
+  PlanningRequest,
+  PlanningRequestSummary,
+  PlanningRoundTally,
   PlanningRoundView,
   PlanningSuggestionView,
   RepeatableMeal,
@@ -12,11 +15,15 @@ import {
   draftDays,
   draftProblem,
   filterDefaults,
+  groupStripRows,
+  isPastRequest,
   pickTarget,
   requestSentence,
+  requestState,
   resolveDraft,
   restOfWeek,
   roundMeta,
+  stripRows,
   summaryWords,
 } from "../src/lib/plan-request";
 import { computeStarters, type LastRequest } from "../src/lib/starters";
@@ -198,6 +205,115 @@ describe("roundMeta", () => {
     expect(roundMeta(round("done", ["ready", "ready", "failed"]))).toBe("2 of 3 · 1 couldn't");
     expect(roundMeta(round("done", ["ready", "ready", "ready"]))).toBe("3 suggestions");
     expect(roundMeta(round("failed", ["failed", "failed", "failed"]))).toBe("Failed");
+  });
+});
+
+describe("the overview strip", () => {
+  const req = (id: string, title: string, days: string[]): PlanningRequest => ({
+    id,
+    title,
+    origin: "user",
+    filters: {
+      days,
+      slots: ["dinner"],
+      timeCapMin: null,
+      constraints: [],
+      useUp: [],
+      sourceMode: "published",
+      portionsCooked: 1,
+      count: 2,
+    },
+    timeZone: "Europe/Berlin",
+    archivedAt: null,
+    createdAt: 0,
+    updatedAt: 0,
+  });
+  const round = (over: Partial<PlanningRoundTally> = {}): PlanningRoundTally => ({
+    id: "r",
+    number: 1,
+    kind: "first",
+    status: "done",
+    count: 2,
+    outlined: 2,
+    ready: 2,
+    failed: 0,
+    picked: 0,
+    rejected: 0,
+    ...over,
+  });
+  const summary = (
+    id: string,
+    title: string,
+    days: string[],
+    over: Partial<Pick<PlanningRequestSummary, "latestRound" | "inputs" | "pendingInputs">> = {},
+  ): PlanningRequestSummary => ({
+    request: req(id, title, days),
+    latestRound: null,
+    inputs: 0,
+    pendingInputs: 0,
+    ...over,
+  });
+
+  test("requestState reads a round and pending inputs", () => {
+    expect(requestState(summary("a", "Dinner Fri", ["2026-11-06"]))).toBeNull();
+    expect(requestState(summary("a", "Dinner Fri", ["2026-11-06"], { pendingInputs: 1 }))).toMatchObject({
+      kind: "suggesting",
+      label: "Queued",
+    });
+    expect(
+      requestState(
+        summary("a", "Dinner Fri", ["2026-11-06"], { latestRound: round({ status: "running", ready: 1 }) }),
+      ),
+    ).toMatchObject({ kind: "suggesting", label: "Suggesting · 1 of 2 ready" });
+    expect(
+      requestState(summary("a", "Dinner Fri", ["2026-11-06"], { latestRound: round({ status: "failed" }) })),
+    ).toMatchObject({ kind: "failed", label: "Failed" });
+    expect(requestState(summary("a", "Dinner Fri", ["2026-11-06"], { latestRound: round() }))).toMatchObject({
+      kind: "waiting",
+      label: "Suggested · 2 for you",
+    });
+    expect(
+      requestState(
+        summary("a", "Dinner Fri", ["2026-11-06"], {
+          latestRound: round({ picked: 1, rejected: 1 }),
+          pendingInputs: 1,
+        }),
+      ),
+    ).toMatchObject({ kind: "added", label: "1 addition · suggest with it" });
+    expect(
+      requestState(summary("a", "Dinner Fri", ["2026-11-06"], { latestRound: round({ picked: 2 }) })),
+    ).toBeNull();
+  });
+
+  test("isPastRequest: every filter day before today", () => {
+    expect(isPastRequest(summary("a", "Dinner Thu", ["2026-11-05"]), TODAY)).toBe(true);
+    expect(isPastRequest(summary("a", "Dinner Fri", ["2026-11-06"]), TODAY)).toBe(false);
+    expect(isPastRequest(summary("a", "Dinners Thu-Fri", ["2026-11-05", "2026-11-06"]), TODAY)).toBe(false);
+  });
+
+  test("stripRows drops past requests and ones that want nothing", () => {
+    const requests = [
+      summary("past", "Dinner Thu", ["2026-11-05"], { latestRound: round() }),
+      summary("waiting", "Dinner Fri", ["2026-11-06"], { latestRound: round() }),
+      summary("done", "Lunch Fri", ["2026-11-06"], { latestRound: round({ picked: 2 }) }),
+    ];
+    expect(stripRows(requests, TODAY).map((row) => row.r.request.id)).toEqual(["waiting"]);
+  });
+
+  test("groupStripRows keeps a lone state as its own row, folds several", () => {
+    const rows = stripRows(
+      [
+        summary("w1", "Dinner Fri", ["2026-11-06"], { latestRound: round() }),
+        summary("w2", "Dinner Sat", ["2026-11-07"], { latestRound: round() }),
+        summary("f1", "Lunch Sat", ["2026-11-07"], { latestRound: round({ status: "failed" }) }),
+      ],
+      TODAY,
+    );
+    const groups = groupStripRows(rows);
+    expect(groups.map((g) => g.kind)).toEqual(["waiting", "failed"]);
+    expect(groups[0]!.rows).toHaveLength(2);
+    expect(groups[0]!.rows.map((r) => r.r.request.title)).toEqual(["Dinner Fri", "Dinner Sat"]);
+    expect(groups[1]!.rows).toHaveLength(1);
   });
 });
 

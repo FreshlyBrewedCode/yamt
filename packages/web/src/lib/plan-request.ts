@@ -8,6 +8,7 @@ import {
   PLANNING_DEFAULTS,
   type PlanDay,
   type PlanningRequest,
+  type PlanningRequestSummary,
   type PlanningRoundView,
   type PlanningSettingsBody,
   type PlanningSuggestion,
@@ -15,7 +16,7 @@ import {
   type ResolvedPlanningFilters,
   requestTitle,
 } from "@yamt/shared";
-import { formatWeekday } from "./format";
+import { formatWeekday, plural } from "./format";
 import { SLOT_NAME, SLOTS } from "./planning";
 
 /** When the request is for: a preset, or days picked by hand. */
@@ -275,3 +276,72 @@ export function roundMeta(round: PlanningRoundView): string {
 /** The suggestions of a round still waiting for a verdict (ready, neither picked nor rejected). */
 export const unanswered = (round: PlanningRoundView): number =>
   round.suggestions.filter((s) => s.status === "ready" && s.verdict === null).length;
+
+/* ------------------------------------------------------------- the overview */
+
+/** How an open request stands, for the overview's Planning strip; null when it wants nothing. */
+export function requestState(
+  r: PlanningRequestSummary,
+): { kind: "waiting" | "suggesting" | "failed" | "added"; label: string; count: number } | null {
+  const round = r.latestRound;
+  if (!round)
+    return r.pendingInputs > 0 || r.inputs > 0 ? { kind: "suggesting", label: "Queued", count: 0 } : null;
+  if (round.status === "queued" || round.status === "running") {
+    const done = round.ready + round.failed;
+    return {
+      kind: "suggesting",
+      label:
+        round.status === "queued" && done === 0
+          ? "Queued"
+          : `Suggesting · ${round.ready} of ${round.count} ready`,
+      count: round.ready,
+    };
+  }
+  if (round.status === "failed") return { kind: "failed", label: "Failed", count: 0 };
+  const open = round.ready - round.picked - round.rejected;
+  if (open > 0) return { kind: "waiting", label: `Suggested · ${open} for you`, count: open };
+  if (r.pendingInputs > 0)
+    return { kind: "added", label: `${plural(r.pendingInputs, "addition")} · suggest with it`, count: 0 };
+  return null;
+}
+
+export type RequestState = NonNullable<ReturnType<typeof requestState>>;
+
+/** A request whose filter days are all before `today` (the phone's zone): done wanting the overview. */
+export function isPastRequest(r: Pick<PlanningRequestSummary, "request">, today: string): boolean {
+  return r.request.filters.days.every((d) => d < today);
+}
+
+export interface StripRow {
+  r: PlanningRequestSummary;
+  state: RequestState;
+}
+
+/** The open requests that still want the overview's strip: not past, each with its own state. */
+export function stripRows(requests: readonly PlanningRequestSummary[], today: string): StripRow[] {
+  return requests.flatMap((r) => {
+    if (isPastRequest(r, today)) return [];
+    const state = requestState(r);
+    return state ? [{ r, state }] : [];
+  });
+}
+
+/**
+ * The strip's rows folded to one per state, in the order each state first appears: a state more
+ * than one request shares becomes a group instead of several full rows.
+ */
+export function groupStripRows(
+  rows: readonly StripRow[],
+): { kind: RequestState["kind"]; rows: StripRow[] }[] {
+  const order: RequestState["kind"][] = [];
+  const groups = new Map<RequestState["kind"], StripRow[]>();
+  for (const row of rows) {
+    const g = groups.get(row.state.kind);
+    if (g) g.push(row);
+    else {
+      groups.set(row.state.kind, [row]);
+      order.push(row.state.kind);
+    }
+  }
+  return order.map((kind) => ({ kind, rows: groups.get(kind)! }));
+}

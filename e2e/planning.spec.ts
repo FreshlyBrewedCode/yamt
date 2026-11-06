@@ -1,11 +1,16 @@
 import { expect, type Page, test } from "@playwright/test";
-import type { PlanningRequestDetail } from "../packages/shared/src/api-planning-requests.ts";
+import type {
+  PlanningRequestDetail,
+  PlanningRequestResponse,
+} from "../packages/shared/src/api-planning-requests.ts";
 import { planningRequestPaths } from "../packages/shared/src/api-planning-requests.ts";
+import { OWN_ORIGIN } from "./api.ts";
 
 // The planning screens (#47): a starter fills the composer, the filter page sets the request, the
 // composer sends it through the upload queue, the round fills on the fake agent (the e2e server's
 // custom planning harness, scripted by the request's last `fake:plan…` text), a pick lands in the
-// plan, a steer starts round 2; and a request made offline waits on the phone until it can go.
+// plan, a steer starts round 2; a request made offline waits on the phone until it can go; and the
+// overview folds several requests sharing a state into one row (#54's follow-up).
 
 const dock = (page: Page) => page.getByTestId("dock");
 const field = (page: Page) => page.getByTestId("composer-field");
@@ -152,4 +157,36 @@ test("offline: the request waits on the phone, then goes with its inputs and sta
     timeout: 40_000,
   });
   await expect(page.getByTestId("you-asked")).toContainText("Etwas mit Linsen, offline gefragt.");
+});
+
+test("the overview folds several waiting requests into one compacted row", async ({ page, request }) => {
+  test.setTimeout(60_000);
+  const make = async (text: string, slots?: string[]) => {
+    const res = await request.post(planningRequestPaths.requests, {
+      headers: OWN_ORIGIN,
+      data: { text, ...(slots ? { filters: { slots } } : {}) },
+    });
+    const { request: created } = (await res.json()) as PlanningRequestResponse;
+    await request.post(planningRequestPaths.suggest(created.id), { headers: OWN_ORIGIN, data: {} });
+    return created;
+  };
+  const a = await make("Fisch, bitte. fake:plan");
+  const b = await make("Nudeln, bitte. fake:plan", ["lunch"]);
+  expect(a.title).not.toBe(b.title);
+
+  // both rounds finish with suggestions waiting for a verdict: one lime row, not two
+  await page.goto("/");
+  const row = page.locator('[data-testid="planning-row"][data-state="waiting"]');
+  await expect(row).toHaveCount(1, { timeout: 20_000 });
+  await expect(row).toHaveAttribute("data-compact", "true");
+  await expect(row).toContainText(/\d+ requests with suggestions/);
+  await expect(row).toContainText(a.title);
+  await expect(row).toContainText(b.title);
+
+  // it opens the entry screen, where both requests are listed
+  await row.click();
+  await expect(page).toHaveURL(/\/plan$/);
+  const requests = page.getByTestId("requests");
+  await expect(requests.getByTestId("request-row").filter({ hasText: a.title }).first()).toBeVisible();
+  await expect(requests.getByTestId("request-row").filter({ hasText: b.title }).first()).toBeVisible();
 });
