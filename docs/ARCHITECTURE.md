@@ -140,13 +140,15 @@ packages/web/
   public/                 manifest.webmanifest, icons/ (rendered by scripts/icons.ts)
   sw.js                   the service worker template (vite.config.ts fills in the build's files)
   test/                   bun tests: the upload queue, the recorder's logic, the trace parser, the weight
-                          trend, the clipboard mapping
+                          trend, the clipboard mapping, the plan's reading (planning)
 packages/web/src/
   main.tsx                router + query client, starts the upload queue, registers the worker
   routes/                 TanStack file routes: __root.tsx, index.tsx (the overview),
                           meals.$mealId.tsx (a meal: its detail or its capture view), days.$date.tsx
                           (the day view), calendar.tsx (the calendar, #33), goals.tsx (goals and weight), goals_.guided.tsx (the guided
-                          setup, /goals/guided), settings.tsx (notifications, the agent, sharing);
+                          setup, /goals/guided), settings.tsx (notifications, the agent, sharing),
+                          plan.days.tsx (the plan view, /plan/days, #40), planned.$id.tsx (a planned
+                          meal's recipe, /planned/:id);
                           routeTree.gen.ts
                           is generated
   lib/api.ts, queries.ts  the fetch client and every TanStack Query hook
@@ -155,6 +157,8 @@ packages/web/src/
   lib/recorder.ts         the recorder's state machine and helpers; hooks/use-recorder.ts wires it
   lib/trace.ts            a run's NDJSON trace → run metadata and a readable list (parseTrace)
   lib/weight.ts           the weight trend: raw points and the 7-day moving average (weightTrend), kgTicks
+  lib/planning.ts         the plan's reading (#40): a day's squares (readDay), what is open before a dish
+                          (openBefore), what "Ate it" logs (ateItTotals, the shared computeTotals), slot clashes
   lib/sw.ts, ids.ts, format.ts  worker registration and its messages, client UUIDv7s, number/date formatting
   lib/push.ts             this browser's push support, permission and subscription (subscribeDevice)
   lib/clipboard.ts        Paste: clipboard items and paste events → captures (pasteFromClipboard,
@@ -167,11 +171,15 @@ packages/web/src/
                           source), revision-history, trace-view, agent-settings (Settings → Agent, the
                           model picker), log-again (the Log again sheet, the "Again?" list), calendar (the
                           month grid, the selected day, the summary, the legend, #33), remove-meal (the
-                          Remove meal row, the day's undo strip, a removed meal); ui/ (shadcn:
+                          Remove meal row, the day's undo strip, a removed meal), planning (the planned-meal
+                          row, the Log | Plan slab, the totals note, the fit bar, the Ate-it and Plan-for
+                          sheets, #40), recipe-detail (a planned meal's recipe); ui/ (shadcn:
                           button, input, sheet)
   index.css               Tailwind 4 + the D · Slab theme tokens (light/dark)
 e2e/                      Playwright specs (phone viewport); calendar-seed.ts makes four made-up months for the
-                          calendar spec, which runs against a server of its own (YAMT_E2E_PORT − 1)
+                          calendar spec, which runs against a server of its own (YAMT_E2E_PORT − 1); mcp.ts
+                          calls a yamt MCP tool with the data dir's interactive token (the plan spec seeds
+                          recipes and planned meals with it)
 docs/adr/                 architecture decision records
 .agents/skills/log-meal/  SKILL.md: how to analyse a meal (the job's system prompt, and a skill for
                           interactive sessions through the `.claude/skills` link)
@@ -1041,7 +1049,7 @@ force. Design: spike #31's direction D · Plan ([design.md](design/design.md#com
   the days with totals, the mean kcal share of each day's own target, the goal in force on the
   last day. The weight: per day with entries the day's mean and the 7-day average
   (`dailyWeights`, the same as the goals screen's trend).
-- **The screen** (`/calendar?month&day`): see [Screens](#screens-10-11-12-13-24-30-33). The web
+- **The screen** (`/calendar?month&day`): see [Screens](#screens-10-11-12-13-24-30-33-40). The web
   app classifies with the same shared functions; the server sends inputs, not verdicts.
 
 ## Planning (#36)
@@ -1093,6 +1101,11 @@ door. Planning requests, rounds and suggestions (#36's subtasks 5–6) build on 
   under `SNACK_KCAL` (150) is a snack whatever the time. The web app classifies `projected` with
   the calendar's functions (`dayInput`, `classifyDay`) only when the day is mostly known, else it
   shows "rest open"; the server sends inputs, not verdicts.
+- **`GET /api/planned-meals/:id`** (#40): one planned meal in any status, with its numbers.
+- **The phone** (#40): the plan view, a planned meal's recipe, the Ate-it and Plan-for sheets, the
+  planned rows on the overview and the day view and the split Log | Plan slab: see
+  [Screens](#screens-10-11-12-13-24-30-33-40). It reads the plan with the calendar's functions and
+  previews "Ate it" with the shared `computeTotals`; the server's numbers are the ones saved.
 - **`GET /api/recipes/:id`**: the recipe with its items (grams and nutrients for the whole recipe
   and per portion, the matched food or the estimate), `perPortion` and `whole` totals, steps,
   times, source and changes.
@@ -1185,7 +1198,7 @@ square corners. The tokens are in `index.css` (shadcn's names mapped onto the pa
 `ink`, `lime`, `lime-soft`, `tint`, `orange` and their foregrounds); the primitives (`Band`,
 `Strip`, `Label`, `SlabButton`, `BottomSlab`, `StatusLabel`) in `components/slab.tsx`.
 
-### Screens (#10, #11, #12, #13, #24, #30, #33)
+### Screens (#10, #11, #12, #13, #24, #30, #33, #40)
 
 - **Overview** (`/`): today's totals as the ink slab against the goal in force today (kcal,
   protein, fat, carbs, fibre with what's left; "N meals not counted yet" for those without an
@@ -1193,17 +1206,24 @@ square corners. The tokens are in `index.css` (shadcn's names mapped onto the pa
   day's kcal from `days` against that day's own goal, "2,505 / 2,400 kcal", opening the day), each
   meal a row with time, status, title ("Untitled meal" until analysed), what it holds and its
   kcal ("— not counted" without an analysis); needs input is a lime row, failed an orange one. A
-  meal logged again (#30) has no captures and says "Logged again" instead.
+  meal logged again (#30) has no captures and says "Logged again" instead, one logged from the
+  plan (#40) "From the plan". Today's planned meals still to log (#40, `usePlan` for today) follow
+  its eaten ones as quiet rows (`PlannedRow`: "Planned · Dinner", the muted title, "Cook 2 · eat 1",
+  the kcal marked "planned", a tap opens the recipe) with a 64 px tint **Ate it** square that opens
+  the Ate-it sheet; the totals slab adds "1 planned · with it 1,971 of 2,200 · 229 left" (the
+  day's `projected`), and today's strip "2 meals · 1 planned".
   Meals that exist only on this phone so far (started offline) are listed from the upload queue;
   drafts with nothing captured are left out. "Earlier days" opens the day before the 14, from
   where the day view steps back as far as needed. The header's calendar opens the calendar on the
   current month (#33), the scale goals and weight.
-  **Log meal** is the sticky lime slab. Goals come from `GET /api/goals` (`useGoals`), resolved
-  per day with `goalInForce`.
+  The bottom slab is split (#40): **Log** (lime, the meal capture; its accessible name stays "Log
+  meal") | **Plan** (tint), which opens the plan view until the planning entry screen exists (#36).
+  Goals come from `GET /api/goals` (`useGoals`), resolved per day with `goalInForce`.
 - **Day view** (`/days/:date`, `useDay` → `GET /api/days/:date?tz=<the phone's zone>`): the
   totals slab with the day's goal and per-target "left" / "over", the meals not counted yet, a
   goal row (since when, its note; to the goals screen), the meals (the server's plus the upload
-  queue's for that day), the weight entries of the day; the bottom slab steps to the previous and
+  queue's for that day, then the day's planned meals still to log with Ate it and the "with it"
+  note, as on the overview, #40), the weight entries of the day; the bottom slab steps to the previous and
   next day (replacing the history entry; not past today); the header's calendar opens the day's
   month with the day selected. Right after a meal of the day was removed (`?removed=<id>`), a tint
   strip at the top says "Meal removed" with its title and **Undo** (a restore); it goes after 12 s,
@@ -1220,6 +1240,48 @@ square corners. The tokens are in `index.css` (shadcn's names mapped onto the pa
   bottom slab. Every state has a URL: the month defaults to the day's (or the current one), the
   day to today in the current month and to the last day of a past one. Picking days and stepping
   months replace the history entry, so Back leaves the calendar.
+- **Plan view** (#40, `/plan/days`, `usePlan` → `GET /api/plan` for today and the next six days,
+  key under `meals`): back, "Plan" / "Next days"; the days as squares on the ink slab (4 columns, 88
+  px tall: the date chip, the weekday, the projected kcal and the reading), read with the calendar's
+  fills and caps (`classifyDay` over `projected`) only once the API marks a day mostly known,
+  otherwise "rest open" ("nothing planned" with neither eaten nor planned); a tap scrolls to the
+  day; the line under them names the goal and its range. Then per day a tint strip ("1 planned · 2
+  eaten · rest open", or the date) and its planned meals in every status (planned, "Logged ·
+  Dinner" with its meal's kcal, "Skipped · Dinner" struck through), today's with Ate it, or
+  "Nothing planned". The bottom slab is lime **Ate it · Dinner** while today has a planned meal to
+  log, else none. Leftovers and the shopping list (#36 wave 2) and a "Plan <day>" entry (the
+  planning screens) are left out until they exist.
+- **Planned meal** (#40, `/planned/:id`, `usePlannedMeal` → `GET /api/planned-meals/:id`, the
+  recipe by `useRecipe` (cached for good: recipes never change) and the plan of its date;
+  `components/recipe-detail.tsx`, to be reused for suggestions): the header with back and a tint
+  "Change day or portions" square while planned, "Planned · Today, dinner · cook 2, eat 1", the
+  title, summary and the source label ("From chefkoch.de", "Adapted from chefkoch.de · 3 changes",
+  "Composed for you"; a link when there is a URL). A skipped one gets a tint band (not counted,
+  Unskip puts it back), a logged one a tint row to its meal. The ink slab: the kcal of the portion
+  eaten (`eaten`), on the right what is open of the day's kcal target before this dish in lime,
+  the fit bar (the day's other eaten and planned kcal in lime, this dish in the slab's foreground,
+  past the target after a 2 px gap), the macros against what is open, the times. Changes against
+  the source, the recipe's notes and the planned meal's note on tint when present; **Cook / Eat**
+  portion chips (PATCH at once, while planned) with "1 portion (774 kcal) more than you eat: a
+  leftover."; the ingredients for the portions cooked (optional ones marked); numbered steps; the
+  source footer ("nutrition computed from the matched ingredients, not from the page"). The bottom
+  slab: lime **Ate it** when due (today or earlier, still planned), tint **Change day · portions**
+  ahead of time, tint **Unskip** when skipped, tint **Open the logged meal** when logged. A planned
+  meal that is gone (unplanned) says so with a way to the plan.
+- **Ate-it sheet** (#40, the top sheet, "Ate it · Today, dinner" over the title): the recipe's items
+  as check rows (all on; a tap switches one off, struck through) with their grams for the portion,
+  the portion chips relative to the plan (0.5× Half / 1× As planned / 1.5× More / 2× Double, "of 2
+  cooked", the leftover line), the time (now; an earlier day's meal starts at its slot's usual
+  hour), the kcal and macros of what will be logged (`ateItTotals`: the shared `portionItems` and
+  `computeTotals`, which the server runs again on save), lime **Log it** (`POST …/log` with a client
+  id per opening, the excluded item ids and the portion; not with everything off) → the new meal. A
+  failure is an orange line; it is one request, never queued.
+- **Plan-for sheet** (#40, from the planned meal's header or slab): the day as chips (today and the
+  next six days, plus the meal's own day when outside them), the slot, Cook / Eat; a plain line when
+  the slot already holds a planned or eaten meal ("Monday's dinner already has …. Both stay
+  planned."), "<day> with it 1,784 of 2,200 · 416 left"; lime **Save · Mon dinner** (a PATCH of what
+  changed), then **Skip it** (the planned meal shows as skipped, Unskip undoes it) and **Unplan**
+  (an inline confirm; a DELETE, then the plan view).
 - **Goals** (`/goals`): the weight entry (lime: kg with a dot or comma, now or a chosen time, Undo
   right after), the trend (`lib/weight.ts`: per calendar day the mean of its entries, the 7-day
   moving average over the days with entries; six weeks shown, a week more fetched so the average
@@ -1297,7 +1359,10 @@ square corners. The tokens are in `index.css` (shadcn's names mapped onto the pa
   real one), and lime **Log again**, which posts the copy (`useRepeatMeal`, a UUIDv7 per opening)
   and opens it; a failure is an orange line in the sheet ("No connection: …"). A meal logged
   again shows "Logged again from <title> · <when>" under its title, linking to the source; its
-  trace row says "no analysis" and why, and its revision in the history "logged again".
+  trace row says "no analysis" and why, and its revision in the history "logged again". A meal
+  logged from the plan (#40) shows "Logged from the plan · Today, dinner" there instead, linking to
+  its planned meal (a plain line once that is unplanned), "no analysis" likewise, and its revision
+  "logged from the plan".
   The screen stays put while it re-analyses and polls like the overview.
 - **Trace viewer** (`components/trace-view.tsx`, `lib/trace.ts`): fetched only when its row is
   opened (polled while the run runs). The run's facts (the model that answered and, when it

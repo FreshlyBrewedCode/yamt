@@ -174,6 +174,62 @@ Units sit next to numbers smaller and muted (`28g`, `72 /160`).
   bold, underlined, in the foreground), linking to the source. The overview's row for such a
   meal says "Logged again" where others list their captures; its trace row's meta is "no
   analysis", opening to a tint line that says why.
+- **Split slab** (#40, the overview): the bottom slab in two, **Log** (lime, + icon, flex) | **Plan**
+  (tint, the chef's hat, 42 %), 24 px captions. Planning is available but doesn't want the user;
+  the totals slab stays the screen's only ink. Until the planning entry screen exists, Plan opens the
+  plan view.
+- **Planned-meal row** (#40, the overview's and the day view's list, the plan view): a plain 84 px
+  row like a meal row, but quiet: "Planned · Dinner" (chef's hat, micro-label, muted) where the
+  time and status sit, the title in the muted foreground, "Cook 2 · eat 1" under it, the kcal muted
+  with "planned" under them. Where it can be eaten (today or earlier) a 64 px wide tint **Ate it**
+  square (check over a micro-label) fills the row's right edge, lime while pressed. On the overview
+  and the day view it follows the eaten meals; logged and skipped ones leave those lists. In the
+  plan view a logged one reads "Logged · Dinner" (check icon, the title in the foreground, its
+  meal's kcal), a skipped one "Skipped · Dinner", struck through, "Not counted".
+- **"With it" note** (#40): the totals slab's note gains a line with the chef's hat, "1 planned · with it 1,971 of
+  2,200 · 229 left" (or "… over", or "with it 1,971 kcal" without a target) while the day has
+  planned meals to log; the slab's note takes several lines, each its own row.
+- **Plan squares** (#40, the plan view's ink slab): today and the next six days in a 4-column grid
+  of 88 px squares (4 px gaps, 12 px side padding): the date chip top left (today's filled like the
+  calendar's), the short weekday top right, the projected kcal (display 20 px) and the reading as a
+  10 px micro-label at the bottom ("on plan, under", "rest open", "nothing planned"). The fills and
+  caps are the calendar's, but only for a mostly known day; one still open is `ink-line` grey, an
+  empty one `ink-line` at 40 % with "—". One plain line under the grid on the slab says what the
+  squares are read against ("Read against Cut, standard pace once a day is mostly known …").
+- **Recipe detail** (#40): a recipe to cook from. The header label says the plan ("Planned · Today,
+  dinner · cook 2, eat 1"), the title in display 32 px, the summary muted, the source as a
+  micro-label with a globe (sparkles for "Composed for you"), a link when it has a URL. The ink slab
+  is the dish against its day: the kcal of the portion eaten (64 px), what is open of the day's kcal
+  target on the right in lime (28 px, "open today"), the **fit bar** (12 px: the day's other eaten
+  and planned kcal in lime, this dish in the slab's foreground, past the target after a 2 px gap at
+  60 %), the macros with "/open" and a 6 px bar each, the times under a thin line. Changes against
+  the source ("Changed against chefkoch.de", small hollow squares), notes and the planned meal's
+  note on tint. A "Portions" strip with **Cook** (1–4) and **Eat** (0.5×–2×) preset chips side by
+  side and the leftover sentence with the fork-and-knife icon; ingredients as plain rows (bold
+  description, "optional" muted, grams in display 20 px) for the portions cooked; steps as rows with
+  a 32 px tint number tile; the source footer on tint (the link, and that the nutrition comes from
+  the matched ingredients, never from the page). The bottom slab: lime **Ate it** when due, tint
+  **Change day · portions** ahead of time (also the header's calendar-clock square), tint
+  **Unskip** for a skipped one (a tint band says it counts nowhere), tint **Open the logged meal**.
+- **Ate-it sheet** (#40, the top sheet, capped at the screen's height and scrolling): "Ate it ·
+  Today, dinner" over the title, one muted line ("Logged as a meal with these items, scaled to the
+  portion: no analysis. Switch off what you left out."), the items as 48 px check rows between
+  dividers (the 28 px check square, bold description, grams in display 18 px; off = tint square and
+  struck through, muted), then "Portion · of 2 cooked" with 0.5× Half / 1× As planned / 1.5× More /
+  2× Double, the leftover line, "Now · change time" with the kcal (display 28 px) and a line of
+  macro grams, and the lime **Log it**. Everything off disables it with a tint hint; a failure is an
+  orange line above it.
+- **Plan-for sheet** (#40, top sheet, "Plan for" over the title): Day chips (number over the
+  weekday, "Today" for today; seven wrap into 4 + 3), Slot chips (labels only), Cook / Eat chips, a
+  plain 15 px line when the slot already holds a meal ("Monday's dinner already has …. Both stay
+  planned.": a fact, not a warning colour), "<day> with it · 1,784 of 2,200 · 416 left", the lime
+  **Save · Mon dinner** (disabled until something changed), then two plain 56 px rows: **Skip it**
+  (what it means in a muted line, the skip icon) and **Unplan** (the trash icon; an inline confirm
+  with a foreground "Unplan" block, falling back after 4 s, like Remove meal).
+- **Logged from the plan** (#40, meal detail header): like "Logged again from", a muted 14 px line
+  with the chef's hat, "Logged from the plan · **Today, dinner**" linking to the planned meal; the
+  overview's row says "From the plan" where Log again's says "Logged again"; the revision history
+  says "logged from the plan".
 - **`Disclosure`**: a collapsible 56 px row on the plain page (uppercase title, muted meta,
   chevron), stacked with dividers; its content mounts only when open, on tint. For what is
   secondary and heavy: captures, revision history, the trace.
