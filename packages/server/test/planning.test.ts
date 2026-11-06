@@ -385,6 +385,9 @@ describe("planned meals", () => {
     const p = (await plan(recipeId, "2026-04-04", "lunch")).body.plannedMeal;
     const skip = await call<PlannedMealResponse>("POST", planningPaths.skip(p.id));
     expect(skip.body.plannedMeal.status).toBe("skipped");
+    const read = await call<PlannedMealResponse>("GET", planningPaths.plannedMeal(p.id));
+    expect(read.body.plannedMeal).toMatchObject({ id: p.id, status: "skipped", title: "Kürbis-Curry" });
+    expect(read.body.plannedMeal.perPortion.nutrients.energyKcal).toBe(449);
     expect((await call<PlannedMealResponse>("POST", planningPaths.skip(p.id))).body.plannedMeal.status).toBe(
       "skipped",
     );
@@ -403,6 +406,7 @@ describe("planned meals", () => {
     expect((await call("DELETE", planningPaths.plannedMeal(p.id))).status).toBe(204);
     expect(s.repos.plannedMeals.get(p.id)).toBeNull();
     expect((await call("DELETE", planningPaths.plannedMeal(p.id))).status).toBe(404);
+    expect((await call("GET", planningPaths.plannedMeal(p.id))).status).toBe(404);
     expect((await call("POST", planningPaths.skip(p.id))).status).toBe(404);
   });
 });

@@ -830,7 +830,7 @@ All behind the identity check, writes also same-origin; paths in `mealPaths` / `
 - `GET /api/months/:month?tz` (#33, `calendarPaths`; `YYYY-MM`, else 400): see
   [Calendar](#calendar-33).
 - **Planning** (#39, `planningPaths`): `GET /api/plan?from&to&tz`, `GET /api/recipes/:id`, `POST
-  /api/planned-meals`, `PATCH` / `DELETE /api/planned-meals/:id`, `POST
+  /api/planned-meals`, `GET` / `PATCH` / `DELETE /api/planned-meals/:id`, `POST
   /api/planned-meals/:id/skip` / `unskip` / `log`: see [Planning](#planning-36).
 
 - **Profile and guided goals** (#24, `profilePaths`): `GET /api/profile` (`{profile}`, null before
