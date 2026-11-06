@@ -9,6 +9,7 @@ import { agentRoutes } from "./agent.ts";
 import { goalRoutes } from "./goals.ts";
 import { mealRoutes } from "./meals.ts";
 import { handleError, sameOrigin } from "./middleware.ts";
+import { planningRoutes } from "./planning.ts";
 import { pushRoutes } from "./push.ts";
 import { runRoutes } from "./runs.ts";
 import { shareRoutes } from "./share.ts";
@@ -43,6 +44,7 @@ export function createApi(deps: ApiDeps): Hono<IdentityEnv> {
   api.route("/", pushRoutes(deps.services));
   api.route("/", shareRoutes(deps.services));
   api.route("/", agentRoutes(deps.services));
+  api.route("/", planningRoutes(deps.services));
 
   api.all("*", () => {
     throw new HttpError(404, "not found");

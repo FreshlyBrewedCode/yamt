@@ -39,7 +39,7 @@ import { type RevisionService, totalsOf } from "./revisions.ts";
 import { assertTimeZone, localDate, localTimeZone } from "./time.ts";
 
 /** How far a client clock may run ahead before its `capturedAt` (or an `eatenAt`) is refused. */
-const CLOCK_SKEW_MS = 60 * 60_000;
+export const CLOCK_SKEW_MS = 60 * 60_000;
 
 /** Why the jobs of a removed meal were cancelled. */
 export const MEAL_REMOVED = "the meal was removed";
@@ -448,7 +448,8 @@ export class MealService {
    * cancelled and a running one stopped (it can't save any more: its token is revoked, and saving
    * onto a removed meal is refused), and so are the queued transcriptions of its voice captures.
    * A meal whose analysis was stopped stands where that analysis started from: its current
-   * revision's status, or `draft` without one; a restore brings it back like that.
+   * revision's status, or `draft` without one; a restore brings it back like that. A meal logged
+   * from the plan puts its planned meal back to `planned`.
    */
   remove(mealId: string, now = Date.now()): RemoveMealResponse {
     const before = this.meal(mealId);
@@ -461,6 +462,8 @@ export class MealService {
       }
       const current = before.currentRevisionId ? this.repos.revisions.get(before.currentRevisionId) : null;
       const status = busy ? (current?.status ?? "draft") : before.status;
+      // a meal logged from the plan ("Ate it", #36): its planned meal is planned again
+      this.repos.plannedMeals.unlogMeal(mealId, now);
       return { meal: this.repos.meals.remove(mealId, status, now)!, cancelled };
     })();
     const stopped = this.stopAnalysis(mealId);
@@ -470,13 +473,20 @@ export class MealService {
   /**
    * Undoes a removal; idempotent. The meal is back as it was removed (status, revision, time).
    * Voice captures whose transcription the removal cancelled are queued again; a stopped
-   * analysis is not (the user presses Analyse: a run costs money).
+   * analysis is not (the user presses Analyse: a run costs money). A meal logged from the plan
+   * marks its planned meal `logged` again if it is still `planned`; otherwise it stays a meal of
+   * its own.
    */
   restore(mealId: string, now = Date.now()): RestoreMealResponse {
     const before = this.meal(mealId);
     if (before.removedAt === null) return { meal: before };
     const { meal, queued } = this.repos.db.transaction(() => {
       const meal = this.repos.meals.restore(mealId, now)!;
+      // logged from the plan: logged again, unless its planned meal was logged, skipped or unplanned since
+      const planned = meal.sourcePlannedMealId ? this.repos.plannedMeals.get(meal.sourcePlannedMealId) : null;
+      if (planned?.status === "planned") {
+        this.repos.plannedMeals.markLogged(planned.id, mealId, planned.portionEaten, now);
+      }
       const pending = new Set(
         this.repos.transcripts
           .listForMeal(mealId)
@@ -588,7 +598,8 @@ export const nutrientTotals = ({ grams, items, nutrients }: NutrientTotals): Nut
 });
 
 /** Grams × a portion factor, to the hundredth of a gram (never 0: items need grams). */
-const scaleGrams = (grams: number, factor: number) => Math.max(0.01, Math.round(grams * factor * 100) / 100);
+export const scaleGrams = (grams: number, factor: number) =>
+  Math.max(0.01, Math.round(grams * factor * 100) / 100);
 
 /** "Tue 3 Nov" in the zone: the source's day in a copy's assumption line. */
 const shortDate = (ms: number, timeZone: string) =>

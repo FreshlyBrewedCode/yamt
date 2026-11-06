@@ -27,6 +27,28 @@ const round = (n: number | null, digits = 0): number | null =>
   n === null ? null : Math.round(n * 10 ** digits) / 10 ** digits;
 
 /**
+ * The goal in force on a date as the classifier reads it (`goalPlan`: kind, label, floor), with
+ * the goals and the profile read once: the calendar's months and the plan's days (#36).
+ */
+export function goalsByDate(repos: Repos): (date: string) => PlanGoal | null {
+  const goals = repos.goals.list();
+  const sex = repos.profile.get()?.sex ?? null;
+  const plans = new Map<string, PlanGoal>();
+  const planOf = (g: Goal): PlanGoal => {
+    let p = plans.get(g.id);
+    if (!p) {
+      p = { id: g.id, effectiveFrom: g.effectiveFrom, targets: g.targets, ...goalPlan(g, sex) };
+      plans.set(g.id, p);
+    }
+    return p;
+  };
+  return (date) => {
+    const g = goalInForce(goals, date);
+    return g ? planOf(g) : null;
+  };
+}
+
+/**
  * The calendar (#33): a month of the phone's calendar days, each with what the day view counts
  * (analysed meals through `computeTotals`, meals without an analysis listed but not counted) and
  * the goal in force as the classifier reads it (`goalPlan`). One pass per month: the meals, the
@@ -80,22 +102,7 @@ export class CalendarService {
       if (date) dayOf(date).items.push(item);
     }
 
-    // the goal in force per day, read once per goal
-    const goals = this.repos.goals.list();
-    const sex = this.repos.profile.get()?.sex ?? null;
-    const plans = new Map<string, PlanGoal>();
-    const planOf = (g: Goal): PlanGoal => {
-      let p = plans.get(g.id);
-      if (!p) {
-        p = { id: g.id, effectiveFrom: g.effectiveFrom, targets: g.targets, ...goalPlan(g, sex) };
-        plans.set(g.id, p);
-      }
-      return p;
-    };
-    const goalOn = (date: string): PlanGoal | null => {
-      const g = goalInForce(goals, date);
-      return g ? planOf(g) : null;
-    };
+    const goalOn = goalsByDate(this.repos);
 
     // weight: a week before the 1st on, so the 7-day average is whole from the start
     const weighings = new Map<string, number[]>();
