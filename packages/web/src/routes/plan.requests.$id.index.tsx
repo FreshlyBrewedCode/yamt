@@ -23,7 +23,14 @@ import { dateStart, dayLabel, formatTime, localDate, plural } from "@/lib/format
 import { outbox, type PlanRequestEntry, usePlanningOutbox } from "@/lib/outbox";
 import { clearDraft, sendDraft } from "@/lib/plan-draft";
 import { askedWords, roundMeta } from "@/lib/plan-request";
-import { planError, useArchiveRequest, usePlan, usePlannedMeal, usePlanningRequest } from "@/lib/queries";
+import {
+  planError,
+  useArchiveRequest,
+  useLeftovers,
+  usePlan,
+  usePlannedMeal,
+  usePlanningRequest,
+} from "@/lib/queries";
 
 export const Route = createFileRoute("/plan/requests/$id/")({ component: RequestThread });
 
@@ -100,6 +107,7 @@ function Thread({
   const navigate = useNavigate();
   const now = Date.now();
   const today = localDate(now);
+  const leftoverNames = useLeftoverNames();
   const { request, rounds, inputs, transcripts } = detail;
   const f = request.filters;
   const plan = usePlan(f.days[0] ?? today, f.days.at(-1) ?? today);
@@ -181,7 +189,7 @@ function Thread({
         <AskedBand
           title="You asked"
           meta={`Round 1 · ${when(request.createdAt, now)}`}
-          words={askedWords(f, today)}
+          words={askedWords(f, today, leftoverNames)}
           lines={firstLines}
           onRetry={(eid) => void outbox.retry(eid)}
           onDiscard={(eid) => void outbox.discard(eid)}
@@ -369,6 +377,7 @@ function MoreRow({
 function QueuedThread({ entry }: { entry: PlanRequestEntry }) {
   const now = Date.now();
   const today = localDate(now);
+  const leftoverNames = useLeftoverNames();
   const { snapshot, entries } = usePlanningOutbox(entry.requestId);
   const lines = pendingLines(entries, snapshot.sending, snapshot.online);
   return (
@@ -418,7 +427,7 @@ function QueuedThread({ entry }: { entry: PlanRequestEntry }) {
         <AskedBand
           title="You asked"
           meta={`Round 1 · ${when(entry.createdAt, now)}`}
-          words={askedWords(entry.filters, today)}
+          words={askedWords(entry.filters, today, leftoverNames)}
           lines={lines}
           onRetry={(eid) => void outbox.retry(eid)}
           onDiscard={(eid) => void outbox.discard(eid)}
@@ -428,4 +437,10 @@ function QueuedThread({ entry }: { entry: PlanRequestEntry }) {
       <SafeBottom />
     </>
   );
+}
+
+/** The open leftovers' names by id, for the request's use-up words (#49). */
+function useLeftoverNames(): Map<string, string> {
+  const leftovers = useLeftovers().data?.leftovers ?? [];
+  return new Map(leftovers.map((l) => [l.id, l.description]));
 }

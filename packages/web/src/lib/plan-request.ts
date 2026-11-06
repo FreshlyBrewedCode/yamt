@@ -65,7 +65,7 @@ export const MODE_LABEL: Record<RecipeSourceMode, { title: string; short: string
 /**
  * What the user set on the filter page or a starter filled in: every field optional, laid over
  * the defaults (`filterDefaults`) when the request is made. `days` only counts with `when: "days"`;
- * `useUp` are short texts ("½ Hokkaido").
+ * `useUp` are short texts ("½ Hokkaido"), `leftovers` ids of the leftovers list (#49).
  */
 export interface FilterDraft {
   when?: WhenPreset;
@@ -74,6 +74,7 @@ export interface FilterDraft {
   timeCapMin?: number | null;
   constraints?: string[];
   useUp?: string[];
+  leftovers?: string[];
   sourceMode?: RecipeSourceMode;
   portionsCooked?: number;
   count?: number;
@@ -126,7 +127,13 @@ export function resolveDraft(
     slots: slots.length ? slots : defaults.slots,
     timeCapMin: draft.timeCapMin === undefined ? defaults.timeCapMin : draft.timeCapMin,
     constraints: draft.constraints ?? defaults.constraints,
-    useUp: draft.useUp ? draft.useUp.map((text) => ({ text })) : defaults.useUp,
+    useUp:
+      draft.useUp || draft.leftovers
+        ? [
+            ...(draft.leftovers ?? []).map((leftoverId) => ({ leftoverId })),
+            ...(draft.useUp ?? []).map((text) => ({ text })),
+          ]
+        : defaults.useUp,
     sourceMode: draft.sourceMode ?? defaults.sourceMode,
     portionsCooked: draft.portionsCooked ?? defaults.portionsCooked,
     count: draft.count ?? defaults.count,
@@ -153,8 +160,11 @@ function daysWords(days: readonly string[], today: string | null): string {
   return days.map(formatWeekday).join(", ");
 }
 
-const leftoverTexts = (f: Pick<ResolvedPlanningFilters, "useUp">): string[] =>
-  f.useUp.map((u) => ("text" in u ? u.text : "a leftover"));
+/** A leftover's name by its id (the leftovers list), for the words; one not on it is "a leftover". */
+export type LeftoverNames = ReadonlyMap<string, string>;
+
+const leftoverTexts = (f: Pick<ResolvedPlanningFilters, "useUp">, names?: LeftoverNames): string[] =>
+  f.useUp.map((u) => ("text" in u ? u.text : (names?.get(u.leftoverId) ?? "a leftover")));
 
 /**
  * The filter summary's words ("Tonight · Dinner · ≤ 30 min · use ½ Hokkaido · cook 2"): when,
@@ -164,6 +174,7 @@ export function summaryWords(
   f: ResolvedPlanningFilters,
   defaults: Pick<ResolvedPlanningFilters, "sourceMode" | "count">,
   today: string,
+  names?: LeftoverNames,
 ): string[] {
   const dinnerOnly = f.slots.length === 1 && f.slots[0] === "dinner";
   const when = daysWords(f.days, today);
@@ -171,7 +182,7 @@ export function summaryWords(
   out.push(f.slots.map((s) => SLOT_NAME[s]).join(" + "));
   if (f.timeCapMin !== null) out.push(timeLabel(f.timeCapMin));
   for (const c of f.constraints) out.push(constraintLabel(c));
-  const useUp = leftoverTexts(f);
+  const useUp = leftoverTexts(f, names);
   if (useUp.length) out.push(`use ${useUp.join(", ")}`);
   if (f.sourceMode !== defaults.sourceMode) out.push(MODE_LABEL[f.sourceMode].short);
   if (f.count !== defaults.count) out.push(`${f.count} ideas`);
@@ -180,8 +191,8 @@ export function summaryWords(
 }
 
 /** A request's filters as chips in the thread ("You asked"): the summary plus the source mode. */
-export function askedWords(f: ResolvedPlanningFilters, today: string): string[] {
-  const words = summaryWords(f, { sourceMode: f.sourceMode, count: f.count }, today);
+export function askedWords(f: ResolvedPlanningFilters, today: string, names?: LeftoverNames): string[] {
+  const words = summaryWords(f, { sourceMode: f.sourceMode, count: f.count }, today, names);
   // a request's days are absolute: past "Today" reads wrong, so the thread names weekdays
   words[0] = daysWords(f.days, null);
   return [...words, MODE_LABEL[f.sourceMode].short, `${f.count} per round`];
@@ -195,7 +206,7 @@ const listWords = (xs: readonly string[]): string =>
  * no oven, using ½ Hokkaido. 3 suggestions, based on a real recipe, 2 portions each (eat one,
  * keep the rest)."
  */
-export function requestSentence(f: ResolvedPlanningFilters, today: string): string {
+export function requestSentence(f: ResolvedPlanningFilters, today: string, names?: LeftoverNames): string {
   const slots = listWords(f.slots.map((s) => SLOT_NAME[s].toLowerCase()));
   const first = f.days[0];
   let what: string;
@@ -209,7 +220,7 @@ export function requestSentence(f: ResolvedPlanningFilters, today: string): stri
   const parts = [what];
   if (f.timeCapMin !== null) parts.push(`≤ ${f.timeCapMin} min total`);
   for (const c of f.constraints) parts.push(constraintLabel(c).toLowerCase());
-  const useUp = leftoverTexts(f);
+  const useUp = leftoverTexts(f, names);
   if (useUp.length) parts.push(`using ${listWords(useUp)}`);
   const portions =
     f.portionsCooked === 1

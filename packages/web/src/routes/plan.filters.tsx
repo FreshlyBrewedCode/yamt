@@ -5,7 +5,7 @@ import { BackButton, Band, BottomSlab, Label, SlabButton } from "@/components/sl
 import { localDate } from "@/lib/format";
 import { ENTRY_DRAFT, useDraft } from "@/lib/plan-draft";
 import { draftProblem, filterDefaults, requestSentence, resolveDraft } from "@/lib/plan-request";
-import { usePlanningSettings } from "@/lib/queries";
+import { useLeftovers, usePlanningSettings } from "@/lib/queries";
 
 export const Route = createFileRoute("/plan/filters")({ component: PlanFilters });
 
@@ -21,6 +21,8 @@ function PlanFilters() {
   const navigate = useNavigate();
   const today = localDate(Date.now());
   const settings = usePlanningSettings();
+  const leftovers = useLeftovers().data?.leftovers ?? [];
+  const names = new Map(leftovers.map((l) => [l.id, l.description]));
   const [draft, setDraft] = useDraft(ENTRY_DRAFT);
   const defaults = filterDefaults(settings.data?.settings);
   const filters = resolveDraft(draft.filters, defaults, today);
@@ -41,7 +43,7 @@ function PlanFilters() {
         <Band tone="ink" className="px-5 pt-4 pb-5" data-testid="request-sentence">
           <Label className="text-ink-muted">How the agent reads it</Label>
           <p className="display mt-2 text-[24px] leading-[1.05] tracking-[-0.03em]">
-            {requestSentence(filters, today)}
+            {requestSentence(filters, today, names)}
           </p>
           <Label className="mt-4 border-ink-line border-t pt-3 text-ink-muted">
             Plus what you type, say and attach · your goal, recent meals and preferences
@@ -52,6 +54,8 @@ function PlanFilters() {
           filters={filters}
           defaults={defaults}
           today={today}
+          // a cooked dish is offered on the plan itself; the request uses up ingredients
+          leftovers={leftovers.filter((l) => l.source !== "cooked")}
           onChange={(f) => setDraft((d) => ({ ...d, filters: f }))}
         />
         {changed && (

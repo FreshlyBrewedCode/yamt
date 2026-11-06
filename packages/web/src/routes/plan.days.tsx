@@ -4,27 +4,33 @@ import { cn } from "cn";
 import { Check } from "lucide-react";
 import { useState } from "react";
 import { Caps, fill } from "@/components/calendar";
+import { LeftoverOfferRow, LeftoversSection, ShoppingRow } from "@/components/leftovers";
 import { AteItSheet, PlannedRow } from "@/components/planning";
 import { BackButton, Band, BottomSlab, Label, SafeBottom, SlabButton, Strip } from "@/components/slab";
 import { dateStart, dayLabel, formatNumber, formatShortDate, formatWeekday, localDate } from "@/lib/format";
+import { offersOf } from "@/lib/leftovers";
 import { canEat, dayMeta, PLAN_DAYS, readDay, SLOT_NAME } from "@/lib/planning";
-import { usePlan } from "@/lib/queries";
+import { usePlan, useShopping } from "@/lib/queries";
 
 export const Route = createFileRoute("/plan/days")({ component: PlanView });
 
 /**
  * The plan (#40, G's "Next days"): today and the next six days as squares on the ink slab, read
  * like the calendar once a day is mostly known ("rest open" before), then each day's planned meals
- * (a tap opens the recipe; today's offer Ate it). The bottom slab is lime **Ate it** while today
- * has a planned meal still to log; otherwise there is none.
+ * (a tap opens the recipe; today's offer Ate it) and the cooked leftovers the plan offers there
+ * (Plan it, #49), the Leftovers list and the row into the shopping list. The bottom slab is lime
+ * **Ate it** while today has a planned meal still to log; otherwise there is none.
  */
 function PlanView() {
   const navigate = useNavigate();
   const now = Date.now();
   const today = localDate(now);
   const plan = usePlan(today, addDays(today, PLAN_DAYS - 1));
+  const shopping = useShopping();
   const [ate, setAte] = useState<string | null>(null);
   const days = plan.data?.days ?? [];
+  const leftovers = plan.data?.leftovers ?? [];
+  const offers = offersOf(days);
   const due = days.flatMap((d) => d.plannedMeals).filter((p) => canEat(p, today));
   const ateMeal = days.flatMap((d) => d.plannedMeals).find((p) => p.id === ate) ?? null;
 
@@ -56,7 +62,7 @@ function PlanView() {
             data-testid="plan-day"
           >
             <Strip title={dayLabel(dateStart(d.date), now)} meta={dayMeta(d) || formatShortDate(d.date)} />
-            {d.plannedMeals.length === 0 ? (
+            {d.plannedMeals.length === 0 && d.leftoverOffers.length === 0 ? (
               <p className="flex min-h-[68px] items-center px-5 font-medium text-muted-foreground">
                 Nothing planned
               </p>
@@ -70,10 +76,18 @@ function PlanView() {
                     onAte={canEat(p, today) ? () => setAte(p.id) : undefined}
                   />
                 ))}
+                {d.leftoverOffers.flatMap((o) => {
+                  const l = leftovers.find((x) => x.id === o.leftoverId);
+                  return l
+                    ? [<LeftoverOfferRow key={l.id} leftover={l} at={{ date: d.date, slot: o.slot }} />]
+                    : [];
+                })}
               </ul>
             )}
           </section>
         ))}
+        {plan.data && <LeftoversSection leftovers={leftovers} offers={offers} today={today} />}
+        {plan.data && <ShoppingRow list={shopping.data} />}
       </main>
 
       {due[0] ? (

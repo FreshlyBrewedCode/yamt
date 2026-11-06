@@ -2,12 +2,14 @@
 
 import { QueryClient, useMutation, useQuery } from "@tanstack/react-query";
 import {
+  type AddShoppingLineBody,
   type AgentOptionsResponse,
   type AgentResponse,
   type AgentSettingsBody,
   agentPaths,
   apiPaths,
   type CreateGoalBody,
+  type CreateLeftoverBody,
   calendarPaths,
   type DayResponse,
   type FixGoalBody,
@@ -16,8 +18,12 @@ import {
   type GuidedGoalBody,
   goalPaths,
   type HealthResponse,
+  type LeftoverResponse,
+  type LeftoverStatus,
+  type LeftoversResponse,
   type LogPlannedMealBody,
   type LogPlannedMealResponse,
+  leftoverPaths,
   type MealDetailResponse,
   type MealResponse,
   type MealRevisionsResponse,
@@ -28,6 +34,7 @@ import {
   type NightlyResponse,
   type PickSuggestionBody,
   type PickSuggestionResponse,
+  type PlanLeftoverBody,
   type PlannedMealResponse,
   type PlanningRequestDetail,
   type PlanningRequestResponse,
@@ -54,7 +61,10 @@ import {
   type RestoreMealResponse,
   type RetractResponse,
   runPaths,
+  type ShoppingCheckBody,
+  type ShoppingListResponse,
   type SuggestionResponse,
+  shoppingPaths,
   type TranscribeResponse,
   type UpdateMealBody,
   type UpdatePlannedMealBody,
@@ -108,6 +118,10 @@ export const keys = {
   planningRequest: (id: string) => ["meals", "planning", "request", id] as const,
   /** The nightly run (#48): today's nightly requests and the starters; under "meals" like the threads. */
   nightly: ["meals", "planning", "nightly"] as const,
+  /** Under "meals" (#49): logging from the plan and removing a meal change the leftovers. */
+  leftovers: ["meals", "leftovers"] as const,
+  /** Under "meals" too: every plan change changes the list. "" for a default end of the range. */
+  shopping: (from: string, to: string, tz: string) => ["meals", "shopping", from, to, tz] as const,
 };
 
 /** The browser's zone: days are the phone's calendar days. */
@@ -427,6 +441,94 @@ export function planError(e: Error, what: string): string {
     return `No connection: ${what} needs yamt. Try again once you're online.`;
   }
   return `Couldn't do it: ${e.message}`;
+}
+
+// ---- Leftovers and the shopping list (#49) -----------------------------------------------------
+
+/** The open leftovers, oldest first. */
+export function useLeftovers() {
+  return useQuery({
+    queryKey: keys.leftovers,
+    queryFn: () => api.get<LeftoversResponse>(leftoverPaths.leftovers),
+  });
+}
+
+/** After a change to a leftover: the lists, the plan and the shopping list (all under "meals"). */
+const leftoversChanged = () => void queryClient.invalidateQueries({ queryKey: keys.meals });
+
+/** One of the user's own leftovers ("Koriander, 1 bunch"). Online only: `body.id` makes a retry the same one. */
+export function useCreateLeftover() {
+  return useMutation({
+    mutationFn: (body: CreateLeftoverBody) => api.post<LeftoverResponse>(leftoverPaths.leftovers, body),
+    onSuccess: leftoversChanged,
+  });
+}
+
+/** Used, gone, or open again. */
+export function useSetLeftoverStatus() {
+  return useMutation({
+    mutationFn: (v: { id: string; status: LeftoverStatus }) =>
+      api.patch<LeftoverResponse>(leftoverPaths.leftover(v.id), { status: v.status }),
+    onSuccess: leftoversChanged,
+  });
+}
+
+/** "Plan it": a cooked leftover onto a slot, as a planned meal that cooks nothing. */
+export function usePlanLeftover() {
+  return useMutation({
+    mutationFn: (v: { leftoverId: string; body: PlanLeftoverBody }) =>
+      api.post<PlannedMealResponse>(leftoverPaths.plan(v.leftoverId), v.body),
+    onSuccess: plannedChanged,
+  });
+}
+
+const shoppingUrl = (path: string, q: Record<string, string | undefined>) => {
+  const params = new URLSearchParams(Object.entries(q).filter((e): e is [string, string] => !!e[1]));
+  return `${path}?${params}`;
+};
+
+/**
+ * The shopping list for `from`–`to` (the phone's zone); without them the server's default, today
+ * to the last planned day. Online only.
+ */
+export function useShopping(from?: string, to?: string) {
+  const tz = browserZone();
+  return useQuery({
+    queryKey: keys.shopping(from ?? "", to ?? "", tz),
+    queryFn: () => api.get<ShoppingListResponse>(shoppingUrl(shoppingPaths.list, { from, to, tz })),
+  });
+}
+
+/** Every write answers the list for its range: shown at once, the other ranges refreshed. */
+const shoppingChanged = (list: ShoppingListResponse) => {
+  queryClient.setQueryData(keys.shopping(list.from, list.to, list.timeZone), list);
+  void queryClient.invalidateQueries({ queryKey: ["meals", "shopping"] });
+};
+
+/** A line into the basket or out of it. */
+export function useCheckShopping() {
+  return useMutation({
+    mutationFn: (body: ShoppingCheckBody) =>
+      api.post<ShoppingListResponse>(shoppingUrl(shoppingPaths.check, { tz: browserZone() }), body),
+    onSuccess: shoppingChanged,
+  });
+}
+
+/** A line of the user's own. */
+export function useAddShoppingLine() {
+  return useMutation({
+    mutationFn: (body: AddShoppingLineBody) =>
+      api.post<ShoppingListResponse>(shoppingUrl(shoppingPaths.lines, { tz: browserZone() }), body),
+    onSuccess: shoppingChanged,
+  });
+}
+
+/** One of the user's own lines removed. */
+export function useRemoveShoppingLine() {
+  return useMutation({
+    mutationFn: (id: string) => api.delete(shoppingPaths.line(id)),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["meals", "shopping"] }),
+  });
 }
 
 // ---- Planning requests (#47) -----------------------------------------------------------------

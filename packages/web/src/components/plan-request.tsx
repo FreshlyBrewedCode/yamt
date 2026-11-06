@@ -3,16 +3,18 @@
 // rounds' rows (a ready suggestion as a band with its day's bar, an outlined idea as a quiet
 // placeholder, an idea that couldn't be completed struck through) and the overview's Planning strip.
 import { Link } from "@tanstack/react-router";
-import type {
-  MealSlot,
-  PlanDay,
-  PlanningInput,
-  PlanningRequest,
-  PlanningRequestSummary,
-  PlanningRoundView,
-  PlanningSuggestionView,
-  PlanningTranscript,
-  ResolvedPlanningFilters,
+import {
+  type LeftoverView,
+  leftoverAmount,
+  type MealSlot,
+  type PlanDay,
+  type PlanningInput,
+  type PlanningRequest,
+  type PlanningRequestSummary,
+  type PlanningRoundView,
+  type PlanningSuggestionView,
+  type PlanningTranscript,
+  type ResolvedPlanningFilters,
 } from "@yamt/shared";
 import { cn } from "cn";
 import {
@@ -146,17 +148,20 @@ function ToggleChip({
   children,
   onClick,
   className,
+  ...props
 }: {
   on: boolean;
   children: React.ReactNode;
   onClick: () => void;
   className?: string;
+  "data-testid"?: string;
 }) {
   return (
     <button
       type="button"
       aria-pressed={on}
       onClick={onClick}
+      {...props}
       className={cn(
         "flex h-11 shrink-0 items-center gap-1.5 px-3.5 font-bold text-sm outline-none focus-visible:underline",
         on ? "bg-foreground text-background" : "bg-tint text-foreground",
@@ -192,14 +197,18 @@ export function FilterForm({
   filters,
   defaults,
   today,
+  leftovers = [],
   onChange,
 }: {
   draft: FilterDraft;
   filters: ResolvedPlanningFilters;
   defaults: Pick<ResolvedPlanningFilters, "sourceMode" | "count" | "portionsCooked">;
   today: string;
+  /** The open leftovers (#49): offered as chips to use up. */
+  leftovers?: readonly LeftoverView[];
   onChange: (d: FilterDraft) => void;
 }) {
+  const picked = filters.useUp.flatMap((u) => ("leftoverId" in u ? [u.leftoverId] : []));
   const when = draft.when ?? "today";
   const [useUp, setUseUp] = useState("");
   const addUseUp = () => {
@@ -282,6 +291,17 @@ export function FilterForm({
           ))}
         </FilterGroup>
         <FilterGroup label="Use up">
+          {leftovers.map((l) => (
+            <ToggleChip
+              key={l.id}
+              on={picked.includes(l.id)}
+              onClick={() => onChange({ ...draft, leftovers: toggleIn(picked, l.id) })}
+              data-testid="use-up-leftover"
+            >
+              {l.description}
+              {leftoverAmount(l) && <span className="font-medium opacity-70">{leftoverAmount(l)}</span>}
+            </ToggleChip>
+          ))}
           {filters.useUp.flatMap((u) =>
             "text" in u
               ? [
