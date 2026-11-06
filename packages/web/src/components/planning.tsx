@@ -180,19 +180,22 @@ export function PlannedNote({ day }: { day: PlanDay | undefined }) {
 }
 
 /**
- * How a dish fits its day on the ink slab: lime = what the day already holds (eaten and planned),
- * the slab's foreground = this dish, a 2 px gap where the target is and the excess after it in the
- * foreground at 60 %. Never red.
+ * How a dish fits its day: lime = what the day already holds (eaten and planned), the foreground =
+ * this dish, a 2 px gap where the target is and the excess after it in the foreground at 60 %.
+ * Never red. On the ink slab by default; `surface` "page" or "tint" for a suggestion band (#47),
+ * whose gap takes the band's own colour.
  */
 export function FitBar({
   base,
   dish,
   target,
+  surface = "ink",
   className,
 }: {
   base: number;
   dish: number;
   target: number;
+  surface?: "ink" | "page" | "tint";
   className?: string;
 }) {
   const total = base + dish;
@@ -201,19 +204,31 @@ export function FitBar({
   const baseW = Math.min(base, target);
   const dishW = Math.max(0, Math.min(total, target) - baseW);
   const over = Math.max(0, total - target);
+  const ink = surface === "ink";
   return (
     <div
-      className={cn("flex h-3 w-full bg-ink-line", className)}
+      className={cn("flex h-3 w-full", ink ? "bg-ink-line" : "bg-foreground/10", className)}
       role="img"
       aria-label={`${formatNumber(total)} of ${formatNumber(target)} kcal with it`}
       data-testid="fit-bar"
     >
       <div className="h-full bg-lime" style={{ width: pct(baseW) }} />
-      <div className="h-full bg-ink-foreground" style={{ width: pct(dishW) }} />
+      <div
+        className={cn("h-full", ink ? "bg-ink-foreground" : "bg-foreground")}
+        style={{ width: pct(dishW) }}
+      />
       {over > 0 && (
         <>
-          <div className="h-full w-0.5 shrink-0 bg-ink" />
-          <div className="h-full bg-ink-foreground/60" style={{ width: pct(over) }} />
+          <div
+            className={cn(
+              "h-full w-0.5 shrink-0",
+              ink ? "bg-ink" : surface === "tint" ? "bg-tint" : "bg-background",
+            )}
+          />
+          <div
+            className={cn("h-full", ink ? "bg-ink-foreground/60" : "bg-foreground/60")}
+            style={{ width: pct(over) }}
+          />
         </>
       )}
     </div>

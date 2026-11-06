@@ -1,9 +1,16 @@
-// The recipe to cook from (#40, G's recipe detail): for a planned meal now, for a suggestion once
-// the planning screens exist. Numbers per portion against what is open on its day (the ink slab),
-// changes and notes on tint, Cook / Eat portions, the ingredients for the portions cooked, the
-// steps, and where it comes from.
+// The recipe to cook from (#40, G's recipe detail): for a planned meal, and for a suggestion (#47,
+// Pick instead of Ate it). Numbers per portion against what is open on its day (the ink slab),
+// why it fits, changes and notes on tint, Cook / Eat portions, the ingredients for the portions
+// cooked, the steps, and where it comes from.
 import { Link } from "@tanstack/react-router";
-import type { PlanDay, PlannedMealView, RecipeView } from "@yamt/shared";
+import type {
+  MealSlot,
+  PlanDay,
+  PlannedMealView,
+  PlanningSuggestionView,
+  Recipe,
+  RecipeView,
+} from "@yamt/shared";
 import { cn } from "cn";
 import {
   CalendarClock,
@@ -19,7 +26,8 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import { dateStart, dayLabel, formatGrams, formatNumber, localDate, plural } from "@/lib/format";
-import { canEat, gramsFor, openBefore, sourceLabel, sourceName } from "@/lib/planning";
+import { slotWords } from "@/lib/plan-request";
+import { canEat, gramsFor, type Macro, openBefore, SLOT_NAME, sourceLabel, sourceName } from "@/lib/planning";
 import { planError, useSkipPlannedMeal, useUpdatePlannedMeal } from "@/lib/queries";
 import { FitBar, OpenGrid, PortionChips, portions, whenWords } from "./planning";
 import { BackButton, Band, BottomSlab, iconButtonClass, Label, SlabButton, Strip } from "./slab";
@@ -82,8 +90,6 @@ export function RecipeDetail({
   const target = day?.goal?.targets.energyKcal ?? null;
   const dayWord = planned.date === today ? "today" : dayLabel(dateStart(planned.date), now);
   const leftover = cook - eat;
-  const SourceIcon = sourceIcon[r.sourceMode];
-  const name = sourceName(r);
   const lead = status === "logged" ? "Logged" : status === "skipped" ? "Skipped" : "Planned";
 
   const setPortions = (v: { cook: number; eat: number }) => {
@@ -126,21 +132,7 @@ export function RecipeDetail({
         {r.summary && (
           <p className="mt-2 font-medium text-[15px] text-muted-foreground leading-snug">{r.summary}</p>
         )}
-        {r.sourceUrl ? (
-          <a
-            href={r.sourceUrl}
-            target="_blank"
-            rel="noreferrer"
-            className="-mb-2 mt-1 flex min-h-11 items-center gap-1.5 font-bold text-muted-foreground text-xs uppercase tracking-[0.08em] outline-none focus-visible:underline"
-            data-testid="recipe-source"
-          >
-            <SourceIcon className="size-3.5 shrink-0" strokeWidth={2.5} /> {sourceLabel(r)}
-          </a>
-        ) : (
-          <Label className="mt-2 flex items-center gap-1.5 text-muted-foreground" data-testid="recipe-source">
-            <SourceIcon className="size-3.5 shrink-0" strokeWidth={2.5} /> {sourceLabel(r)}
-          </Label>
-        )}
+        <RecipeSource recipe={r} />
       </header>
 
       <main className="flex-1">
@@ -160,75 +152,17 @@ export function RecipeDetail({
         )}
 
         {/* the one thing here: what a portion brings, against what its day has open */}
-        <Band tone="ink" className="px-5 pt-4 pb-5" data-testid="recipe-numbers">
-          <div className="flex items-end justify-between gap-4">
-            <div>
-              <div className="display text-[64px]" data-testid="kcal">
-                {formatNumber(dish.energyKcal)}
-              </div>
-              <Label className="mt-2 text-ink-muted">
-                kcal {eat === 1 ? "per portion" : `for ${portions(eat)} portions`}
-              </Label>
-            </div>
-            {open.energyKcal !== null && (
-              <div className="pb-1 text-right" data-testid="open-kcal">
-                <div
-                  className={cn("display text-[28px]", open.energyKcal - dish.energyKcal >= 0 && "text-lime")}
-                >
-                  {formatNumber(Math.max(0, open.energyKcal))}
-                </div>
-                <Label className="mt-1 text-ink-muted">open {dayWord}</Label>
-              </div>
-            )}
-          </div>
-          {target !== null && (
-            <FitBar base={base.energyKcal} dish={dish.energyKcal} target={target} className="mt-4" />
-          )}
-          <OpenGrid dish={dish} open={open} className="mt-4 border-ink-line border-t pt-3" />
-          {(r.timeActiveMin !== null || r.timeTotalMin !== null) && (
-            <Label className="mt-4 flex items-center gap-2 border-ink-line border-t pt-3 text-ink-muted">
-              <Clock className="size-3.5" strokeWidth={2.5} />
-              {[
-                r.timeActiveMin !== null ? `${r.timeActiveMin} min active` : "",
-                r.timeTotalMin !== null ? `${r.timeTotalMin} min total` : "",
-              ]
-                .filter(Boolean)
-                .join(" · ")}
-            </Label>
-          )}
-        </Band>
+        <RecipeNumbers
+          recipe={r}
+          dish={dish}
+          eat={eat}
+          base={base}
+          open={open}
+          target={target}
+          dayWord={dayWord}
+        />
 
-        {(r.changes.length > 0 || r.notes || planned.note) && (
-          <Band tone="tint" className="divide-y divide-border px-5" data-testid="recipe-notes">
-            {r.sourceMode === "adapted" && r.changes.length > 0 && (
-              <div className="pt-4 pb-4">
-                <Label className="text-muted-foreground">Changed against {name ?? "the source"}</Label>
-                <ul className="mt-2 space-y-1">
-                  {r.changes.map((c) => (
-                    <li key={c} className="flex items-start gap-2 font-medium text-[15px] leading-snug">
-                      <Square className="mt-1.5 size-2 shrink-0" strokeWidth={3} />
-                      {c}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-            {r.notes && (
-              <div className="pt-4 pb-4">
-                <Label className="text-muted-foreground">Notes</Label>
-                <p className="mt-1 whitespace-pre-line font-medium text-[15px] leading-snug">{r.notes}</p>
-              </div>
-            )}
-            {planned.note && (
-              <div className="pt-4 pb-4">
-                <Label className="text-muted-foreground">Your note</Label>
-                <p className="mt-1 whitespace-pre-line font-medium text-[15px] leading-snug">
-                  {planned.note}
-                </p>
-              </div>
-            )}
-          </Band>
-        )}
+        <RecipeNotes recipe={r} extra={planned.note ? [{ label: "Your note", text: planned.note }] : []} />
 
         <section aria-label="Portions">
           <Strip title="Portions" meta={leftover > 0 ? plural(leftover, "leftover") : "nothing left over"} />
@@ -261,64 +195,9 @@ export function RecipeDetail({
           )}
         </section>
 
-        <section aria-label="Ingredients">
-          <Strip title="Ingredients" meta={`for ${plural(cook, "portion")} cooked`} />
-          <ul className="divide-y divide-border" data-testid="ingredients">
-            {recipe.items.map((i) => (
-              <li key={i.id} className="flex min-h-12 items-center gap-3 px-5 py-2" data-testid="ingredient">
-                <span className="min-w-0 flex-1 font-bold text-[15px] leading-snug">
-                  {i.description}
-                  {i.optional && (
-                    <span className="ml-2 font-medium text-muted-foreground text-xs">optional</span>
-                  )}
-                </span>
-                <span className="display shrink-0 text-[20px]">
-                  {formatGrams(gramsFor(r, i, cook))}
-                  <span className="font-bold text-muted-foreground text-xs">g</span>
-                </span>
-              </li>
-            ))}
-          </ul>
-        </section>
-
-        {r.steps.length > 0 && (
-          <section aria-label="Steps">
-            <Strip title="Steps" meta={r.steps.length} />
-            <ol className="divide-y divide-border">
-              {r.steps
-                .map((text, i) => ({ text, number: i + 1 }))
-                .map((step) => (
-                  <li key={step.number} className="flex items-start gap-4 px-5 py-3">
-                    <span className="display flex size-8 shrink-0 items-center justify-center bg-tint text-[18px]">
-                      {step.number}
-                    </span>
-                    <span className="pt-1 font-medium text-[15px] leading-snug">{step.text}</span>
-                  </li>
-                ))}
-            </ol>
-          </section>
-        )}
-
-        <div className="flex min-h-14 items-center gap-3 bg-tint px-5 py-3" data-testid="source-footer">
-          <SourceIcon className="size-5 shrink-0" strokeWidth={2.5} />
-          <span className="min-w-0 flex-1 font-bold text-sm">
-            {r.sourceUrl ? (
-              <a
-                href={r.sourceUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex items-center gap-1 underline underline-offset-4"
-              >
-                {name ?? "The source"} <ExternalLink className="size-3.5" strokeWidth={2.5} />
-              </a>
-            ) : (
-              (name ?? (r.sourceMode === "composed" ? "Composed for you" : "Source"))
-            )}
-            <span className="block font-medium text-muted-foreground text-xs">
-              {sourceNote[r.sourceMode]}
-            </span>
-          </span>
-        </div>
+        <RecipeIngredients recipe={recipe} cook={cook} />
+        <RecipeSteps recipe={r} />
+        <RecipeSourceFooter recipe={r} />
       </main>
 
       <BottomSlab hint={skip.isError ? planError(skip.error, "unskipping") : undefined}>
@@ -361,5 +240,335 @@ function SkippedBand({ planned, dayWord }: { planned: PlannedMealView; dayWord: 
         again. Unskip puts it back.
       </p>
     </Band>
+  );
+}
+
+/** The source as a micro-label under the title ("Adapted from chefkoch.de · 3 changes"), a link when it has a URL. */
+function RecipeSource({ recipe: r }: { recipe: Recipe }) {
+  const SourceIcon = sourceIcon[r.sourceMode];
+  return r.sourceUrl ? (
+    <a
+      href={r.sourceUrl}
+      target="_blank"
+      rel="noreferrer"
+      className="-mb-2 mt-1 flex min-h-11 items-center gap-1.5 font-bold text-muted-foreground text-xs uppercase tracking-[0.08em] outline-none focus-visible:underline"
+      data-testid="recipe-source"
+    >
+      <SourceIcon className="size-3.5 shrink-0" strokeWidth={2.5} /> {sourceLabel(r)}
+    </a>
+  ) : (
+    <Label className="mt-2 flex items-center gap-1.5 text-muted-foreground" data-testid="recipe-source">
+      <SourceIcon className="size-3.5 shrink-0" strokeWidth={2.5} /> {sourceLabel(r)}
+    </Label>
+  );
+}
+
+/**
+ * The ink slab: the kcal of what is eaten, what is open of the day's kcal target before it (lime),
+ * the fit bar, the macros against what is open, the times.
+ */
+function RecipeNumbers({
+  recipe: r,
+  dish,
+  eat,
+  base,
+  open,
+  target,
+  dayWord,
+}: {
+  recipe: Recipe;
+  dish: Record<Macro, number>;
+  eat: number;
+  base: Record<Macro, number>;
+  open: Record<Macro, number | null>;
+  target: number | null;
+  dayWord: string;
+}) {
+  return (
+    <Band tone="ink" className="px-5 pt-4 pb-5" data-testid="recipe-numbers">
+      <div className="flex items-end justify-between gap-4">
+        <div>
+          <div className="display text-[64px]" data-testid="kcal">
+            {formatNumber(dish.energyKcal)}
+          </div>
+          <Label className="mt-2 text-ink-muted">
+            kcal {eat === 1 ? "per portion" : `for ${portions(eat)} portions`}
+          </Label>
+        </div>
+        {open.energyKcal !== null && (
+          <div className="pb-1 text-right" data-testid="open-kcal">
+            <div className={cn("display text-[28px]", open.energyKcal - dish.energyKcal >= 0 && "text-lime")}>
+              {formatNumber(Math.max(0, open.energyKcal))}
+            </div>
+            <Label className="mt-1 text-ink-muted">open {dayWord}</Label>
+          </div>
+        )}
+      </div>
+      {target !== null && (
+        <FitBar base={base.energyKcal} dish={dish.energyKcal} target={target} className="mt-4" />
+      )}
+      <OpenGrid dish={dish} open={open} className="mt-4 border-ink-line border-t pt-3" />
+      {(r.timeActiveMin !== null || r.timeTotalMin !== null) && (
+        <Label className="mt-4 flex items-center gap-2 border-ink-line border-t pt-3 text-ink-muted">
+          <Clock className="size-3.5" strokeWidth={2.5} />
+          {[
+            r.timeActiveMin !== null ? `${r.timeActiveMin} min active` : "",
+            r.timeTotalMin !== null ? `${r.timeTotalMin} min total` : "",
+          ]
+            .filter(Boolean)
+            .join(" · ")}
+        </Label>
+      )}
+    </Band>
+  );
+}
+
+/** On tint, each only when present: why it fits (a suggestion's), the changes against the source, notes. */
+function RecipeNotes({
+  recipe: r,
+  why = [],
+  extra = [],
+}: {
+  recipe: Recipe;
+  why?: readonly string[];
+  extra?: readonly { label: string; text: string }[];
+}) {
+  const changes = r.sourceMode === "adapted" && r.changes.length > 0;
+  if (!why.length && !changes && !r.notes && !extra.length) return null;
+  const notes = [...(r.notes ? [{ label: "Notes", text: r.notes }] : []), ...extra];
+  return (
+    <Band tone="tint" className="divide-y divide-border px-5" data-testid="recipe-notes">
+      {why.length > 0 && (
+        <div className="pt-4 pb-4" data-testid="recipe-why">
+          <Label className="text-muted-foreground">Why it fits</Label>
+          <ul className="mt-2 space-y-1">
+            {why.map((w) => (
+              <li key={w} className="flex items-start gap-2 font-medium text-[15px] leading-snug">
+                <Square className="mt-1.5 size-2 shrink-0 fill-current" strokeWidth={0} />
+                {w}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {changes && (
+        <div className="pt-4 pb-4">
+          <Label className="text-muted-foreground">Changed against {sourceName(r) ?? "the source"}</Label>
+          <ul className="mt-2 space-y-1">
+            {r.changes.map((c) => (
+              <li key={c} className="flex items-start gap-2 font-medium text-[15px] leading-snug">
+                <Square className="mt-1.5 size-2 shrink-0" strokeWidth={3} />
+                {c}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {notes.map((n) => (
+        <div key={n.label} className="pt-4 pb-4">
+          <Label className="text-muted-foreground">{n.label}</Label>
+          <p className="mt-1 whitespace-pre-line font-medium text-[15px] leading-snug">{n.text}</p>
+        </div>
+      ))}
+    </Band>
+  );
+}
+
+/** The ingredients for the portions cooked (optional ones marked). */
+function RecipeIngredients({ recipe, cook }: { recipe: RecipeView; cook: number }) {
+  return (
+    <section aria-label="Ingredients">
+      <Strip title="Ingredients" meta={`for ${plural(cook, "portion")} cooked`} />
+      <ul className="divide-y divide-border" data-testid="ingredients">
+        {recipe.items.map((i) => (
+          <li key={i.id} className="flex min-h-12 items-center gap-3 px-5 py-2" data-testid="ingredient">
+            <span className="min-w-0 flex-1 font-bold text-[15px] leading-snug">
+              {i.description}
+              {i.optional && <span className="ml-2 font-medium text-muted-foreground text-xs">optional</span>}
+            </span>
+            <span className="display shrink-0 text-[20px]">
+              {formatGrams(gramsFor(recipe.recipe, i, cook))}
+              <span className="font-bold text-muted-foreground text-xs">g</span>
+            </span>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+/** Numbered steps with a 32 px tint number tile. */
+function RecipeSteps({ recipe: r }: { recipe: Recipe }) {
+  if (r.steps.length === 0) return null;
+  return (
+    <section aria-label="Steps">
+      <Strip title="Steps" meta={r.steps.length} />
+      <ol className="divide-y divide-border">
+        {r.steps
+          .map((text, i) => ({ text, number: i + 1 }))
+          .map((step) => (
+            <li key={step.number} className="flex items-start gap-4 px-5 py-3">
+              <span className="display flex size-8 shrink-0 items-center justify-center bg-tint text-[18px]">
+                {step.number}
+              </span>
+              <span className="pt-1 font-medium text-[15px] leading-snug">{step.text}</span>
+            </li>
+          ))}
+      </ol>
+    </section>
+  );
+}
+
+/** Where it comes from, and that its numbers never come from the page. */
+function RecipeSourceFooter({ recipe: r }: { recipe: Recipe }) {
+  const SourceIcon = sourceIcon[r.sourceMode];
+  const name = sourceName(r);
+  return (
+    <div className="flex min-h-14 items-center gap-3 bg-tint px-5 py-3" data-testid="source-footer">
+      <SourceIcon className="size-5 shrink-0" strokeWidth={2.5} />
+      <span className="min-w-0 flex-1 font-bold text-sm">
+        {r.sourceUrl ? (
+          <a
+            href={r.sourceUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-1 underline underline-offset-4"
+          >
+            {name ?? "The source"} <ExternalLink className="size-3.5" strokeWidth={2.5} />
+          </a>
+        ) : (
+          (name ?? (r.sourceMode === "composed" ? "Composed for you" : "Source"))
+        )}
+        <span className="block font-medium text-muted-foreground text-xs">{sourceNote[r.sourceMode]}</span>
+      </span>
+    </div>
+  );
+}
+
+const MACROS: readonly Macro[] = ["energyKcal", "protein", "fat", "carbohydrate", "fiber"];
+
+/**
+ * A suggestion's recipe (#47): the same recipe detail in suggestion mode. The header says the
+ * round and the slot Pick will take; the ink slab is one portion against what its day has open
+ * (the suggestion's fit); why it fits on tint; the ingredients for the request's portions; the
+ * bottom slab **Pick · Wed dinner** (ink: available, not lime), **Undo No** for a rejected one,
+ * **Open the planned meal** once picked.
+ */
+export function SuggestionDetail({
+  suggestion: s,
+  round,
+  recipe,
+  target,
+  portionsCooked,
+  onPick,
+  onUnreject,
+  picking,
+  error,
+}: {
+  suggestion: PlanningSuggestionView;
+  round: number;
+  recipe: RecipeView;
+  /** Where Pick goes (`pickTarget`), or the planned meal's day and slot once picked. */
+  target: { date: string; slot: MealSlot };
+  portionsCooked: number;
+  onPick: () => void;
+  onUnreject: () => void;
+  picking: boolean;
+  error: string | null;
+}) {
+  const r = recipe.recipe;
+  const now = Date.now();
+  const today = localDate(now);
+  const dish = Object.fromEntries(MACROS.map((k) => [k, recipe.perPortion.nutrients[k]])) as Record<
+    Macro,
+    number
+  >;
+  const fit = s.fit;
+  const base = Object.fromEntries(MACROS.map((k) => [k, fit?.before?.nutrients[k] ?? 0])) as Record<
+    Macro,
+    number
+  >;
+  const targets = fit?.goal?.targets;
+  const open = Object.fromEntries(
+    MACROS.map((k) => {
+      const t = targets?.[k] ?? null;
+      return [k, t === null ? null : t - base[k]];
+    }),
+  ) as Record<Macro, number | null>;
+  const day = fit?.date ?? target.date;
+  const dayWord = day === today ? "today" : dayLabel(dateStart(day), now);
+  const where = `${day === today ? "Today" : dayLabel(dateStart(day), now)}, ${SLOT_NAME[target.slot].toLowerCase()}`;
+  const lead =
+    s.verdict === "picked"
+      ? `Planned · ${where}`
+      : s.verdict === "rejected"
+        ? `Said no · round ${round}`
+        : `Suggestion · round ${round} · for ${where}`;
+  const leftover = portionsCooked - 1;
+  return (
+    <>
+      <header className="px-5 pt-5 pb-3">
+        <BackButton />
+        <Label className="mt-4 text-muted-foreground" data-testid="suggestion-when">
+          {lead}
+        </Label>
+        <h1 className="display mt-1 text-[32px] leading-[0.95]" data-testid="recipe-title">
+          {r.title}
+        </h1>
+        {r.summary && (
+          <p className="mt-2 font-medium text-[15px] text-muted-foreground leading-snug">{r.summary}</p>
+        )}
+        <RecipeSource recipe={r} />
+      </header>
+      <main className="flex-1">
+        <RecipeNumbers
+          recipe={r}
+          dish={dish}
+          eat={1}
+          base={base}
+          open={open}
+          target={targets?.energyKcal ?? null}
+          dayWord={dayWord}
+        />
+        <RecipeNotes recipe={r} why={s.why} />
+        {leftover > 0 && (
+          <p
+            className="flex items-start gap-2.5 px-5 pt-4 font-medium text-[15px] leading-snug"
+            data-testid="leftover"
+          >
+            <Utensils className="mt-0.5 size-4 shrink-0 text-muted-foreground" strokeWidth={2.5} />
+            <span>
+              Cook {portionsCooked}, eat 1: {plural(leftover, "portion")} (
+              {formatNumber(recipe.perPortion.nutrients.energyKcal * leftover)} kcal) left over.
+            </span>
+          </p>
+        )}
+        <div className="h-4" />
+        <RecipeIngredients recipe={recipe} cook={portionsCooked} />
+        <RecipeSteps recipe={r} />
+        <RecipeSourceFooter recipe={r} />
+      </main>
+      <BottomSlab hint={error ?? undefined}>
+        {s.verdict === "picked" && s.plannedMealId ? (
+          <Link
+            to="/planned/$id"
+            params={{ id: s.plannedMealId }}
+            className="flex w-full items-center justify-center gap-3 bg-tint font-bold uppercase tracking-wide outline-none active:opacity-80"
+            data-testid="open-planned"
+          >
+            <CalendarClock className="size-7" strokeWidth={2.5} /> Open the planned meal
+          </Link>
+        ) : s.verdict === "rejected" ? (
+          <SlabButton tone="tint" onClick={onUnreject} disabled={picking} data-testid="unreject">
+            <RotateCcw className="size-7" strokeWidth={2.5} /> Undo No
+          </SlabButton>
+        ) : (
+          <SlabButton tone="ink" onClick={onPick} disabled={picking} data-testid="detail-pick">
+            <Check className="size-8" strokeWidth={3} />{" "}
+            {picking ? "Picking…" : `Pick · ${slotWords(target, today)}`}
+          </SlabButton>
+        )}
+      </BottomSlab>
+    </>
   );
 }
