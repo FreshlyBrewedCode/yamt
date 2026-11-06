@@ -1,13 +1,18 @@
-// Settings → Agent (#28): which harness analyses meals, with which model and reasoning effort.
-// Everything offered comes from the harness itself (the server starts it once to ask), shown by
-// its labels; ids only where the harness gives nothing better.
+// Settings → Agent (#28): which harness analyses meals, with which model and reasoning effort,
+// and (#46) the same for planning rounds, under its own key. Everything offered comes from the
+// harness itself (the server starts it once to ask), shown by its labels; ids only where the
+// harness gives nothing better.
+import type { UseMutationResult } from "@tanstack/react-query";
 import {
   type AgentChoice,
   type AgentOption,
+  type AgentPart,
   type AgentResponse,
+  type AgentSettingsBody,
   choiceLabel,
   type DiscoveryFailure,
   HARNESS_LABELS,
+  type HarnessInfo,
   type HarnessKind,
   type SourcedValue,
 } from "@yamt/shared";
@@ -15,7 +20,13 @@ import { cn } from "cn";
 import { ChevronRight, RefreshCw } from "lucide-react";
 import { useMemo, useState } from "react";
 import { ApiError } from "@/lib/api";
-import { useAgent, useAgentOptions, useRefreshAgentOptions, useSaveAgent } from "@/lib/queries";
+import {
+  useAgent,
+  useAgentOptions,
+  useRefreshAgentOptions,
+  useSaveAgent,
+  useSavePlanningAgent,
+} from "@/lib/queries";
 import { CaptureSheet, fieldClass } from "./add-strip";
 import { Chips, ChoiceList, ChoiceRow } from "./choice";
 import { Label, Strip } from "./slab";
@@ -74,6 +85,9 @@ const appValue = (v: SourcedValue<string | null>) => (v.source === "app" ? v.val
 export function AgentSettings() {
   const agent = useAgent();
   const a = agent.data;
+  const save = useSaveAgent();
+  const savePlanning = useSavePlanningAgent();
+  const refresh = useRefreshAgentOptions();
   return (
     <section data-testid="agent-settings">
       <Strip title="Agent" meta="meal analysis" />
@@ -86,7 +100,26 @@ export function AgentSettings() {
           Can't load the agent settings: {agent.error.message}
         </p>
       ) : a ? (
-        <AgentForm agent={a} />
+        <AgentForm id="agent" part={a} harnesses={a.harnesses} save={save} refresh={refresh} />
+      ) : (
+        <p className="px-5 py-4 font-medium text-muted-foreground text-sm">Loading…</p>
+      )}
+
+      <Strip title="Agent" meta="planning" />
+      <p className="px-5 pt-4 font-medium">
+        Which agent fills a planning round (#36), with which model and how hard it thinks. Opus 5.5 at medium
+        effort unless set here.
+      </p>
+      {agent.isError ? null : a ? (
+        <div data-testid="planning-agent-settings">
+          <AgentForm
+            id="planning-agent"
+            part={a.planning}
+            harnesses={a.planning.harnesses}
+            save={savePlanning}
+            refresh={refresh}
+          />
+        </div>
       ) : (
         <p className="px-5 py-4 font-medium text-muted-foreground text-sm">Loading…</p>
       )}
@@ -94,13 +127,24 @@ export function AgentSettings() {
   );
 }
 
-function AgentForm({ agent: a }: { agent: AgentResponse }) {
-  const save = useSaveAgent();
-  const refresh = useRefreshAgentOptions();
+function AgentForm({
+  id,
+  part: a,
+  harnesses,
+  save,
+  refresh,
+}: {
+  /** Prefixes this instance's `data-testid`s, so the analysis and planning lines don't clash. */
+  id: string;
+  part: AgentPart;
+  harnesses: HarnessInfo[];
+  save: UseMutationResult<AgentResponse, Error, AgentSettingsBody & { keepEffortIfOffered?: boolean }>;
+  refresh: UseMutationResult<unknown, Error, { harness: string; model: string | null }>;
+}) {
   const [picking, setPicking] = useState(false);
   const harness = a.harness.value;
   const label = HARNESS_LABELS[harness];
-  const info = a.harnesses.find((h) => h.kind === harness);
+  const info = harnesses.find((h) => h.kind === harness);
   const options = useAgentOptions(harness, a.model.value, info?.available ?? false);
   const o = options.data;
   const models = o?.models ?? null;
@@ -134,8 +178,8 @@ function AgentForm({ agent: a }: { agent: AgentResponse }) {
   return (
     <>
       <SubHead title="Harness" meta={sourceText(a.harness)} />
-      <ChoiceList label="Harness" className="border-border border-b" data-testid="agent-harness">
-        {a.harnesses.map((h) => {
+      <ChoiceList label="Harness" className="border-border border-b" data-testid={`${id}-harness`}>
+        {harnesses.map((h) => {
           const chosen = h.kind === harness;
           return (
             <ChoiceRow
@@ -161,7 +205,7 @@ function AgentForm({ agent: a }: { agent: AgentResponse }) {
         <div
           className="bg-orange px-5 py-3 font-medium text-orange-foreground"
           role="alert"
-          data-testid="agent-error"
+          data-testid={`${id}-error`}
         >
           <p className="font-bold">{options.error.message}</p>
           <p className="mt-1 text-sm">{FIX[failure ?? "error"](harness)}</p>
@@ -181,7 +225,7 @@ function AgentForm({ agent: a }: { agent: AgentResponse }) {
               onClick={() => setPicking(true)}
               disabled={fixed.model}
               className="flex min-h-[72px] w-full items-center gap-4 border-border border-y px-5 py-3 text-left outline-none focus-visible:bg-tint disabled:text-muted-foreground"
-              data-testid="agent-model"
+              data-testid={`${id}-model`}
             >
               <span className="min-w-0 flex-1">
                 <span className="block truncate font-bold text-[17px] leading-tight">
@@ -212,7 +256,7 @@ function AgentForm({ agent: a }: { agent: AgentResponse }) {
 
           <SubHead title="Effort" meta={sourceText(a.effort)} />
           {effort ? (
-            <div className="px-5" data-testid="agent-effort">
+            <div className="px-5" data-testid={`${id}-effort`}>
               <Chips
                 label="Effort"
                 options={effort.choices.map((c) => ({ value: c.value, label: c.name }))}
@@ -227,7 +271,7 @@ function AgentForm({ agent: a }: { agent: AgentResponse }) {
               )}
             </div>
           ) : (
-            <p className="px-5 font-medium text-muted-foreground text-sm" data-testid="agent-no-effort">
+            <p className="px-5 font-medium text-muted-foreground text-sm" data-testid={`${id}-no-effort`}>
               {model ? choiceLabel(models, model) : "This model"} has no effort setting.
             </p>
           )}
@@ -249,7 +293,7 @@ function AgentForm({ agent: a }: { agent: AgentResponse }) {
             "flex min-h-14 w-full items-center gap-3 px-5 text-left outline-none focus-visible:bg-tint disabled:opacity-60",
             o && "mt-4 border-border border-t",
           )}
-          data-testid="agent-refresh"
+          data-testid={`${id}-refresh`}
         >
           <RefreshCw
             className={cn("size-5 shrink-0", refresh.isPending && "animate-spin")}

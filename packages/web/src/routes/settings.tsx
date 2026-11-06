@@ -4,6 +4,7 @@ import { cn } from "cn";
 import { Bell, BellOff, Check, ClipboardPaste, Copy, Info, Share, SquarePlus } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import { AgentSettings } from "@/components/agent-settings";
+import { PlanningSettings } from "@/components/planning-settings";
 import {
   BackButton,
   Band,
@@ -69,11 +70,12 @@ function pushState(
 }
 
 /**
- * Settings: notifications for this device (Web Push, #13), the agent that analyses meals (#28),
- * and how to share from other apps into yamt (#26). Turning them on asks for permission
- * from the tap itself (iOS asks only from a gesture) and only works in the home-screen app on
- * iOS, so outside it the screen explains how to add yamt to the Home Screen. Once on: a toggle
- * per event and a test notification.
+ * Settings: notifications for this device (Web Push, #13), the agent that analyses meals and
+ * plans rounds (#28, #46), Settings → Planning's defaults and preferences (#46), and how to share
+ * from other apps into yamt (#26). Turning notifications on asks for permission from the tap
+ * itself (iOS asks only from a gesture) and only works in the home-screen app on iOS, so outside
+ * it the screen explains how to add yamt to the Home Screen. Once on: a toggle per event and a
+ * test notification.
  */
 function Settings() {
   const device = usePushDevice();
@@ -194,6 +196,8 @@ function Settings() {
         )}
 
         <AgentSettings />
+
+        <PlanningSettings />
 
         <ShareSetup />
       </main>

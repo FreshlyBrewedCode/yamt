@@ -26,6 +26,8 @@ import {
   type MonthResponse,
   mealPaths,
   type PlannedMealResponse,
+  type PlanningSettingsBody,
+  type PlanningSettingsResponse,
   type PlanResponse,
   type ProfileResponse,
   type PushEvents,
@@ -33,6 +35,7 @@ import {
   type PushSubscriptionResponse,
   type PushTestResponse,
   planningPaths,
+  planningSettingsPaths,
   profilePaths,
   pushPaths,
   type RecipeView,
@@ -86,6 +89,7 @@ export const keys = {
   pushDevice: ["push", "device"] as const,
   agent: ["agent"] as const,
   agentOptions: (harness: string, model: string | null) => ["agent", "options", harness, model] as const,
+  planningSettings: ["planning", "settings"] as const,
 };
 
 /** The browser's zone: days are the phone's calendar days. */
@@ -615,17 +619,47 @@ export function useRefreshAgentOptions() {
   });
 }
 
+async function putAgent(url: string, v: AgentSettingsBody & { keepEffortIfOffered?: boolean }) {
+  const { keepEffortIfOffered, ...body } = v;
+  if (keepEffortIfOffered && body.effort !== null && body.model !== null) {
+    const opts = await fetchAgentOptions(body.harness, body.model);
+    if (!opts.effort?.choices.some((c) => c.value === body.effort)) body.effort = null;
+  }
+  return api.put<AgentResponse>(url, body);
+}
+
 /** Saves the app's Agent setting. A model switch keeps the saved effort only if the new model offers it. */
 export function useSaveAgent() {
   return useMutation({
-    mutationFn: async (v: AgentSettingsBody & { keepEffortIfOffered?: boolean }) => {
-      const { keepEffortIfOffered, ...body } = v;
-      if (keepEffortIfOffered && body.effort !== null && body.model !== null) {
-        const opts = await fetchAgentOptions(body.harness, body.model);
-        if (!opts.effort?.choices.some((c) => c.value === body.effort)) body.effort = null;
-      }
-      return api.put<AgentResponse>(agentPaths.agent, body);
-    },
+    mutationFn: (v: AgentSettingsBody & { keepEffortIfOffered?: boolean }) => putAgent(agentPaths.agent, v),
     onSuccess: (r) => queryClient.setQueryData(keys.agent, r),
+  });
+}
+
+/** Saves the planning agent line (#46), under its own key but checked and shown the same way. */
+export function useSavePlanningAgent() {
+  return useMutation({
+    mutationFn: (v: AgentSettingsBody & { keepEffortIfOffered?: boolean }) =>
+      putAgent(agentPaths.planningAgent, v),
+    onSuccess: (r) => queryClient.setQueryData(keys.agent, r),
+  });
+}
+
+// ---- Planning settings (#46) -----------------------------------------------------------------
+
+/** Suggestions per round, the default recipe source mode and portions to cook, and the preferences. */
+export function usePlanningSettings() {
+  return useQuery({
+    queryKey: keys.planningSettings,
+    queryFn: () => api.get<PlanningSettingsResponse>(planningSettingsPaths.settings),
+  });
+}
+
+/** A whole replace, like the agent settings. */
+export function useSavePlanningSettings() {
+  return useMutation({
+    mutationFn: (settings: PlanningSettingsBody) =>
+      api.put<PlanningSettingsResponse>(planningSettingsPaths.settings, settings),
+    onSuccess: (r) => queryClient.setQueryData(keys.planningSettings, r),
   });
 }
