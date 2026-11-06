@@ -77,6 +77,8 @@ function server(port: number, dataDir: string | undefined) {
       YAMT_ANALYSIS_HARNESS: "custom",
       YAMT_ANALYSIS_COMMAND: `bun ${resolve("packages/server/test/fake-agent.ts")}`,
       YAMT_PLANNING_HARNESS: "custom",
+      // a nightly round (#48) takes a few seconds, so the nightly spec sees it regenerate
+      FAKE_ACP_NIGHTLY: "plan-slow:2500",
       YAMT_STT_COMMAND: `bun ${resolve("packages/server/test/fake-stt.ts")}`,
     },
   };
