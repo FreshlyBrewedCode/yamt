@@ -2,8 +2,9 @@ import { z } from "zod";
 
 /**
  * Web Push (#13): the phone subscribes with the server's VAPID public key and registers the
- * subscription here; the analysis job notifies it when a meal is analysed, needs input or failed.
- * Each subscription (one per device and browser) has its own event toggles.
+ * subscription here; the analysis job notifies it when a meal is analysed, needs input or failed,
+ * the plan job (#45) when a planning round is done or failed. Each subscription (one per device
+ * and browser) has its own event toggles.
  */
 
 export const pushPaths = {
@@ -17,18 +18,34 @@ export const pushPaths = {
   test: (id: string) => `/api/push/subscriptions/${id}/test`,
 } as const;
 
-/** What a notification is about: a meal's analysis ended in one of these statuses. */
-export const PUSH_EVENTS = ["analysed", "needs_input", "failed"] as const;
+/**
+ * What a notification is about: a meal's analysis ended in one of these statuses, or a planning
+ * round ended (`planning`: done or failed, #45).
+ */
+export const PUSH_EVENTS = ["analysed", "needs_input", "failed", "planning"] as const;
 export const PushEvent = z.enum(PUSH_EVENTS);
 export type PushEvent = z.infer<typeof PushEvent>;
 
 /** Which events a subscription is notified of. */
-export const PushEventsBody = z
-  .object({ analysed: z.boolean(), needs_input: z.boolean(), failed: z.boolean() })
-  .strict();
-export type PushEvents = z.infer<typeof PushEventsBody>;
+export type PushEvents = Record<PushEvent, boolean>;
 
-export const ALL_PUSH_EVENTS: PushEvents = { analysed: true, needs_input: true, failed: true };
+/** The toggles; one left out (`planning` from an app that predates it) stays as it was. */
+export const PushEventsBody = z
+  .object({
+    analysed: z.boolean(),
+    needs_input: z.boolean(),
+    failed: z.boolean(),
+    planning: z.boolean().optional(),
+  })
+  .strict();
+export type PushEventsBody = z.infer<typeof PushEventsBody>;
+
+export const ALL_PUSH_EVENTS: PushEvents = {
+  analysed: true,
+  needs_input: true,
+  failed: true,
+  planning: true,
+};
 
 const base64url = (bytes: number) =>
   z
@@ -88,9 +105,9 @@ export interface PushTestResponse {
 export interface PushPayload {
   title: string;
   body: string;
-  /** Where a tap leads, a path of the app (`/meals/<id>`). */
+  /** Where a tap leads, a path of the app (`/meals/<id>`, `/plan/requests/<id>`). */
   url: string;
-  /** One notification per meal: a newer one replaces it. */
+  /** One notification per meal (or planning request): a newer one replaces it. */
   tag: string;
   event: PushEvent | "test";
 }

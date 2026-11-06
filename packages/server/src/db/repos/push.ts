@@ -1,4 +1,10 @@
-import { ALL_PUSH_EVENTS, PUSH_EVENTS, type PushEvents, type PushSubscriptionView } from "@yamt/shared";
+import {
+  ALL_PUSH_EVENTS,
+  PUSH_EVENTS,
+  type PushEvents,
+  type PushEventsBody,
+  type PushSubscriptionView,
+} from "@yamt/shared";
 import { type Db, newId } from "../index.ts";
 
 interface Row {
@@ -40,6 +46,12 @@ const toRecord = (r: Row): PushSubscriptionRecord => ({
   lastError: r.last_error,
 });
 
+/** Toggles given over the ones there: a toggle left out stays as it was. */
+const merged = (base: PushEvents, given: PushEventsBody): PushEvents => ({
+  ...base,
+  ...Object.fromEntries(Object.entries(given).filter(([, v]) => v !== undefined)),
+});
+
 /** The view the API returns: without the keys. */
 export const toView = ({ keys: _, ...view }: PushSubscriptionRecord): PushSubscriptionView => view;
 
@@ -54,7 +66,7 @@ export class PushSubscriptionRepo {
   upsert(s: {
     endpoint: string;
     keys: { p256dh: string; auth: string };
-    events?: PushEvents;
+    events?: PushEventsBody;
     now?: number;
   }): { subscription: PushSubscriptionRecord; created: boolean } {
     const now = s.now ?? Date.now();
@@ -62,7 +74,13 @@ export class PushSubscriptionRepo {
     if (existing) {
       this.db
         .query("UPDATE push_subscriptions SET p256dh = ?, auth = ?, events = ?, updated_at = ? WHERE id = ?")
-        .run(s.keys.p256dh, s.keys.auth, JSON.stringify(s.events ?? existing.events), now, existing.id);
+        .run(
+          s.keys.p256dh,
+          s.keys.auth,
+          JSON.stringify(s.events ? merged(existing.events, s.events) : existing.events),
+          now,
+          existing.id,
+        );
       return { subscription: this.get(existing.id)!, created: false };
     }
     const id = newId();
@@ -71,7 +89,15 @@ export class PushSubscriptionRepo {
         `INSERT INTO push_subscriptions (id, endpoint, p256dh, auth, events, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(id, s.endpoint, s.keys.p256dh, s.keys.auth, JSON.stringify(s.events ?? ALL_PUSH_EVENTS), now, now);
+      .run(
+        id,
+        s.endpoint,
+        s.keys.p256dh,
+        s.keys.auth,
+        JSON.stringify(s.events ? merged(ALL_PUSH_EVENTS, s.events) : ALL_PUSH_EVENTS),
+        now,
+        now,
+      );
     return { subscription: this.get(id)!, created: true };
   }
 
@@ -92,10 +118,12 @@ export class PushSubscriptionRepo {
     return this.db.query<Row, []>("SELECT * FROM push_subscriptions ORDER BY id").all().map(toRecord);
   }
 
-  setEvents(id: string, events: PushEvents, now = Date.now()): PushSubscriptionRecord | null {
+  setEvents(id: string, events: PushEventsBody, now = Date.now()): PushSubscriptionRecord | null {
+    const existing = this.get(id);
+    if (!existing) return null;
     this.db
       .query("UPDATE push_subscriptions SET events = ?, updated_at = ? WHERE id = ?")
-      .run(JSON.stringify(events), now, id);
+      .run(JSON.stringify(merged(existing.events, events)), now, id);
     return this.get(id);
   }
 

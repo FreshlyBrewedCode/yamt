@@ -7,6 +7,9 @@ import {
   type Meal,
   type MealRevisionView,
   mealPaths,
+  type PlanningRequest,
+  type PlanningRound,
+  type PlanningSuggestion,
   type PushPayload,
   type PushResponse,
   type PushSubscriptionResponse,
@@ -18,11 +21,11 @@ import type { AnalysisConfig } from "../src/config.ts";
 import { dataPaths } from "../src/config.ts";
 import { openDb } from "../src/db/index.ts";
 import { createRepos } from "../src/db/repos/index.ts";
-import { mealNotification, notifyMeal } from "../src/push/messages.ts";
+import { mealNotification, notifyMeal, planningNotification } from "../src/push/messages.ts";
 import { PushSender } from "../src/push/sender.ts";
 import { loadVapidKeys } from "../src/push/vapid.ts";
 import { createServer } from "../src/server.ts";
-import { fakeAgentConfig, tempDir } from "./helpers.ts";
+import { fakeAgentConfig, fakePlanningConfig, tempDir } from "./helpers.ts";
 
 setDefaultTimeout(30_000);
 
@@ -232,6 +235,43 @@ describe("PushSender", () => {
 
 // ---- what a meal's notification says ---------------------------------------------------------------
 
+describe("planningNotification", () => {
+  const request = { id: "0190a0b0-0000-7000-8000-00000000000a", title: "Dinners Tue–Thu" } as PlanningRequest;
+  const round = (over: Partial<PlanningRound>) =>
+    ({ count: 3, status: "done", error: null, ...over }) as PlanningRound;
+  const ideas = (...statuses: string[]) =>
+    statuses.map((status, i) => ({ status, title: `Idee ${i + 1}` })) as PlanningSuggestion[];
+  const base = { url: `/plan/requests/${request.id}`, tag: `plan-${request.id}`, event: "planning" as const };
+
+  test("done: how many for which request, the titles below; a tap opens the request", () => {
+    expect(planningNotification(request, round({}), ideas("ready", "ready", "ready"))).toEqual({
+      event: "planning",
+      payload: { ...base, title: "3 suggestions for Dinners Tue–Thu", body: "Idee 1 · Idee 2 · Idee 3" },
+    });
+    expect(planningNotification(request, round({}), ideas("ready", "failed", "ready"))?.payload.title).toBe(
+      "2 of 3 suggestions for Dinners Tue–Thu",
+    );
+  });
+
+  test("failed: the error's first part; nothing for a round still open", () => {
+    expect(
+      planningNotification(
+        request,
+        round({ status: "failed", error: "the agent ended its turn; it said: x" }),
+        [],
+      ),
+    ).toEqual({
+      event: "planning",
+      payload: {
+        ...base,
+        title: "No suggestions for Dinners Tue–Thu",
+        body: "The agent ended its turn. Tap to retry.",
+      },
+    });
+    expect(planningNotification(request, round({ status: "running" }), [])).toBeNull();
+  });
+});
+
 describe("mealNotification", () => {
   const meal = (over: Partial<Meal>): Meal => ({
     id: "0190a0b0-0000-7000-8000-000000000001",
@@ -317,6 +357,10 @@ const app = createServer({
     config: fakeHarness,
     timeouts: { idleMs: 3000, toolIdleMs: 3000, turnMs: 15_000, cancelGraceMs: 300 },
     transcriptWaitMs: 50,
+  },
+  planning: {
+    config: fakePlanningConfig(),
+    timeouts: { idleMs: 3000, toolIdleMs: 3000, turnMs: 15_000, cancelGraceMs: 300 },
   },
   push: { fetch: service.fetch, log: () => {} },
 });
@@ -502,5 +546,55 @@ describe("notifications from the analysis job", () => {
     expect(res.body.meal.status).toBe("analysed");
     await Bun.sleep(200);
     expect(received(phone).map((p) => p.url)).toEqual([`/meals/${source}`]);
+  });
+});
+
+describe("notifications from the plan job (#45)", () => {
+  const received = (b: ReturnType<typeof browser>) =>
+    service.sent.filter((x) => x.url === b.subscription.endpoint).map((x) => payloadOf(x, b));
+
+  test("a done and a failed round notify `planning` subscriptions; a missing toggle counts as on", async () => {
+    const phone = browser();
+    const quiet = browser();
+    const old = browser(); // registered before `planning` existed
+    s.repos.pushSubscriptions.upsert(phone.subscription);
+    s.repos.pushSubscriptions.upsert({
+      ...quiet.subscription,
+      events: { ...ALL_PUSH_EVENTS, planning: false },
+    });
+    const { subscription } = s.repos.pushSubscriptions.upsert(old.subscription);
+    s.repos.db
+      .query("UPDATE push_subscriptions SET events = ? WHERE id = ?")
+      .run(JSON.stringify({ analysed: true, needs_input: true, failed: true }), subscription.id);
+    expect(s.repos.pushSubscriptions.get(subscription.id)!.events.planning).toBe(true);
+    // a PATCH from an app that predates it leaves it alone
+    const patched = await call<PushSubscriptionResponse>("PATCH", pushPaths.subscription(subscription.id), {
+      analysed: false,
+      needs_input: true,
+      failed: true,
+    });
+    expect(patched.body.subscription.events).toEqual({ ...ALL_PUSH_EVENTS, analysed: false });
+
+    const { request } = s.planningRequests.create({ filters: { count: 2 }, text: "fake:plan" });
+    s.planningRequests.suggest(request.id);
+    const [done] = await waitFor("a notification", () => received(phone).length === 1 && received(phone));
+    expect(done).toEqual({
+      title: `2 suggestions for ${request.title}`,
+      body: "Linsen-Dal mit Spinat · Hähnchen-Gemüse-Pfanne",
+      url: `/plan/requests/${request.id}`,
+      tag: `plan-${request.id}`,
+      event: "planning",
+    });
+    expect(received(old)).toHaveLength(1);
+
+    const failing = s.planningRequests.create({ filters: {}, text: "fake:plan-auth" }).request;
+    s.planningRequests.suggest(failing.id);
+    const failed = await waitFor("failed", () => received(phone)[1]);
+    expect(failed).toMatchObject({ event: "planning", url: `/plan/requests/${failing.id}` });
+    expect(failed.title).toBe(`No suggestions for ${failing.title}`);
+    expect(received(quiet)).toEqual([]);
+    for (const b of [phone, quiet, old]) {
+      s.repos.pushSubscriptions.delete(s.repos.pushSubscriptions.byEndpoint(b.subscription.endpoint)!.id);
+    }
   });
 });

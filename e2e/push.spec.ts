@@ -84,7 +84,8 @@ test("turn notifications on from the overview, pick events, send a test, turn th
   await expect(analysed).toHaveAttribute("aria-checked", "true");
   const [registered] = await subscriptions(request);
   expect(registered?.endpoint).toMatch(/^https:\/\/push\.invalid\/e2e\//);
-  expect(registered?.events).toEqual({ analysed: true, needs_input: true, failed: true });
+  expect(registered?.events).toEqual({ analysed: true, needs_input: true, failed: true, planning: true });
+  await expect(page.getByRole("switch", { name: "Suggestions" })).toHaveAttribute("aria-checked", "true");
 
   // a toggle is stored on the server, per subscription
   await analysed.click();
