@@ -7,6 +7,10 @@ import type {
   OutboxStore,
   OutboxTransport,
   PendingCapture,
+  PendingPlanningInput,
+  PlanInputEntry,
+  PlanRequestEntry,
+  PlanRoundEntry,
 } from "./types";
 
 /**
@@ -18,6 +22,8 @@ import type {
  *   offline and appear on the server with its first capture;
  * - a capture is sent with its client id, so a retry after a lost response never stores it twice;
  * - an analyse request waits until every capture of its meal is up (or discarded);
+ * - a planning request (#47) works the same way: the request is created with its client id
+ *   first, then its inputs, then a round, which waits for the inputs queued before it;
  * - a network failure or a 5xx/408/429 retries with backoff (2 s, 4 s … 60 s), at once when the
  *   browser comes back online or the app is opened again; any other refusal (4xx) marks the
  *   entry failed with the server's reason until the user retries or discards it.
@@ -111,32 +117,55 @@ export class Outbox {
    * `CaptureRejected` for what the server would refuse anyway (empty, larger than the limit).
    */
   async addCapture(mealId: string, capture: PendingCapture, capturedAt = this.now()): Promise<CaptureEntry> {
-    if ("blob" in capture) {
-      if (capture.blob.size === 0) throw new CaptureRejected(`${capture.fileName} is empty`);
-      if (capture.blob.size > this.maxBytes) {
-        throw new CaptureRejected(
-          `${capture.fileName} is ${mb(capture.blob.size)}; the limit is ${mb(this.maxBytes)}`,
-        );
-      }
+    this.check(capture);
+    const now = this.now();
+    return this.add<CaptureEntry>({ type: "capture", ...this.fresh(now), mealId, capturedAt, capture });
+  }
+
+  /**
+   * A planning request (#47) made on this phone, with its complete filters and the phone's zone; a
+   * text alone goes along with it (the request's first input). Idempotent per request id.
+   */
+  async addPlanningRequest(
+    request: Pick<PlanRequestEntry, "requestId" | "filters" | "tz" | "text">,
+  ): Promise<PlanRequestEntry> {
+    const existing = this.entries.find(
+      (e): e is PlanRequestEntry => e.type === "plan-request" && e.requestId === request.requestId,
+    );
+    if (existing) return existing;
+    const now = this.now();
+    return this.add<PlanRequestEntry>({ type: "plan-request", ...this.fresh(now), ...request });
+  }
+
+  /**
+   * An input of a planning request: like a capture (the same limits), sent once the request is up.
+   * Throws `CaptureRejected` for what the server would refuse anyway.
+   */
+  async addPlanningInput(
+    requestId: string,
+    input: PendingPlanningInput,
+    capturedAt = this.now(),
+  ): Promise<PlanInputEntry> {
+    this.check(input);
+    const now = this.now();
+    return this.add<PlanInputEntry>({ type: "plan-input", ...this.fresh(now), requestId, capturedAt, input });
+  }
+
+  /**
+   * A new round for the request (`suggest`: the first or a steer; `more`: the same input again),
+   * sent once the request and the inputs queued before it are up. One waiting round per request:
+   * asking again while one waits answers that one (and tries a refused one again).
+   */
+  async requestRound(requestId: string, kind: PlanRoundEntry["kind"]): Promise<PlanRoundEntry> {
+    const existing = this.entries.find(
+      (e): e is PlanRoundEntry => e.type === "plan-round" && e.requestId === requestId,
+    );
+    if (existing) {
+      if (existing.failed) await this.retry(existing.id);
+      return existing;
     }
     const now = this.now();
-    const entry: CaptureEntry = {
-      type: "capture",
-      id: uuidv7(now),
-      mealId,
-      createdAt: now,
-      capturedAt,
-      capture,
-      attempts: 0,
-      nextAttemptAt: now,
-      error: null,
-      failed: false,
-    };
-    await this.opts.store.put(entry);
-    this.entries = [...this.entries, entry].sort(byAge);
-    this.changed();
-    void this.flush();
-    return entry;
+    return this.add<PlanRoundEntry>({ type: "plan-round", ...this.fresh(now), requestId, kind });
   }
 
   /** Analyse the meal as soon as its queued captures are up. Idempotent per meal. */
@@ -144,21 +173,25 @@ export class Outbox {
     const existing = this.entries.find((e): e is AnalyseEntry => e.type === "analyse" && e.mealId === mealId);
     if (existing) return existing;
     const now = this.now();
-    const entry: AnalyseEntry = {
-      type: "analyse",
-      id: uuidv7(now),
-      mealId,
-      createdAt: now,
-      attempts: 0,
-      nextAttemptAt: now,
-      error: null,
-      failed: false,
-    };
+    return this.add<AnalyseEntry>({ type: "analyse", ...this.fresh(now), mealId });
+  }
+
+  /** What every new entry starts with. */
+  private fresh(now: number) {
+    return { id: uuidv7(now), createdAt: now, attempts: 0, nextAttemptAt: now, error: null, failed: false };
+  }
+
+  /** Stored first, then queued and sent. */
+  private async add<T extends OutboxEntry>(entry: T): Promise<T> {
     await this.opts.store.put(entry);
     this.entries = [...this.entries, entry].sort(byAge);
     this.changed();
     void this.flush();
     return entry;
+  }
+
+  private check(capture: PendingCapture): void {
+    checkCapture(capture, this.maxBytes);
   }
 
   /** Try a failed or waiting entry again now. */
@@ -169,11 +202,25 @@ export class Outbox {
     void this.flush();
   }
 
-  /** Drops an entry that hasn't reached the server (the user's call, e.g. after a refusal). */
+  /**
+   * Drops an entry that hasn't reached the server (the user's call, e.g. after a refusal). A
+   * planning request takes its waiting inputs and round along: they have nowhere to go.
+   */
   async discard(id: string): Promise<void> {
     if (this.sending === id) return;
-    await this.opts.store.delete(id);
-    this.entries = this.entries.filter((e) => e.id !== id);
+    const e = this.entries.find((x) => x.id === id);
+    const gone = this.entries.filter(
+      (x) =>
+        x.id === id ||
+        (e?.type === "plan-request" &&
+          x.type !== "plan-request" &&
+          "requestId" in x &&
+          x.requestId === e.requestId),
+    );
+    if (gone.some((x) => x.id === this.sending)) return;
+    for (const x of gone) await this.opts.store.delete(x.id);
+    const ids = new Set(gone.map((x) => x.id));
+    this.entries = this.entries.filter((x) => !ids.has(x.id));
     this.changed();
     void this.flush();
   }
@@ -225,27 +272,45 @@ export class Outbox {
     return this.entries.find((e) => !e.failed && e.nextAttemptAt <= now && !this.blocked(e));
   }
 
-  /** An analyse request waits for every capture of its meal still in the queue. */
+  /**
+   * An analyse request waits for every capture of its meal still in the queue; a planning input or
+   * round for its request; a round for the inputs of its request queued before it.
+   */
   private blocked(e: OutboxEntry): boolean {
-    return e.type === "analyse" && this.entries.some((x) => x.type === "capture" && x.mealId === e.mealId);
+    switch (e.type) {
+      case "capture":
+      case "plan-request":
+        return false;
+      case "analyse":
+        return this.entries.some((x) => x.type === "capture" && x.mealId === e.mealId);
+      case "plan-input":
+        return this.entries.some((x) => x.type === "plan-request" && x.requestId === e.requestId);
+      case "plan-round":
+        return this.entries.some(
+          (x) =>
+            (x.type === "plan-request" && x.requestId === e.requestId) ||
+            (x.type === "plan-input" && x.requestId === e.requestId && x.id < e.id),
+        );
+    }
   }
 
   private async send(e: OutboxEntry): Promise<"sent" | "retry" | "failed" | "offline"> {
     this.sending = e.id;
     this.changed();
     try {
-      if (!this.ensured.has(e.mealId)) {
+      const onProgress = (f: number) => {
+        this.progress = { ...this.progress, [e.id]: f };
+        this.changed();
+      };
+      if ((e.type === "capture" || e.type === "analyse") && !this.ensured.has(e.mealId)) {
         await this.opts.transport.ensureMeal(e.mealId);
         this.ensured.add(e.mealId);
       }
-      if (e.type === "capture") {
-        await this.opts.transport.sendCapture(e, (f) => {
-          this.progress = { ...this.progress, [e.id]: f };
-          this.changed();
-        });
-      } else {
-        await this.opts.transport.analyse(e.mealId);
-      }
+      if (e.type === "capture") await this.opts.transport.sendCapture(e, onProgress);
+      else if (e.type === "analyse") await this.opts.transport.analyse(e.mealId);
+      else if (e.type === "plan-request") await this.opts.transport.createPlanningRequest(e);
+      else if (e.type === "plan-input") await this.opts.transport.sendPlanningInput(e, onProgress);
+      else await this.opts.transport.startRound(e);
       await Promise.resolve(this.opts.onSent?.(e)).catch(() => {});
       await this.opts.store.delete(e.id);
       this.entries = this.entries.filter((x) => x.id !== e.id);
@@ -313,3 +378,17 @@ export class Outbox {
 }
 
 const mb = (bytes: number) => `${Math.round(bytes / 1024 / 1024)} MB`;
+
+/**
+ * Refuses what the server would refuse anyway: an empty file, or one over the limit. The queue
+ * checks every capture; the planning composer checks an attachment as it is attached.
+ */
+export function checkCapture(capture: PendingCapture, maxBytes = MAX_UPLOAD_BYTES): void {
+  if (!("blob" in capture)) return;
+  if (capture.blob.size === 0) throw new CaptureRejected(`${capture.fileName} is empty`);
+  if (capture.blob.size > maxBytes) {
+    throw new CaptureRejected(
+      `${capture.fileName} is ${mb(capture.blob.size)}; the limit is ${mb(maxBytes)}`,
+    );
+  }
+}

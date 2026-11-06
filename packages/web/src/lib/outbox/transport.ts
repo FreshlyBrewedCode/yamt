@@ -1,5 +1,5 @@
-import { type ApiError, MAX_UPLOAD_BYTES, mealPaths } from "@yamt/shared";
-import { type CaptureEntry, type OutboxTransport, TransportError } from "./types";
+import { type ApiError, MAX_UPLOAD_BYTES, mealPaths, planningRequestPaths } from "@yamt/shared";
+import { type OutboxTransport, type PendingCapture, TransportError } from "./types";
 
 /** The queue's HTTP side: JSON with fetch, uploads with XHR (fetch can't report upload progress). */
 export const httpTransport: OutboxTransport = {
@@ -25,7 +25,7 @@ export const httpTransport: OutboxTransport = {
         capturedAt: e.capturedAt,
       });
     } else if ("blob" in c) {
-      await upload(e, onProgress);
+      await upload(mealPaths.captures(e.mealId), e.id, e.capturedAt, c, onProgress);
     } else {
       await json("POST", mealPaths.captures(e.mealId), {
         id: e.id,
@@ -39,6 +39,38 @@ export const httpTransport: OutboxTransport = {
 
   async analyse(mealId) {
     await json("POST", mealPaths.analyse(mealId), {});
+  },
+
+  async createPlanningRequest(e) {
+    await json("POST", planningRequestPaths.requests, {
+      id: e.requestId,
+      filters: e.filters,
+      tz: e.tz,
+      ...(e.text ? { text: e.text } : {}),
+    });
+  },
+
+  async sendPlanningInput(e, onProgress) {
+    const c = e.input;
+    const path = planningRequestPaths.inputs(e.requestId);
+    if (c.kind === "text") {
+      await json("POST", path, { id: e.id, kind: "text", text: c.text, capturedAt: e.capturedAt });
+    } else if (c.kind === "link") {
+      await json("POST", path, {
+        id: e.id,
+        kind: "link",
+        url: c.url,
+        ...(c.text ? { text: c.text } : {}),
+        capturedAt: e.capturedAt,
+      });
+    } else {
+      await upload(path, e.id, e.capturedAt, c, onProgress);
+    }
+  },
+
+  async startRound(e) {
+    const path = e.kind === "more" ? planningRequestPaths.more : planningRequestPaths.suggest;
+    await json("POST", path(e.requestId), { id: e.id });
   },
 };
 
@@ -59,18 +91,23 @@ async function json(method: string, path: string, body: unknown): Promise<unknow
   return text ? JSON.parse(text) : null;
 }
 
-function upload(e: CaptureEntry, onProgress: (fraction: number) => void): Promise<void> {
-  const c = e.capture;
-  if (!("blob" in c)) throw new Error("not an upload");
+/** A file (a meal capture or a planning input) as multipart, with progress. */
+function upload(
+  path: string,
+  id: string,
+  capturedAt: number,
+  c: Extract<PendingCapture, { blob: Blob }>,
+  onProgress: (fraction: number) => void,
+): Promise<void> {
   const form = new FormData();
-  form.set("id", e.id);
+  form.set("id", id);
   form.set("kind", c.kind);
-  form.set("capturedAt", String(e.capturedAt));
+  form.set("capturedAt", String(capturedAt));
   if (c.questionId) form.set("questionId", c.questionId);
   form.set("file", c.blob, c.fileName);
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
-    xhr.open("POST", mealPaths.captures(e.mealId));
+    xhr.open("POST", path);
     xhr.withCredentials = true;
     xhr.upload.onprogress = (ev) => {
       if (ev.lengthComputable) onProgress(ev.loaded / ev.total);
