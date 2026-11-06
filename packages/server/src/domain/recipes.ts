@@ -1,8 +1,14 @@
-import type { Recipe, RecipeItem, RecipeItemView, RecipeSourceMode, RecipeView, Totals } from "@yamt/shared";
+import {
+  portionItems,
+  type RecipeItem,
+  type RecipeItemView,
+  type RecipeSourceMode,
+  type RecipeView,
+  type Totals,
+} from "@yamt/shared";
 import type { Repos } from "../db/repos/index.ts";
 import { computeTotals, itemNutrients } from "../nutrition/totals.ts";
 import { HttpError } from "./errors.ts";
-import { scaleGrams } from "./meals.ts";
 import { type ItemInput, resolveItems } from "./revisions.ts";
 
 export interface SaveRecipeInput {
@@ -19,21 +25,6 @@ export interface SaveRecipeInput {
   notes?: string | null;
   /** For the whole recipe (`servings`), validated like revision items. */
   items: (ItemInput & { optional?: boolean })[];
-}
-
-/**
- * The items of a recipe for `factor` portions: grams ÷ servings × factor, to 0.01 g, as "Ate it"
- * logs them (so the plan and the logged meal compute the same totals). `exclude`: item ids left out.
- */
-export function portionItems(
-  recipe: Pick<Recipe, "servings">,
-  items: readonly RecipeItem[],
-  factor: number,
-  exclude: ReadonlySet<string> = new Set(),
-): RecipeItem[] {
-  return items
-    .filter((i) => !exclude.has(i.id))
-    .map((i) => ({ ...i, grams: scaleGrams(i.grams, factor / recipe.servings) }));
 }
 
 /** The totals of recipe items: `computeTotals`, nothing else. */

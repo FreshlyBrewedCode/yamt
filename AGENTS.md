@@ -118,7 +118,8 @@ API, auth, SQLite), `packages/web` (Vite + React + TanStack Router/Query + Tailw
   browser would (`e2e/api.ts`). Machine clients (`/mcp`) use `requireBearer`
   (`auth/bearer.ts`) with `McpTokens`, never the identity header, and only from this machine.
 - Nutrition: the model reads, code computes. Totals only ever come from `computeTotals`
-  (`nutrition/totals.ts`); never store or accept a total from the model. `carbohydrate` is
+  (`totals.ts` in `@yamt/shared`, re-exported by the server's `nutrition/totals.ts`; the web app
+  uses it only to preview what the server computes again on save); never store or accept a total from the model. `carbohydrate` is
   available carbohydrate excluding fiber (EU labels), fiber separate: sources that include fiber
   (USDA, US labels) are mapped by subtracting it (`nutrition/nutrients.ts`). Logging a meal again
   (#30) copies a revision's items with their per-100 g snapshots (grams × the portion) into a

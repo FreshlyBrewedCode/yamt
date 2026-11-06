@@ -13,6 +13,7 @@ import {
   type PlannedMealView,
   type PlanQuery,
   type PlanResponse,
+  portionItems,
   type Recipe,
   type RecipeItem,
   slotOf,
@@ -24,7 +25,7 @@ import { goalsByDate } from "./calendar.ts";
 import { HttpError } from "./errors.ts";
 import { requestZone } from "./goals.ts";
 import { CLOCK_SKEW_MS, nutrientTotals } from "./meals.ts";
-import { portionItems, recipeTotals } from "./recipes.ts";
+import { recipeTotals } from "./recipes.ts";
 import type { RevisionService } from "./revisions.ts";
 import { dayRange, localDate, localHour } from "./time.ts";
 

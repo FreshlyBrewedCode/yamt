@@ -57,6 +57,9 @@ packages/shared/src/      contracts shared by server and web (no runtime deps bu
   plan.ts                 the calendar's classifier (#33): `classifyDay`, `classifyWeek`, the thresholds as named
                           constants (`ON_PLAN`, `FAR_OFF`, `DEAD_ZONE`, `TOO_LOW_ON_CUT`, `WEEK_FULL_DAYS`),
                           `goalPlan` (a goal's kind, label and floor), `dayInput`, `planWords`, `rangeWords`
+  totals.ts               the only totals: `computeTotals`, `itemNutrients`, `roundNutrient`; `scaleGrams` and
+                          `portionItems` (a recipe's items for a portion), shared so the web app previews "Ate it"
+                          with the server's code
   api-goals.ts            goals and days: `goalPaths`, bodies, `DayResponse`, `goalInForce`, `goalPeriods`,
                           `dayProgress`, `addDays`, `goalLabel` (shared by server and web)
   goal-calc.ts            guided goals (#24): `calculateGoal` (the algorithm, `ALGORITHM_VERSION`), its
@@ -108,9 +111,9 @@ packages/server/src/
                           revisions.ts (RevisionService: save, views, day summary), foods.ts
                           (FoodService: search, barcode, create), goals.ts (GoalService: goals and the
                           day view), calendar.ts (CalendarService: a month, #33; goalsByDate), share.ts (ShareService:
-                          the share target), recipes.ts (RecipeService: save and view, portionItems), planning.ts
+                          the share target), recipes.ts (RecipeService: save and view), planning.ts
                           (PlanningService: planned meals, the plan, "Ate it", #36), time.ts (days and local times)
-  nutrition/              nutrients.ts (OFF/FDC → core set), totals.ts (the only totals), ranking.ts,
+  nutrition/              nutrients.ts (OFF/FDC → core set), totals.ts (re-exports the shared totals), ranking.ts,
                           off.ts / fdc.ts (clients), http.ts (timeouts, size caps, rate limits,
                           User-Agent), recipe.ts (fetch + schema.org Recipe JSON-LD)
   mcp/                    endpoint.ts (/mcp: auth, stateless transport), tools.ts (the tools,
@@ -130,7 +133,8 @@ packages/server/test/     bun tests, temp dirs only; fixtures/ holds made-up ima
                           fake-stt.ts a scripted STT process and fake-ffmpeg.ts an ffmpeg stand-in
                           (tests never load a speech model); fixtures/memo-de.m4a is synthetic speech
 packages/shared/test/     bun tests: goal-calc (the fixture, equations, caps, floors, rounding, defaults),
-                          plan (the calendar's classifier, goal plans, the weight average, month arithmetic)
+                          plan (the calendar's classifier, goal plans, the weight average, month arithmetic),
+                          totals (portions of a recipe)
 packages/web/
   index.html              iOS/PWA metas, manifest and icon links, the dark-mode switch
   public/                 manifest.webmanifest, icons/ (rendered by scripts/icons.ts)
@@ -420,7 +424,7 @@ in) with a `JobCancelled` as the signal's reason; the services reach it as `serv
 ## Nutrition layer (#7)
 
 **The model reads, code computes.** The agent picks foods and grams; `computeTotals`
-(`nutrition/totals.ts`) is the only place totals come from: per-100 g values × grams, summed per
+(`totals.ts` in `@yamt/shared`, re-exported by `nutrition/totals.ts`) is the only place totals come from: per-100 g values × grams, summed per
 nutrient for all items and per provenance, rounded once at the end (kcal whole, grams to 0.1,
 salt to 0.01). A missing value counts as 0 and is reported in `missing`. Nothing stores totals:
 `RevisionService.view` computes them whenever a revision is read (`GET /api/meals/:id`, the MCP
