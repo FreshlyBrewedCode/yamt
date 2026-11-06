@@ -1,6 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { Label } from "@/components/slab";
-import { SCREENS, SCREENS2, VARIANTS, VARIANTS2 } from "@/design/plan/variants";
+import { SCREENS, SCREENS2, SCREENS3, VARIANT3, VARIANTS, VARIANTS2 } from "@/design/plan/variants";
 
 export const Route = createFileRoute("/design/plan/")({ component: Index });
 
@@ -81,6 +81,52 @@ function Index() {
           </ul>
         </section>
       ))}
+      <h2 className="display mt-10 text-[28px]">Round 3 · the consolidation</h2>
+      <p className="mt-2 font-medium text-muted-foreground text-sm">
+        One direction, screen by screen, for the implementation to follow: the nightly suggestions, the filter
+        page, the outline that completes one suggestion at a time, recipe sources, cook / eat portions,
+        leftovers, the shopping list and Settings → Planning.
+      </p>
+      <section className="mt-6 border-border border-t pt-4">
+        <h2 className="display text-[22px]">
+          {VARIANT3.key.toUpperCase()} · {VARIANT3.name}
+        </h2>
+        <p className="mt-1 font-medium text-muted-foreground text-sm">{VARIANT3.blurb}</p>
+        <ul className="mt-3 flex flex-wrap gap-x-4 gap-y-2 font-bold">
+          {SCREENS3.map((s) => (
+            <li key={s.key}>
+              <Link
+                to="/design/plan/$variant"
+                params={{ variant: VARIANT3.key }}
+                search={{ screen: s.key }}
+                className="underline underline-offset-4"
+              >
+                {s.label}
+              </Link>
+            </li>
+          ))}
+          <li>
+            <Link
+              to="/design/plan/sheet/$variant"
+              params={{ variant: VARIANT3.key }}
+              search={{ part: 1 }}
+              className="underline underline-offset-4"
+            >
+              Contact sheet 1
+            </Link>
+          </li>
+          <li>
+            <Link
+              to="/design/plan/sheet/$variant"
+              params={{ variant: VARIANT3.key }}
+              search={{ part: 2 }}
+              className="underline underline-offset-4"
+            >
+              Contact sheet 2
+            </Link>
+          </li>
+        </ul>
+      </section>
     </main>
   );
 }

@@ -26,7 +26,7 @@ export const GOAL = {
 };
 
 /** Per 100 g, made up to be plausible (EU carbs: without fibre). */
-const FOODS = {
+export const FOODS = {
   hokkaido: { energyKcal: 60, protein: 1.5, fat: 0.5, carbohydrate: 11, fiber: 2 },
   kichererbsen: { energyKcal: 120, protein: 7, fat: 2.5, carbohydrate: 15, fiber: 6 },
   kokosmilchLight: { energyKcal: 75, protein: 0.7, fat: 7, carbohydrate: 2, fiber: 0 },
@@ -64,6 +64,9 @@ export interface Ingredient {
 
 export type SourceKind = "web" | "own" | "agent";
 
+/** Round 3: how a recipe relates to its source (Settings → Planning's default, overridable per request). */
+export type SourceMode = "real" | "adapted" | "free";
+
 export interface Recipe {
   id: string;
   title: string;
@@ -76,6 +79,12 @@ export interface Recipe {
   totalMin: number;
   oven: boolean;
   source: { kind: SourceKind; label: string; url?: string };
+  /** Round 3: as published, adapted (with the changes listed) or composed by the agent. */
+  mode?: SourceMode;
+  /** For `adapted`: what the agent changed against the original. */
+  changes?: string[];
+  /** Round 3: the slot the agent proposes ("no oven: fits Wednesday"). */
+  proposed?: { date: string; slot: Slot };
   portions: number;
   ingredients: Ingredient[];
   steps: string[];
@@ -105,6 +114,9 @@ export const ROUND_1: Recipe[] = [
     totalMin: 35,
     oven: false,
     source: { kind: "web", label: "chefkoch.de", url: "https://www.chefkoch.de/" },
+    mode: "adapted",
+    changes: ["Sahne → Kokosmilch light", "−50 g Reis", "+ 200 g Spinat"],
+    proposed: { date: "2026-11-04", slot: "dinner" },
     portions: 2,
     ingredients: [
       { food: "hokkaido", name: "Hokkaido", grams: 500 },
@@ -138,6 +150,8 @@ export const ROUND_1: Recipe[] = [
     totalMin: 30,
     oven: false,
     source: { kind: "agent", label: "Composed for you" },
+    mode: "free",
+    proposed: { date: "2026-11-05", slot: "dinner" },
     portions: 2,
     ingredients: [
       { food: "hokkaido", name: "Hokkaido", grams: 400 },
@@ -166,6 +180,8 @@ export const ROUND_1: Recipe[] = [
     totalMin: 45,
     oven: true,
     source: { kind: "own", label: "Your recipe · Ofenkürbis" },
+    mode: "real",
+    proposed: { date: "2026-11-06", slot: "dinner" },
     portions: 2,
     ingredients: [
       { food: "hokkaido", name: "Hokkaido", grams: 500 },
@@ -193,6 +209,8 @@ export const ROUND_1: Recipe[] = [
     totalMin: 20,
     oven: false,
     source: { kind: "web", label: "eat-this.org", url: "https://www.eat-this.org/" },
+    mode: "real",
+    proposed: { date: "2026-11-06", slot: "dinner" },
     portions: 2,
     ingredients: [
       { food: "hokkaido", name: "Hokkaido", grams: 400 },
@@ -220,6 +238,8 @@ export const ROUND_2: Recipe[] = [
     totalMin: 20,
     oven: false,
     source: { kind: "agent", label: "Composed for you" },
+    mode: "free",
+    proposed: { date: "2026-11-05", slot: "dinner" },
     portions: 2,
     ingredients: [
       { food: "hokkaido", name: "Hokkaido", grams: 400 },
@@ -245,6 +265,8 @@ export const ROUND_2: Recipe[] = [
     totalMin: 20,
     oven: false,
     source: { kind: "agent", label: "Composed for you" },
+    mode: "free",
+    proposed: { date: "2026-11-06", slot: "dinner" },
     portions: 2,
     ingredients: [
       { food: "hokkaido", name: "Hokkaido", grams: 400 },
@@ -269,6 +291,8 @@ export const ROUND_2: Recipe[] = [
     totalMin: 25,
     oven: false,
     source: { kind: "web", label: "chefkoch.de", url: "https://www.chefkoch.de/" },
+    mode: "real",
+    proposed: { date: "2026-11-05", slot: "dinner" },
     portions: 2,
     ingredients: [
       { food: "hokkaido", name: "Hokkaido", grams: 300 },
@@ -350,6 +374,8 @@ export interface PlannedMeal {
   slot: Slot;
   /** Portion factor of one recipe portion. */
   factor: number;
+  /** Round 3: portions cooked ("cook 2, eat 1"); the rest become leftovers. Default: the recipe's. */
+  cooked?: number;
 }
 
 export const PLANNED: PlannedMeal[] = [

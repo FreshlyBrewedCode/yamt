@@ -529,6 +529,7 @@ export function PlanSheet({
   onPlan,
   defaultDate = "2026-11-05",
   planned = PLANNED,
+  cook: withCook = false,
 }: {
   recipe: Recipe | null;
   open: boolean;
@@ -536,10 +537,13 @@ export function PlanSheet({
   onPlan: (date: string, slot: Slot, factor: number) => void;
   defaultDate?: string;
   planned?: readonly PlannedMeal[];
+  /** Round 3: portions to cook next to the portion eaten. */
+  cook?: boolean;
 }) {
   const [date, setDate] = useState(defaultDate);
   const [slot, setSlot] = useState<Slot>("dinner");
   const [factor, setFactor] = useState(1);
+  const [cook, setCook] = useState(2);
   const day = DAYS.find((d) => d.date === date) ?? DAYS[0]!;
   const proj = projection(day, planned);
   const dish = recipe ? scale(perPortion(recipe), factor) : null;
@@ -553,8 +557,38 @@ export function PlanSheet({
             <Chips label="Day" options={DAY_CHIPS} value={date} onChange={setDate} />
             <Label className="mt-4 mb-2 text-muted-foreground">Slot</Label>
             <Chips label="Slot" options={SLOT_CHIPS} value={slot} onChange={setSlot} />
-            <Label className="mt-4 mb-2 text-muted-foreground">Portion</Label>
-            <Chips label="Portion" options={PORTION_CHIPS} value={factor} onChange={setFactor} />
+            {withCook ? (
+              <div className="mt-4 grid grid-cols-2 gap-5">
+                <div>
+                  <Label className="mb-2 text-muted-foreground">Cook</Label>
+                  <Chips
+                    label="Portions to cook"
+                    options={[1, 2, 3, 4].map((p) => ({ value: p, label: "", sub: String(p) }))}
+                    value={cook}
+                    onChange={setCook}
+                  />
+                </div>
+                <div>
+                  <Label className="mb-2 text-muted-foreground">Eat</Label>
+                  <Chips
+                    label="Portion"
+                    options={PORTION_CHIPS.map((p) => ({ value: p.value, label: "", sub: p.sub }))}
+                    value={factor}
+                    onChange={setFactor}
+                  />
+                </div>
+              </div>
+            ) : (
+              <>
+                <Label className="mt-4 mb-2 text-muted-foreground">Portion</Label>
+                <Chips label="Portion" options={PORTION_CHIPS} value={factor} onChange={setFactor} />
+              </>
+            )}
+            {withCook && cook - factor > 0 && (
+              <p className="mt-2 font-medium text-muted-foreground text-sm">
+                {cook - factor} {cook - factor === 1 ? "portion" : "portions"} left over for the next day.
+              </p>
+            )}
             <div className="mt-4">
               <FitBar
                 base={proj.total.energyKcal}
@@ -591,12 +625,15 @@ const ATE_PORTIONS: ChipOption<number>[] = [
 export function AteSheet({
   recipe,
   factor: planned,
+  cooked,
   open,
   onClose,
   onLogged,
 }: {
   recipe: Recipe | null;
   factor: number;
+  /** Round 3: portions cooked; what isn't eaten stays a leftover. */
+  cooked?: number;
   open: boolean;
   onClose: () => void;
   onLogged: () => void;
@@ -649,8 +686,17 @@ export function AteSheet({
             })}
           </ul>
           <div className="px-5 pt-4 pb-4">
-            <Label className="mb-2 text-muted-foreground">Portion</Label>
+            <Label className="mb-2 text-muted-foreground">
+              Portion{cooked !== undefined && cooked > 1 ? ` · of ${cooked} cooked` : ""}
+            </Label>
             <Chips label="Portion" options={ATE_PORTIONS} value={factor} onChange={setFactor} />
+            {cooked !== undefined && cooked - planned * factor > 0 && (
+              <p className="mt-2 font-medium text-muted-foreground text-sm">
+                {cooked - planned * factor}{" "}
+                {cooked - planned * factor === 1 ? "portion stays" : "portions stay"} a leftover: the plan
+                offers it tomorrow.
+              </p>
+            )}
             <div className="mt-3 flex min-h-11 items-center justify-between gap-3">
               <span className="flex items-center gap-2 font-bold text-sm">
                 <Clock className="size-4" strokeWidth={2.5} /> Now · change time

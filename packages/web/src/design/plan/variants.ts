@@ -81,3 +81,49 @@ export const VARIANTS2 = [
 ] as const;
 
 export type Variant2Key = (typeof VARIANTS2)[number]["key"];
+
+/* ------------------------------------------------------------------ round 3 */
+
+export type Screen3 =
+  | "overview"
+  | "entry"
+  | "entry-bare"
+  | "entry-regenerating"
+  | "entry-typing"
+  | "entry-attached"
+  | "filters"
+  | "thread-progress"
+  | "thread-done"
+  | "thread-partial"
+  | "thread-round2"
+  | "recipe"
+  | "plan"
+  | "shopping"
+  | "settings"
+  | "ate";
+
+export const SCREENS3: { key: Screen3; label: string }[] = [
+  { key: "overview", label: "Overview: Log | Plan, the Planning strip" },
+  { key: "entry", label: "Plan entry: tonight's nightly suggestions, starters, the dock" },
+  { key: "entry-bare", label: "Plan entry: nightly off, starters only" },
+  { key: "entry-regenerating", label: "Plan entry: regenerating tonight's" },
+  { key: "entry-typing", label: "Typing, keyboard up" },
+  { key: "entry-attached", label: "A voice chip and a photo attached" },
+  { key: "filters", label: "Filter page" },
+  { key: "thread-progress", label: "Thread: round 1 in progress (outline)" },
+  { key: "thread-done", label: "Thread: round 1 finished, Suggest more" },
+  { key: "thread-partial", label: "Thread: 2 of 3, one couldn't complete" },
+  { key: "thread-round2", label: "Thread: steered, round 2 below" },
+  { key: "recipe", label: "Recipe detail: adapted, cook 2 · eat 1" },
+  { key: "plan", label: "Plan view with leftovers" },
+  { key: "shopping", label: "Shopping list" },
+  { key: "settings", label: "Settings → Planning, Agent's second line" },
+  { key: "ate", label: "Ate it: 1 of 2 cooked" },
+];
+
+export const VARIANT3 = {
+  key: "g",
+  name: "Starters + Dock",
+  blurb:
+    "The consolidation the implementation follows: F's starter bands with D's docked composer. Tonight's nightly suggestions sit at the top of the plan entry screen (complete, Regenerate below), the starters under them, one filter summary row over the dock opens the filter page (when, meals, time, constraints, use up, recipe source mode, portions to cook, how many). A request's round saves an outline first (placeholders that complete one at a time), a pick takes the agent's proposed slot, Suggest more runs the same request again, steering goes through the dock. Recipes carry their source (From · Adapted · Composed) and cook / eat portions; leftovers feed the plan and the shopping list.",
+} as const;

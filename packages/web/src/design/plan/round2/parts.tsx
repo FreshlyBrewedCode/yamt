@@ -809,7 +809,7 @@ export function AskedBand({
 }
 
 /** The request's slots as the thread's ink slab: each with what's picked and the day's projection. */
-export function SlotsSlab({ verdicts }: { verdicts: Verdicts }) {
+export function SlotsSlab({ verdicts, note }: { verdicts: Verdicts; note?: string }) {
   const planned = pickedMeals(verdicts);
   const filled = planned.length;
   return (
@@ -849,8 +849,8 @@ export function SlotsSlab({ verdicts }: { verdicts: Verdicts }) {
         })}
       </div>
       <Label className="mt-3 flex items-center gap-2 px-1 text-ink-muted">
-        <ChefHat className="size-3.5" strokeWidth={2.5} /> {filled} of 3 slots filled · a pick takes the next
-        open one
+        <ChefHat className="size-3.5" strokeWidth={2.5} /> {filled} of 3 slots filled ·{" "}
+        {note ?? "a pick takes the next open one"}
       </Label>
     </Band>
   );

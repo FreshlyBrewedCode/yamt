@@ -1,7 +1,13 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { SCREENS, SCREENS2, VARIANTS, VARIANTS2 } from "@/design/plan/variants";
+import { SCREENS, SCREENS2, SCREENS3, VARIANT3, VARIANTS, VARIANTS2 } from "@/design/plan/variants";
 
-export const Route = createFileRoute("/design/plan/sheet/$variant")({ component: Sheet });
+export const Route = createFileRoute("/design/plan/sheet/$variant")({
+  validateSearch: (search: Record<string, unknown>): { part?: 1 | 2 } => ({
+    part:
+      search.part === 1 || search.part === "1" ? 1 : search.part === 2 || search.part === "2" ? 2 : undefined,
+  }),
+  component: Sheet,
+});
 
 /** Tall enough for each screen's whole page, so the bottom slab sits right under the content. */
 const HEIGHT: Record<string, number> = {
@@ -27,15 +33,38 @@ const HEIGHT2: Record<string, number> = {
   plan: 1300,
 };
 
+/** Round 3: G's sixteen screens, split into two sheets (`?part=1|2`) so neither gets too wide. */
+const HEIGHT3: Record<string, number> = {
+  overview: 1500,
+  entry: 2000,
+  "entry-bare": 1250,
+  "entry-regenerating": 2050,
+  "entry-typing": 844,
+  "entry-attached": 2050,
+  filters: 1900,
+  "thread-progress": 1950,
+  "thread-done": 2300,
+  "thread-partial": 1950,
+  "thread-round2": 3500,
+  recipe: 2600,
+  plan: 1750,
+  shopping: 1800,
+  settings: 2700,
+  ate: 1250,
+};
+
 /** All screens of one variant side by side (iframes at phone size, tall enough for the whole page). */
 function Sheet() {
   const { variant } = Route.useParams();
+  const { part } = Route.useSearch();
   const v1 = VARIANTS.find((x) => x.key === variant);
   const v2 = VARIANTS2.find((x) => x.key === variant);
-  const v = v1 ?? v2;
+  const v3 = variant === VARIANT3.key ? VARIANT3 : undefined;
+  const v = v1 ?? v2 ?? v3;
   if (!v) return <p className="p-4">Unknown variant.</p>;
-  const screens = v1 ? SCREENS : SCREENS2;
-  const heights = v1 ? HEIGHT : HEIGHT2;
+  const all = v1 ? SCREENS : v2 ? SCREENS2 : SCREENS3;
+  const screens = v3 && part ? all.slice(part === 1 ? 0 : 8, part === 1 ? 8 : 16) : all;
+  const heights = v1 ? HEIGHT : v2 ? HEIGHT2 : HEIGHT3;
   return (
     <div className="fixed inset-0 overflow-auto bg-neutral-200 p-6 text-neutral-900 dark:bg-neutral-800 dark:text-neutral-100">
       <h1 className="mb-1 font-semibold text-xl">
