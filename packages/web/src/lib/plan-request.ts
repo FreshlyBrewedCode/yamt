@@ -317,10 +317,13 @@ export interface StripRow {
   state: RequestState;
 }
 
-/** The open requests that still want the overview's strip: not past, each with its own state. */
+/**
+ * The open requests that still want the overview's strip: not past, each with its own state. The
+ * nightly ones (#48) have their own quiet row (`nightlyStripRow`), never counted as waiting.
+ */
 export function stripRows(requests: readonly PlanningRequestSummary[], today: string): StripRow[] {
   return requests.flatMap((r) => {
-    if (isPastRequest(r, today)) return [];
+    if (r.request.origin === "nightly" || isPastRequest(r, today)) return [];
     const state = requestState(r);
     return state ? [{ r, state }] : [];
   });

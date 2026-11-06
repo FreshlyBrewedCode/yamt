@@ -25,6 +25,7 @@ import {
   type MealsResponse,
   type MonthResponse,
   mealPaths,
+  type NightlyResponse,
   type PickSuggestionBody,
   type PickSuggestionResponse,
   type PlannedMealResponse,
@@ -39,12 +40,14 @@ import {
   type PushResponse,
   type PushSubscriptionResponse,
   type PushTestResponse,
+  planningNightlyPaths,
   planningPaths,
   planningRequestPaths,
   planningSettingsPaths,
   profilePaths,
   pushPaths,
   type RecipeView,
+  type RegenerateNightlyResponse,
   type RemoveMealResponse,
   type RepeatableResponse,
   type RepeatMealResponse,
@@ -103,6 +106,8 @@ export const keys = {
    */
   planningRequests: ["meals", "planning", "requests"] as const,
   planningRequest: (id: string) => ["meals", "planning", "request", id] as const,
+  /** The nightly run (#48): today's nightly requests and the starters; under "meals" like the threads. */
+  nightly: ["meals", "planning", "nightly"] as const,
 };
 
 /** The browser's zone: days are the phone's calendar days. */
@@ -503,6 +508,36 @@ export function useArchiveRequest() {
   });
 }
 
+// ---- The nightly run (#48) -------------------------------------------------------------------
+
+/**
+ * The nightly part of the entry screen: the settings, when it runs next, today's nightly requests
+ * (newest first; two while a regenerated one runs) and the starters. Polls while a round runs.
+ */
+export function useNightly() {
+  return useQuery({
+    queryKey: keys.nightly,
+    queryFn: () => api.get<NightlyResponse>(planningNightlyPaths.nightly),
+    refetchInterval: (q) =>
+      q.state.data?.requests.some((d) => d.rounds.some((r) => roundOpen(r.status))) ? POLL_MS : false,
+  });
+}
+
+/**
+ * Regenerate: a new nightly request now; today's suggestions stay until its round is done. One
+ * request, not queued (it needs the server); `id` (made when the button rendered) makes a retry
+ * answer the same request.
+ */
+export function useRegenerateNightly() {
+  return useMutation({
+    mutationFn: (id: string) => api.post<RegenerateNightlyResponse>(planningNightlyPaths.regenerate, { id }),
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: keys.nightly });
+      void queryClient.invalidateQueries({ queryKey: keys.planningRequests });
+    },
+  });
+}
+
 /** Every goal, newest first (a short list); `goalInForce` picks a day's. */
 export function useGoals() {
   return useQuery({
@@ -752,6 +787,10 @@ export function useSavePlanningSettings() {
   return useMutation({
     mutationFn: (settings: PlanningSettingsBody) =>
       api.put<PlanningSettingsResponse>(planningSettingsPaths.settings, settings),
-    onSuccess: (r) => queryClient.setQueryData(keys.planningSettings, r),
+    onSuccess: (r) => {
+      queryClient.setQueryData(keys.planningSettings, r);
+      // the nightly run's schedule follows them (#48)
+      void queryClient.invalidateQueries({ queryKey: keys.nightly });
+    },
   });
 }
