@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { PlanGoal } from "./api-calendar.ts";
+import type { LeftoverOffer, LeftoverView } from "./api-leftovers.ts";
 import type { Meal } from "./api-meals.ts";
 import type {
   Confidence,
@@ -141,14 +142,17 @@ export interface PlannedMeal {
   recipeId: string;
   /** The recipe's title. */
   title: string;
-  /** Portions cooked (the shopping list's amount). */
+  /** Portions cooked (the shopping list's amount); 0 for a leftover planned meal. */
   portionsCooked: number;
   /** A factor of one portion: what is eaten. */
   portionEaten: number;
   status: PlannedMealStatus;
   /** The meal "Ate it" logged; null unless `logged`. */
   loggedMealId: string | null;
-  /** The planned meal whose extra cooked portion this is (leftovers, #36 wave 2); null. */
+  /**
+   * A leftover planned meal (#49, "Plan it"): the planned meal whose extra cooked portions it eats
+   * (nothing is cooked: `portionsCooked` 0); null for one that is cooked.
+   */
   leftoverOf: string | null;
   /** The suggestion it was picked from (#44); null for one planned by hand. */
   suggestionId: string | null;
@@ -200,6 +204,12 @@ export interface PlanDay {
    * `projected` (`dayInput`, `classifyDay`); before that the day is "rest open".
    */
   mostlyKnown: boolean;
+  /**
+   * Cooked leftovers the plan offers for one of this day's open slots (#49): each open one with
+   * portions not planned yet, on the first day from the day after it was cooked (today at the
+   * earliest) with lunch open, else dinner; one per slot.
+   */
+  leftoverOffers: LeftoverOffer[];
 }
 
 /** `GET /api/plan?from&to&tz`: the days from `from` to `to` (inclusive, at most `MAX_PLAN_DAYS`). */
@@ -217,6 +227,8 @@ export interface PlanResponse {
   /** Today in the zone: earlier days are past. */
   today: string;
   days: PlanDay[];
+  /** The open leftovers (#49), oldest first. */
+  leftovers: LeftoverView[];
 }
 
 const clientId = z.uuid().optional();

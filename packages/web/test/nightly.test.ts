@@ -48,6 +48,7 @@ const day: PlanDay = {
   },
   openSlots: ["breakfast", "lunch", "dinner"],
   mostlyKnown: false,
+  leftoverOffers: [],
 };
 
 const suggestion = (id: string, over: Partial<PlanningSuggestionView> = {}): PlanningSuggestionView => ({
@@ -206,6 +207,7 @@ describe("agent starters (#48)", () => {
     createdAt: now,
     meal: null,
     request: null,
+    leftover: null,
     ...over,
   });
 
