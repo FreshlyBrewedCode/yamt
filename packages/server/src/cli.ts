@@ -37,7 +37,7 @@ Options:
   --no-auth            Skip the Tailscale identity check (only with --local; for development)
   --dev                Serve the web app from Vite with HMR (on port+1)
   --no-build           Don't check for or rebuild a stale web build
-  --no-worker          Don't run queued jobs (analysis, transcription); they wait for the next start
+  --no-worker          Don't run queued jobs (analysis, planning, transcription); they wait for the next start
 
 Auth: requests must come through \`tailscale serve\` from the configured Tailscale login
 (env YAMT_LOGIN, or "login" in <data-dir>/config.json). /mcp takes bearer tokens instead.
@@ -48,6 +48,11 @@ Agent). "analysis" in <data-dir>/config.json ({"harness": "claude-code" | "openc
 "command": …, "args": […], "env": {…}, "model": …, "effort": …}) sets them under the app's choice;
 env YAMT_ANALYSIS_HARNESS / YAMT_ANALYSIS_MODEL / YAMT_ANALYSIS_EFFORT fix them over it, and
 YAMT_ANALYSIS_COMMAND replaces the command line (a custom ACP agent's only from config or env).
+
+Planning: rounds of meal suggestions run on the same harnesses, by default Claude Code with
+claude-opus-5-5 at effort medium. "planning" in <data-dir>/config.json ({"harness", "model",
+"effort"}) sets them under the app's choice; env YAMT_PLANNING_HARNESS / YAMT_PLANNING_MODEL /
+YAMT_PLANNING_EFFORT fix them over it. Command lines are the analysis's.
 
 Transcription: voice memos are transcribed on this machine's CPU with faster-whisper
 large-v3-turbo (int8, German) by services/stt/run.sh, one short-lived process per batch; the
@@ -164,6 +169,7 @@ async function main(): Promise<number> {
       fdcApiKey: config.fdcApiKey,
       worker: !values["no-worker"],
       analysis: { config: config.analysis },
+      planning: { config: config.planning },
       transcription: { config: config.transcription },
       push: { subject: config.push.subject },
     });
@@ -196,6 +202,8 @@ async function main(): Promise<number> {
         ? "  Analysis: off (--no-worker)"
         : `  Analysis: ${describeAgent(app.services.agent.effective())}; change it in Settings → Agent`,
     );
+    if (!values["no-worker"])
+      console.log(`  Planning: ${describeAgent(app.services.agent.planningEffective())}`);
     if (app.transcription) {
       // found now rather than at the first memo: a missing ffmpeg fails transcripts (not analyses)
       const ffmpeg = await resolveFfmpeg({ configured: config.transcription.ffmpeg }).then(

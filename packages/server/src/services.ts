@@ -1,6 +1,12 @@
 import { AgentDiscovery, type DiscoveryOptions } from "./agent/discovery.ts";
 import { AgentService } from "./agent/settings.ts";
-import { type AnalysisConfig, analysisConfig, DEFAULT_PUSH_SUBJECT, dataPaths } from "./config.ts";
+import {
+  type AnalysisConfig,
+  analysisConfig,
+  DEFAULT_PUSH_SUBJECT,
+  dataPaths,
+  type PlanningAgentConfig,
+} from "./config.ts";
 import type { Db } from "./db/index.ts";
 import { createRepos, type Repos } from "./db/repos/index.ts";
 import { dedupeKeys } from "./db/repos/jobs.ts";
@@ -72,6 +78,8 @@ export interface ServicesOptions {
   timeZone?: string;
   /** The analysis agent from config.json and the env; default `analysisConfig({})`. */
   analysis?: AnalysisConfig;
+  /** The planning agent's config.json and env layers (#45); default: none (Claude Code, Opus, medium). */
+  planning?: PlanningAgentConfig;
   /** Seams for tests: discovering harness options, finding commands on PATH. */
   agent?: { discovery?: Partial<DiscoveryOptions>; which?: (command: string) => string | null };
   /** Web Push: the VAPID subject (default: the project URL); seams for tests. */
@@ -123,8 +131,12 @@ export function createServices(opts: ServicesOptions): Services {
     timeZone,
     opts.heicToJpeg,
     () => queue.wake(),
-    // an archived request's running round: its job is aborted (#45 revokes the run's token too)
-    (requestId) => queue.cancel(dedupeKeys.plan(requestId), REQUEST_ARCHIVED),
+    // an archived request's running round: its token stops working at once (no late save), its
+    // job is aborted (the harness stops)
+    (requestId) => {
+      for (const run of repos.planningRuns.runningForRequest(requestId)) mcpTokens.revokeRun(run.id);
+      return queue.cancel(dedupeKeys.plan(requestId), REQUEST_ARCHIVED);
+    },
   );
   return {
     dataDir: opts.dataDir,
@@ -145,6 +157,7 @@ export function createServices(opts: ServicesOptions): Services {
     push,
     agent: new AgentService({
       config: opts.analysis ?? analysisConfig({}),
+      planning: opts.planning,
       repo: repos.settings,
       discovery: new AgentDiscovery({ dir: dataPaths(opts.dataDir).discovery, ...opts.agent?.discovery }),
       which: opts.agent?.which,

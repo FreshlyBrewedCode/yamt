@@ -8,7 +8,9 @@ import { z } from "zod";
 
 export const runPaths = {
   run: (id: string) => `/api/runs/${id}`,
-  /** NDJSON (`application/x-ndjson`), one `TraceEntry` per line. */
+  /** A planning run (`PlanningRunResponse`). */
+  planningRun: (id: string) => `/api/planning/runs/${id}`,
+  /** An analysis or planning run's NDJSON (`application/x-ndjson`), one `TraceEntry` per line. */
   trace: (id: string) => `/api/runs/${id}/trace`,
 } as const;
 
@@ -64,6 +66,21 @@ export interface AnalysisRun {
 
 export interface RunResponse {
   run: AnalysisRun;
+}
+
+/**
+ * A planning run (#45): an attempt of a round's `plan` job, with its trace in the same place
+ * (`runPaths.trace` serves both kinds). Like an analysis run, without the meal and the revision.
+ */
+export interface PlanningRun extends Omit<AnalysisRun, "mealId" | "revisionId"> {
+  roundId: string;
+  /** The round's suggestions that were ready when the run ended; null while it runs. */
+  ready: number | null;
+}
+
+/** `GET /api/planning/runs/:id`. */
+export interface PlanningRunResponse {
+  run: PlanningRun;
 }
 
 /**

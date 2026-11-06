@@ -12,7 +12,7 @@ import { ProfileRepo } from "./profile.ts";
 import { PushSubscriptionRepo } from "./push.ts";
 import { RecipeRepo } from "./recipes.ts";
 import { RevisionRepo } from "./revisions.ts";
-import { RunRepo } from "./runs.ts";
+import { PlanningRunRepo, RunRepo } from "./runs.ts";
 import { SettingsRepo } from "./settings.ts";
 import { PlanningTranscriptRepo, TranscriptRepo } from "./transcripts.ts";
 import { WeightRepo } from "./weight.ts";
@@ -41,5 +41,6 @@ export function createRepos(db: Db) {
     planningInputs: new PlanningInputRepo(db),
     planningTranscripts: new PlanningTranscriptRepo(db),
     planningRounds: new PlanningRoundRepo(db),
+    planningRuns: new PlanningRunRepo(db),
   };
 }

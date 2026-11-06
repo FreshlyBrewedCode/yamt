@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   type AgentOptionsResponse,
@@ -16,8 +16,8 @@ import {
 import { configStep, effortOption, modelOption } from "../src/acp/config-options.ts";
 import type * as acp from "../src/acp/protocol.ts";
 import { AgentDiscovery, DiscoveryError } from "../src/agent/discovery.ts";
-import { resolveAgent } from "../src/agent/settings.ts";
-import { type AnalysisConfig, analysisConfig, dataPaths } from "../src/config.ts";
+import { PLANNING_AGENT_SETTINGS_KEY, resolveAgent, resolvePlanningAgent } from "../src/agent/settings.ts";
+import { type AnalysisConfig, analysisConfig, dataPaths, loadConfig, planningConfig } from "../src/config.ts";
 import { type AppServer, createServer } from "../src/server.ts";
 import { FAKE_AGENT, fakeAgentConfig, tempDir } from "./helpers.ts";
 
@@ -70,6 +70,73 @@ describe("precedence: env > app > config.json > defaults", () => {
       model: { value: "claude-opus-5-5", source: "default" },
       effort: { value: "max", source: "env", envVar: "YAMT_ANALYSIS_EFFORT" },
     });
+  });
+});
+
+describe("the planning agent (#45): env > the app's planning setting > config.json planning > defaults", () => {
+  test("defaults: Claude Code with claude-opus-5-5 at effort medium (spike #38)", () => {
+    expect(resolvePlanningAgent(planningConfig({}, {}), null)).toEqual({
+      harness: { value: "claude-code", source: "default" },
+      model: { value: "claude-opus-5-5", source: "default" },
+      effort: { value: "medium", source: "default" },
+    });
+    // another harness has no built-in model or effort: its own
+    expect(resolvePlanningAgent(planningConfig({ harness: "opencode" }, {}), null)).toMatchObject({
+      model: { value: null, source: "default" },
+      effort: { value: null, source: "default" },
+    });
+  });
+
+  test("config.json `planning`, under the app's setting, under the env", () => {
+    const file = planningConfig({ model: "claude-sonnet-5", effort: "high" }, {});
+    expect(resolvePlanningAgent(file, null)).toEqual({
+      harness: { value: "claude-code", source: "default" },
+      model: { value: "claude-sonnet-5", source: "config" },
+      effort: { value: "high", source: "config" },
+    });
+    expect(resolvePlanningAgent(file, { harness: "claude-code", model: null, effort: "low" }).effort).toEqual(
+      {
+        value: "low",
+        source: "app",
+      },
+    );
+    const env = planningConfig(
+      { model: "claude-sonnet-5" },
+      { YAMT_PLANNING_MODEL: "claude-opus-5-5", YAMT_PLANNING_EFFORT: "max" },
+    );
+    expect(resolvePlanningAgent(env, { harness: "claude-code", model: "x", effort: "low" })).toEqual({
+      harness: { value: "claude-code", source: "app" },
+      model: { value: "claude-opus-5-5", source: "env", envVar: "YAMT_PLANNING_MODEL" },
+      effort: { value: "max", source: "env", envVar: "YAMT_PLANNING_EFFORT" },
+    });
+    expect(() => planningConfig({}, { YAMT_PLANNING_HARNESS: "nope" })).toThrow("YAMT_PLANNING_HARNESS");
+  });
+
+  test("the services read the app's planning setting per run, apart from the analysis's", () => {
+    const dir = tempDir();
+    writeFileSync(join(dir, "config.json"), JSON.stringify({ planning: { effort: "high" } }));
+    const config = loadConfig(dir, {});
+    const app = createServer({
+      dataDir: join(dir, "data"),
+      port: 0,
+      webDist: null,
+      auth: { kind: "off" },
+      analysis: { config: config.analysis },
+      planning: { config: config.planning },
+    });
+    try {
+      const agent = app.services.agent;
+      expect(agent.forPlanning()).toMatchObject({ model: "claude-opus-5-5", effort: "high" });
+      app.services.repos.settings.set(PLANNING_AGENT_SETTINGS_KEY, {
+        harness: "claude-code",
+        model: "claude-sonnet-5",
+        effort: null,
+      });
+      expect(agent.forPlanning()).toMatchObject({ model: "claude-sonnet-5", effort: "high" });
+      expect(agent.forRun()).toMatchObject({ model: "claude-opus-5-5", effort: null });
+    } finally {
+      void app.stop();
+    }
   });
 });
 

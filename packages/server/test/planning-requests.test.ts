@@ -19,6 +19,7 @@ import {
   type SuggestionResponse,
 } from "@yamt/shared";
 import { IDENTITY_HEADER } from "../src/auth/identity.ts";
+import { newId } from "../src/db/index.ts";
 import { dedupeKeys } from "../src/db/repos/jobs.ts";
 import {
   DIDNT_COMPLETE,
@@ -138,7 +139,19 @@ function setup() {
     return saved;
   };
   const at = (date: string, hour: number) => dayRange(date, TZ).from + hour * HOUR;
-  return { app, s, svc, call, headers, today, create, detail, suggest, more, text, fill, dal, at };
+  /** A run of the round, as the plan job (#45) records one before it takes the round. */
+  const run = (roundId: string) =>
+    s.repos.planningRuns.insert({
+      id: newId(),
+      roundId,
+      jobId: null,
+      attempt: 1,
+      harness: "custom",
+      model: null,
+      effort: null,
+      startedAt: Date.now(),
+    }).id;
+  return { app, s, svc, call, headers, today, create, detail, suggest, more, text, fill, dal, at, run };
 }
 
 describe("requests", () => {
@@ -511,7 +524,7 @@ describe("rounds", () => {
 });
 
 describe("the agent's side", () => {
-  const { svc, create, detail, suggest, dal, today } = setup();
+  const { svc, create, detail, suggest, dal, today, run } = setup();
   const round = async (filters: Record<string, unknown> = {}) => {
     const request = await create({ filters });
     return (await suggest(request.id)).body.round;
@@ -529,7 +542,9 @@ describe("the agent's side", () => {
   test("only a running round takes an outline: exactly its count, which may replace the request's title", async () => {
     const r = await round({ count: 2 });
     expect(() => svc.saveOutline(r.id, { ideas: ideas(2) })).toThrow("not running");
-    svc.startRound(r.id, Bun.randomUUIDv7());
+    // the round names one of its own runs only
+    expect(() => svc.startRound(r.id, Bun.randomUUIDv7())).toThrow("not a run of this round");
+    svc.startRound(r.id, run(r.id));
     expect(() => svc.startRound(r.id, null)).toThrow("not queued");
     expect(() => svc.saveOutline(r.id, { ideas: ideas(3) })).toThrow("asks for 2, not 3");
     const outline = svc.saveOutline(r.id, { ideas: ideas(2), requestTitle: "Linsen am Abend" });
@@ -593,15 +608,15 @@ describe("the agent's side", () => {
 
   test("without a ready suggestion a round doesn't finish: it is requeued or failed", async () => {
     const r = await round();
-    svc.startRound(r.id, Bun.randomUUIDv7());
+    svc.startRound(r.id, run(r.id));
     svc.saveOutline(r.id, { ideas: ideas(3) });
     expect(svc.finishRound(r.id)).toBeNull();
     expect(svc.requeueRound(r.id, "attempt 1 failed")).toMatchObject({
       status: "queued",
       error: "attempt 1 failed",
     });
-    const run = Bun.randomUUIDv7();
-    expect(svc.startRound(r.id, run)).toMatchObject({ status: "running", runId: run, error: null });
+    const second = run(r.id);
+    expect(svc.startRound(r.id, second)).toMatchObject({ status: "running", runId: second, error: null });
     expect(svc.failRound(r.id, "no suggestion completed")).toMatchObject({
       status: "failed",
       error: "no suggestion completed",

@@ -6,6 +6,7 @@ import type { AuthMode } from "./auth/identity.ts";
 import {
   type AnalysisConfig,
   ensureDataDir,
+  type PlanningAgentConfig,
   type TranscriptionConfig,
   transcriptionConfig,
 } from "./config.ts";
@@ -15,7 +16,8 @@ import { staticHandler, WEB_DIST } from "./http/static.ts";
 import { JobWorker } from "./jobs/worker.ts";
 import { createMcpApp, MCP_PATH } from "./mcp/endpoint.ts";
 import type { Fetch } from "./nutrition/http.ts";
-import { notifyMeal } from "./push/messages.ts";
+import { PlanJob, settleRound } from "./planning/job.ts";
+import { notifyMeal, notifyPlan } from "./push/messages.ts";
 import { createServices, type Services, type ServicesOptions } from "./services.ts";
 import type { SttBackend } from "./transcription/backend.ts";
 import { settleTranscript, TranscribeJob } from "./transcription/job.ts";
@@ -42,7 +44,7 @@ export interface ServerOptions {
   /** Web Push: the VAPID subject; for tests, the fetch to push services and the log. */
   push?: ServicesOptions["push"];
   /**
-   * Run the job worker (meal analysis, transcription). Off unless asked for, so tests and tools
+   * Run the job worker (meal analysis, planning rounds, transcription). Off unless asked for, so tests and tools
    * that only need the API never spawn an agent or an STT process; `yamt start` turns it on.
    */
   worker?: boolean | { pollMs?: number };
@@ -53,6 +55,17 @@ export interface ServerOptions {
   analysis?: {
     config?: AnalysisConfig;
     agent?: ServicesOptions["agent"];
+    timeouts?: Partial<RunTimeouts>;
+    transcriptWaitMs?: number;
+    skillPath?: string;
+  };
+  /**
+   * The planning agent (#45): config.json's `planning` and the env (default: Claude Code,
+   * claude-opus-5-5, effort medium), under and over the app's planning setting; the harness
+   * command lines are `analysis.config`'s. Overrides for tests.
+   */
+  planning?: {
+    config?: PlanningAgentConfig;
     timeouts?: Partial<RunTimeouts>;
     transcriptWaitMs?: number;
     skillPath?: string;
@@ -76,7 +89,7 @@ export interface AppServer {
   localUrl: string;
   /** http://127.0.0.1:<port>/mcp, what `.mcp.json` and agent runs point at. */
   mcpUrl: string;
-  /** The job worker, when enabled: analyse and transcribe handlers. */
+  /** The job worker, when enabled: analyse, plan and transcribe handlers. */
   worker: JobWorker | null;
   /** The STT backend's settings in one line (for the startup output), when the worker runs. */
   transcription: string | null;
@@ -96,18 +109,24 @@ export function createServer(opts: ServerOptions): AppServer {
     timeZone: opts.timeZone,
     push: opts.push,
     analysis: opts.analysis?.config,
+    planning: opts.planning?.config,
     agent: opts.analysis?.agent,
   });
   // one process owns the queue: whatever an earlier one left running was interrupted (a failed
   // attempt), and so were its runs; their meals go back to queued, or failed after the last try
   const released = services.repos.jobs.releaseInterrupted();
   services.repos.runs.failInterrupted();
+  services.repos.planningRuns.failInterrupted();
   for (const job of released) {
     settleMeal(services.repos, job);
     settleTranscript(services.repos, job);
-    // an analysis that failed for good while no server ran: say so
+    settleRound(services, job);
+    // an analysis or planning round that failed for good while no server ran: say so
     if (job.type === "analyse" && job.status === "failed") {
       void notifyMeal(services, job.payload.mealId).catch(() => {});
+    }
+    if (job.type === "plan" && job.status === "failed") {
+      void notifyPlan(services, job.payload.roundId).catch(() => {});
     }
   }
   // the interactive MCP token and the VAPID keys exist from the first start on
@@ -147,6 +166,15 @@ export function createServer(opts: ServerOptions): AppServer {
         timeouts: a.timeouts,
         transcriptWaitMs: a.transcriptWaitMs,
         skillPath: a.skillPath,
+      }),
+    );
+    const p = opts.planning ?? {};
+    worker.register(
+      new PlanJob(services, {
+        mcpUrl,
+        timeouts: p.timeouts,
+        transcriptWaitMs: p.transcriptWaitMs,
+        skillPath: p.skillPath,
       }),
     );
     const t = opts.transcription ?? {};

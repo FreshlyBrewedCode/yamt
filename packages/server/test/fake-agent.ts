@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-// A scripted ACP agent for the analysis tests (run as a custom harness: command `bun`, args
+// A scripted ACP agent for the analysis and planning tests (run as a custom harness: command `bun`, args
 // [this file]). Like a real analysis it reads the meal with get_meal over the session's MCP
 // server; a text capture `fake:<script>[:<arg>]` picks what it does next:
 //
@@ -17,6 +17,25 @@
 //   slow:<ms>       streams thought chunks for <ms>, then saves
 //   permissions     asks permission for a shell command, a file edit, a web fetch, a read of the
 //                   meal's first photo and a read of /etc/hostname; records the outcomes; saves
+//
+// A planning round (#45: the prompt names "Planning round <id>") reads get_planning_context; the
+// last text input `fake:<script>[:<arg>]` of the request picks what it does (no directive: plan):
+//
+//   plan            outlines round.count ideas, then saves each (two custom foods it creates, so
+//                   no network) → the round `done` with every suggestion ready
+//   plan-match      the same, its ingredients from one match_ingredients call (Skyr as a
+//                   product, Haferflocken generic with fdcQuery "oats": the nutrition fixtures)
+//   plan-partial    saves the first, fails the second (fail_suggestion), leaves the rest
+//                   outlined → `done`, the rest "didn't complete"
+//   plan-none       outlines, saves nothing → the attempt fails (retried, then the round fails)
+//   plan-once       attempt 1 like plan-none, later attempts like plan (the prompt's "attempt n")
+//   plan-slow:<ms>  outlines, then streams thoughts for <ms> before each save
+//   plan-crash      outlines, saves the first, exits with code 3
+//   plan-hang       outlines, then stops sending anything
+//   plan-auth       fails the prompt with auth_required before anything (not retried → `failed`)
+//
+// A round an earlier attempt left with ready suggestions keeps its outline: the script only
+// completes the ideas still outlined. What it did goes to `plan` in fake-agent.json.
 //
 // Everything it receives (system prompt, session/new fields, prompt blocks, model, permission
 // outcomes, tool results) goes to `fake-agent.json` in its working directory (the run dir).
@@ -223,9 +242,15 @@ const app = acp
         size: 200_000,
         _meta: { "_claude/model": `${s.model}-answered` },
       });
-      const mealId = /meal ([0-9a-f-]{36})/.exec(
-        params.prompt.map((b) => (b.type === "text" ? b.text : "")).join("\n"),
-      )?.[1];
+      const promptText = params.prompt.map((b) => (b.type === "text" ? b.text : "")).join("\n");
+      const roundId = /Planning round ([0-9a-f-]{36})/.exec(promptText)?.[1];
+      if (roundId) {
+        const c = await mcp(s);
+        await planRound({ s, c, roundId, promptText, tool, say, update, signal });
+        await c.close();
+        return stop();
+      }
+      const mealId = /meal ([0-9a-f-]{36})/.exec(promptText)?.[1];
       if (!mealId) {
         await say("No meal id in the prompt.");
         return stop();
@@ -482,6 +507,213 @@ const app = acp
       running.delete(sessionId);
     }
   });
+
+type Call = (
+  name: string,
+  args: Record<string, unknown>,
+  c: Client,
+) => Promise<{ isError: boolean; text: string }>;
+
+interface PlanContext {
+  request: { filters: { slots: string[]; sourceMode: string; portionsCooked: number } };
+  inputs: { kind: string; text?: string }[];
+  round: { roundId: string; count: number; earlierAttempt?: { position: number; status: string }[] };
+  days: { date: string }[];
+}
+
+const DISHES = [
+  "Linsen-Dal mit Spinat",
+  "Hähnchen-Gemüse-Pfanne",
+  "Lachs mit Kartoffeln und Brokkoli",
+  "Tofu-Curry mit Reis",
+  "Bohnen-Chili",
+  "Quark-Pfannkuchen mit Beeren",
+];
+
+/** A planning round, scripted by the request's last `fake:plan…` text input (see the header). */
+async function planRound(o: {
+  s: Session;
+  c: Client;
+  roundId: string;
+  promptText: string;
+  tool: Call;
+  say: (t: string) => Promise<void>;
+  update: (u: acp.SessionUpdate) => Promise<void>;
+  signal: AbortSignal;
+}) {
+  const { s, c, roundId, tool, say, signal } = o;
+  const record: Record<string, unknown> = { roundId, saves: [] as unknown[] };
+  s.record.plan = record;
+  const got = await tool("get_planning_context", { roundId }, c);
+  if (got.isError) {
+    record.contextError = got.text;
+    save(s);
+    await say(`get_planning_context failed: ${got.text}`);
+    return;
+  }
+  const ctx = JSON.parse(got.text) as PlanContext;
+  const directive =
+    ctx.inputs
+      .map((i) => /\bfake:(plan[\w-]*(?::\w+)?)/.exec(i.text ?? "")?.[1])
+      .filter(Boolean)
+      .at(-1) ?? "plan";
+  const [script, arg] = directive.split(":") as [string, string | undefined];
+  const attempt = Number(/attempt (\d+) of/.exec(o.promptText)?.[1] ?? 1);
+  if (script === "plan-auth")
+    throw acp.RequestError.authRequired({}, "Not logged in: run `claude` once (fake)");
+  record.directive = directive;
+  record.attempt = attempt;
+  record.days = ctx.days.map((d) => d.date);
+  save(s);
+
+  const { count } = ctx.round;
+  const slot = ctx.request.filters.slots[0] ?? "dinner";
+  const mode = ctx.request.filters.sourceMode;
+  const source = (n: number) =>
+    mode === "composed"
+      ? { sourceName: "Eigenes Rezept" }
+      : { sourceUrl: `https://example.com/rezepte/${n + 1}`, sourceName: "example.com" };
+  const dateOf = (n: number) => ctx.days[n % Math.max(1, ctx.days.length)]?.date;
+  const earlier = ctx.round.earlierAttempt ?? [];
+  const keep = earlier.some((x) => x.status === "ready");
+  const todo = keep
+    ? earlier.filter((x) => x.status === "outlined").map((x) => x.position)
+    : [...Array(count).keys()];
+  if (!keep) {
+    const outline = await tool(
+      "save_round_outline",
+      {
+        roundId,
+        ideas: Array.from({ length: count }, (_, n) => ({
+          title: DISHES[n % DISHES.length],
+          approach: "Ein erfundenes Testrezept.",
+          sourceMode: mode,
+          ...(mode === "composed" ? {} : { sourceUrl: `https://example.com/rezepte/${n + 1}` }),
+          proposedDate: dateOf(n),
+          proposedSlot: slot,
+        })),
+      },
+      c,
+    );
+    record.outline = outline;
+    save(s);
+    if (outline.isError) {
+      await say(`Gliederung abgelehnt: ${outline.text}`);
+      return;
+    }
+  }
+  if (script === "plan-none" || (script === "plan-once" && attempt === 1)) {
+    await say("Mir fällt nichts Passendes ein.");
+    return;
+  }
+  if (script === "plan-hang") await new Promise(() => {});
+
+  // the ingredients: two made-up foods (no network), or the matcher's first candidates
+  let items: Record<string, unknown>[];
+  if (script === "plan-match") {
+    const m = await tool(
+      "match_ingredients",
+      {
+        roundId,
+        servings: ctx.request.filters.portionsCooked,
+        ...(dateOf(0) ? { slot: { date: dateOf(0), slot } } : {}),
+        ingredients: [
+          { name: "Skyr", grams: 300, state: "as_sold", kind: "product" },
+          { name: "Haferflocken", grams: 80, state: "dry", kind: "generic", fdcQuery: "oats" },
+        ],
+      },
+      c,
+    );
+    record.match = m;
+    const found = m.isError
+      ? []
+      : (
+          JSON.parse(m.text) as {
+            ingredients: { name: string; grams: number; candidates: { foodId: string }[] }[];
+          }
+        ).ingredients;
+    items = found.map((i) =>
+      i.candidates[0]
+        ? { foodId: i.candidates[0].foodId, description: `${i.grams} g ${i.name}`, grams: i.grams }
+        : {
+            description: `${i.grams} g ${i.name}`,
+            grams: i.grams,
+            estimatePer100g: { energyKcal: 100, protein: 5, fat: 2, carbohydrate: 15 },
+            provenance: "estimate",
+          },
+    );
+  } else {
+    const food = async (name: string, per100g: Record<string, number>) =>
+      (
+        JSON.parse((await tool("create_food", { source: "custom", name, per100g }, c)).text) as {
+          foodId: string;
+        }
+      ).foodId;
+    const lentils = await food("Testlinsen, trocken", {
+      energyKcal: 350,
+      protein: 24,
+      fat: 1.5,
+      carbohydrate: 50,
+      fiber: 11,
+    });
+    const veg = await food("Testgemüse", {
+      energyKcal: 30,
+      protein: 2,
+      fat: 0.3,
+      carbohydrate: 4,
+      fiber: 2.5,
+    });
+    items = [
+      { foodId: lentils, description: "120 g Testlinsen", grams: 120 },
+      { foodId: veg, description: "300 g Testgemüse", grams: 300 },
+    ];
+  }
+
+  for (const [k, position] of todo.entries()) {
+    if (script === "plan-slow") {
+      const until = Date.now() + Number(arg ?? 500);
+      while (Date.now() < until && !signal.aborted) {
+        await o.update({ sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "…" } });
+        await sleep(50, signal);
+      }
+      if (signal.aborted) return;
+    }
+    if (script === "plan-partial" && k === 1) {
+      (record.saves as unknown[]).push(
+        await tool("fail_suggestion", { roundId, position, reason: "Kein passendes Rezept gefunden." }, c),
+      );
+      save(s);
+      continue;
+    }
+    if (script === "plan-partial" && k > 1) break;
+    const saved = await tool(
+      "save_suggestion",
+      {
+        roundId,
+        position,
+        title: DISHES[position % DISHES.length],
+        summary: "Erfunden für die Tests.",
+        why: ["Viel Protein für den Abend", "Anders als gestern"],
+        sourceMode: mode,
+        ...source(position),
+        ...(mode === "adapted" ? { changes: ["Sahne → Joghurt"] } : {}),
+        servings: ctx.request.filters.portionsCooked,
+        timeActiveMin: 15,
+        timeTotalMin: 30,
+        steps: ["Alles vorbereiten.", "Kochen und servieren."],
+        items: items.map((i) => ({ provenance: "database", confidence: "medium", ...i })),
+      },
+      c,
+    );
+    (record.saves as unknown[]).push(saved);
+    save(s);
+    if (script === "plan-crash") {
+      await say("Kurz vor dem Absturz.");
+      process.exit(3);
+    }
+  }
+  await say("Fertig.");
+}
 
 app.connect(
   acp.ndJsonStream(

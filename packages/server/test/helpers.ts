@@ -1,7 +1,12 @@
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type AnalysisConfig, analysisConfig } from "../src/config.ts";
+import {
+  type AnalysisConfig,
+  analysisConfig,
+  type PlanningAgentConfig,
+  planningConfig,
+} from "../src/config.ts";
 
 /** A fresh temp dir; tests never touch the real ~/.yamt. */
 export const tempDir = (prefix = "yamt-test-"): string => mkdtempSync(join(tmpdir(), prefix));
@@ -26,3 +31,11 @@ export const fakeAgentConfig = (
   layer: { model?: string; effort?: string } = { model: "fake-smart" },
 ): AnalysisConfig =>
   analysisConfig({ harness: "custom", command: process.execPath, args: [FAKE_AGENT], env, ...layer }, {});
+
+/**
+ * Planning rounds on the fake agent too (#45): the custom harness, whose command line comes from
+ * `fakeAgentConfig` (the analysis's), with `model` (default fake-smart) and `effort`.
+ */
+export const fakePlanningConfig = (
+  layer: { model?: string; effort?: string } = { model: "fake-smart" },
+): PlanningAgentConfig => planningConfig({ harness: "custom", ...layer }, {});

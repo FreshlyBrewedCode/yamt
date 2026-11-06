@@ -178,6 +178,26 @@ export class FoodRepo {
     if (rows.length === 0 && words.length > 1) rows = run(words.join(" OR "));
     return rows.map((r) => ({ food: toFood(r), meals: r.meals, lastUsedAt: r.last_used_at, rank: r.rank }));
   }
+
+  /**
+   * Every food yamt has cached (looked up, searched, read off a label, made up) whose name or
+   * brand matches every word of the query, best FTS match first; no network (#45's matcher asks
+   * it before Open Food Facts and USDA). Falls back to any word matching, like `searchHistory`.
+   */
+  searchCached(query: string, limit: number): Food[] {
+    const words = ftsWords(query);
+    if (words.length === 0) return [];
+    const run = (match: string) =>
+      this.db
+        .query<Row, [string, number]>(
+          `SELECT f.* FROM foods_fts fts JOIN foods f ON f.id = fts.food_id
+           WHERE foods_fts MATCH ? ORDER BY fts.rank, f.updated_at DESC LIMIT ?`,
+        )
+        .all(match, limit);
+    let rows = run(words.join(" "));
+    if (rows.length === 0 && words.length > 1) rows = run(words.join(" OR "));
+    return rows.map(toFood);
+  }
 }
 
 /** Query words as FTS5 prefix terms, quoted so no user input is FTS syntax. */

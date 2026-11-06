@@ -33,6 +33,7 @@ const EVENTS: Record<PushEvent, { title: string; detail: string }> = {
   analysed: { title: "Analysed", detail: "The meal's title and kcal" },
   needs_input: { title: "Needs input", detail: "The agent's question" },
   failed: { title: "Failed", detail: "What went wrong" },
+  planning: { title: "Suggestions", detail: "A planning round is ready or failed" },
 };
 
 const HEADLINE: Record<PushState, string> = {
@@ -47,8 +48,8 @@ const HEADLINE: Record<PushState, string> = {
 
 const EXPLAIN: Record<PushState, string> = {
   loading: "Checking this device…",
-  on: "This device hears when an analysis is done, needs your input or failed. A tap opens the meal.",
-  off: "Get a notification when an analysis is done, needs your input or failed.",
+  on: "This device hears when an analysis is done, needs your input or failed, and when meal suggestions are ready. A tap opens the meal or the suggestions.",
+  off: "Get a notification when an analysis is done, needs your input or failed, and when meal suggestions are ready.",
   blocked: "Notifications for yamt are turned off in this device's settings.",
   "not-installed": "On iPhone, notifications only work in yamt opened from the Home Screen.",
   unsupported: "This browser can't receive push notifications.",

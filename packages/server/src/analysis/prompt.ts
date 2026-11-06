@@ -12,6 +12,7 @@ const MAX_RAW_IMAGE_BYTES = 4 * 1024 * 1024;
 
 /** A photo as the agent gets it: a file it can open, and the bytes to attach if possible. */
 export interface AgentPhoto {
+  /** The capture's id (or the planning input's, #45). */
   captureId: string;
   takenAt: number;
   /** Absolute path of the file to show (the downscaled copy when there is one). */
@@ -26,7 +27,13 @@ export interface AgentPhoto {
  * downscaled copy is cached next to the original as `<capture id>.1600.jpg` (written once,
  * like every media file; the original is never touched). HEIC photos use their JPEG derivative.
  */
-export async function agentPhoto(c: CaptureRecord, media: MediaStore): Promise<AgentPhoto> {
+export async function agentPhoto(
+  c: Pick<
+    CaptureRecord,
+    "id" | "takenAt" | "capturedAt" | "createdAt" | "mimeType" | "mediaPath" | "jpegPath"
+  >,
+  media: MediaStore,
+): Promise<AgentPhoto> {
   const takenAt = c.takenAt ?? c.capturedAt ?? c.createdAt;
   const base = { captureId: c.id, takenAt };
   const heif = c.mimeType === "image/heic" || c.mimeType === "image/heif";

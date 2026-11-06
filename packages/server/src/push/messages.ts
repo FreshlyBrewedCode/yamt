@@ -1,9 +1,10 @@
-import {
-  type Meal,
-  type MealRevisionView,
-  PUSH_EVENTS,
-  type PushEvent,
-  type PushPayload,
+import type {
+  Meal,
+  MealRevisionView,
+  PlanningRequest,
+  PlanningRound,
+  PlanningSuggestion,
+  PushPayload,
 } from "@yamt/shared";
 import type { Services } from "../services.ts";
 import type { DeliveryResult } from "./sender.ts";
@@ -18,13 +19,20 @@ const clip = (s: string, max: number) => {
 const number = (n: number) => Math.round(n).toLocaleString("en");
 const grams = (n: number) => `${n >= 10 ? Math.round(n) : Math.round(n * 10) / 10} g`;
 
+/** The meal statuses the analysis notifies of. */
+const MEAL_EVENTS = ["analysed", "needs_input", "failed"] as const;
+type MealEvent = (typeof MEAL_EVENTS)[number];
+
 /** Whether a meal status is one the analysis notifies of (not `queued`: another analysis waits). */
-export const isPushEvent = (status: string): status is PushEvent =>
-  (PUSH_EVENTS as readonly string[]).includes(status);
+export const isPushEvent = (status: string): status is MealEvent =>
+  (MEAL_EVENTS as readonly string[]).includes(status);
 
 /** A tap opens the meal; with a question, scrolled to it. */
-export const mealUrl = (mealId: string, event: PushEvent) =>
+export const mealUrl = (mealId: string, event: MealEvent) =>
   `/meals/${mealId}${event === "needs_input" ? "#questions" : ""}`;
+
+/** A tap on a planning notification opens the request's thread (#47's screen). */
+export const planningUrl = (requestId: string) => `/plan/requests/${requestId}`;
 
 /**
  * The notification for a meal whose analysis ended (`analysed`, `needs_input`, `failed`), or
@@ -38,7 +46,7 @@ export function mealNotification(
   meal: Meal,
   view: MealRevisionView | null,
   timeZone: string,
-): { event: PushEvent; payload: PushPayload } | null {
+): { event: MealEvent; payload: PushPayload } | null {
   const event = meal.status;
   if (!isPushEvent(event)) return null;
   const title =
@@ -87,6 +95,57 @@ function shortError(error: string | null): string {
   return first
     ? `${clip(`${first[0]!.toUpperCase()}${first.slice(1)}`, MAX_BODY - 16)}. Tap to retry.`
     : "Tap to retry.";
+}
+
+/**
+ * The notification for a planning round that ended (`done` or `failed`), or null for any other
+ * status. The title names the request ("Dinners Tue–Thu"); counts come from the suggestions.
+ *
+ * - done: "3 suggestions for Dinners Tue–Thu" (or "2 of 3 …"), the ready titles below
+ * - failed: "No suggestions for Dinners Tue–Thu", the error's first part
+ */
+export function planningNotification(
+  request: PlanningRequest,
+  round: PlanningRound,
+  suggestions: readonly PlanningSuggestion[],
+): { event: "planning"; payload: PushPayload } | null {
+  if (round.status !== "done" && round.status !== "failed") return null;
+  const base = { url: planningUrl(request.id), tag: `plan-${request.id}`, event: "planning" as const };
+  const what = clip(request.title, MAX_TITLE - 24);
+  if (round.status === "failed") {
+    return {
+      event: "planning",
+      payload: { ...base, title: `No suggestions for ${what}`, body: shortError(round.error) },
+    };
+  }
+  const ready = suggestions.filter((x) => x.status === "ready");
+  const n = ready.length;
+  const count = n === round.count ? `${n}` : `${n} of ${round.count}`;
+  return {
+    event: "planning",
+    payload: {
+      ...base,
+      title: `${count} ${round.count === 1 ? "suggestion" : "suggestions"} for ${what}`,
+      body: clip(ready.map((x) => x.title).join(" · "), MAX_BODY),
+    },
+  };
+}
+
+/**
+ * Called when a round's plan job ended for now (`PlanJob.settled`): sends the round's
+ * notification to every subscription that wants `planning`, if the round ended (`done` or
+ * `failed`) and its request isn't archived (the archive ended it: the user knows).
+ */
+export async function notifyPlan(s: Services, roundId: string): Promise<DeliveryResult[]> {
+  const round = s.repos.planningRounds.get(roundId);
+  const request = round ? s.repos.planningRequests.get(round.requestId) : null;
+  if (!round || !request || request.archivedAt !== null) return [];
+  const message = planningNotification(request, round, s.repos.planningRounds.suggestions(roundId));
+  if (!message) return [];
+  return s.push.broadcast(message.event, message.payload, {
+    topic: request.id.replaceAll("-", ""),
+    urgency: "high",
+  });
 }
 
 /** What "Send test notification" sends. */
