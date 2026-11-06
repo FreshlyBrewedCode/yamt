@@ -2,8 +2,16 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { addDays, type PlanDay, type PlannedMealView } from "@yamt/shared";
+import {
+  addDays,
+  DEFAULT_PLANNING_PREFERENCES,
+  DEFAULT_PLANNING_SETTINGS,
+  type PlanDay,
+  type PlannedMealView,
+  type PlanningPreferences,
+} from "@yamt/shared";
 import { newId } from "../src/db/index.ts";
+import { PLANNING_SETTINGS_KEY } from "../src/domain/planning-settings.ts";
 import { localDate } from "../src/domain/time.ts";
 import {
   MAIN_MEAL_MAX_SHARE,
@@ -249,7 +257,7 @@ describe("a planning run's token", () => {
 });
 
 describe("planning tools", () => {
-  test("context: the request, its inputs, the days with a computed budget per slot, recent meals, empty leftovers and preferences", async () => {
+  test("context: the request, its inputs, the days with a computed budget per slot, recent meals, empty leftovers and default preferences", async () => {
     const tomorrow = addDays(today, 1);
     const { round, token } = runningRound({ days: [today, tomorrow], slots: ["lunch", "dinner"], count: 2 });
     const ctx = await ok<{
@@ -260,7 +268,7 @@ describe("planning tools", () => {
       goal: { targets: typeof TARGETS };
       recentMeals: unknown[];
       leftovers: unknown[];
-      preferences: unknown;
+      preferences: PlanningPreferences;
     }>(await connect(token), "get_planning_context", { roundId: round.id });
     expect(ctx.request.filters.days).toEqual([today, tomorrow]);
     expect(ctx.inputs).toMatchObject([
@@ -275,7 +283,23 @@ describe("planning tools", () => {
     expect(ctx.days[1]!.slots[1]!.budget.energyKcal).toBe(expected.budget.energyKcal!);
     expect(ctx.goal.targets).toEqual(TARGETS);
     expect(ctx.leftovers).toEqual([]);
-    expect(ctx.preferences).toBeNull();
+    expect(ctx.preferences).toEqual(DEFAULT_PLANNING_PREFERENCES);
+  });
+
+  test("context: a saved preference (#46) comes through as the context's preferences", async () => {
+    const { round, token } = runningRound();
+    const preferences: PlanningPreferences = {
+      dislikes: ["Rosenkohl"],
+      neverEat: ["Erdnüsse"],
+      equipment: ["kein Ofen"],
+      weekdayCookingMin: 30,
+      favouriteSites: ["chefkoch.de"],
+    };
+    s.repos.settings.set(PLANNING_SETTINGS_KEY, { ...DEFAULT_PLANNING_SETTINGS, preferences });
+    const ctx = await ok<{ preferences: PlanningPreferences }>(await connect(token), "get_planning_context", {
+      roundId: round.id,
+    });
+    expect(ctx.preferences).toEqual(preferences);
   });
 
   test("outline, save with computed numbers and the slot's fit, replace, fail", async () => {
