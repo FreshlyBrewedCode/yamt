@@ -42,9 +42,25 @@ export const DEFAULT_PLANNING_PREFERENCES: PlanningPreferences = {
 };
 
 /**
+ * The nightly run (#48): a planning request for today's open main slots made at `time` (the
+ * server's zone, `HH:MM`) each day, with `count` suggestions and agent-written starters. Off by
+ * default: it costs a run a day.
+ */
+export const NightlySettings = z
+  .object({
+    enabled: z.boolean(),
+    time: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "HH:MM, 00:00 to 23:59"),
+    count: z.number().int().min(1).max(5),
+  })
+  .strict();
+export type NightlySettings = z.infer<typeof NightlySettings>;
+
+export const DEFAULT_NIGHTLY_SETTINGS: NightlySettings = { enabled: false, time: "03:00", count: 3 };
+
+/**
  * `GET` / `PUT /api/planning/settings`: a whole replace, like `AgentSettingsBody`. `count` 2–5
  * (default 3), `portionsCooked` 1–4 (default 1): narrower than a request's own filters, which may
- * still ask for more.
+ * still ask for more. `nightly`: the nightly run's options (#48).
  */
 export const PlanningSettingsBody = z
   .object({
@@ -52,6 +68,7 @@ export const PlanningSettingsBody = z
     sourceMode: RecipeSourceMode,
     portionsCooked: z.number().int().min(1).max(4),
     preferences: PlanningPreferences,
+    nightly: NightlySettings,
   })
   .strict();
 export type PlanningSettingsBody = z.infer<typeof PlanningSettingsBody>;
@@ -61,6 +78,7 @@ export const DEFAULT_PLANNING_SETTINGS: PlanningSettingsBody = {
   sourceMode: "adapted",
   portionsCooked: 1,
   preferences: DEFAULT_PLANNING_PREFERENCES,
+  nightly: DEFAULT_NIGHTLY_SETTINGS,
 };
 
 export interface PlanningSettingsResponse {

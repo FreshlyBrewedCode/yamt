@@ -5,6 +5,7 @@ export * from "./api-goals.ts";
 export * from "./api-meals.ts";
 export * from "./api-nutrition.ts";
 export * from "./api-planning.ts";
+export * from "./api-planning-nightly.ts";
 export * from "./api-planning-requests.ts";
 export * from "./api-planning-settings.ts";
 export * from "./api-profile.ts";

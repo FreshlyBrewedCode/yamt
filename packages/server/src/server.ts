@@ -17,6 +17,7 @@ import { JobWorker } from "./jobs/worker.ts";
 import { createMcpApp, MCP_PATH } from "./mcp/endpoint.ts";
 import type { Fetch } from "./nutrition/http.ts";
 import { PlanJob, settleRound } from "./planning/job.ts";
+import { NightlyJob } from "./planning/nightly.ts";
 import { notifyMeal, notifyPlan } from "./push/messages.ts";
 import { createServices, type Services, type ServicesOptions } from "./services.ts";
 import type { SttBackend } from "./transcription/backend.ts";
@@ -89,7 +90,7 @@ export interface AppServer {
   localUrl: string;
   /** http://127.0.0.1:<port>/mcp, what `.mcp.json` and agent runs point at. */
   mcpUrl: string;
-  /** The job worker, when enabled: analyse, plan and transcribe handlers. */
+  /** The job worker, when enabled: analyse, plan, nightly and transcribe handlers. */
   worker: JobWorker | null;
   /** The STT backend's settings in one line (for the startup output), when the worker runs. */
   transcription: string | null;
@@ -129,6 +130,8 @@ export function createServer(opts: ServerOptions): AppServer {
       void notifyPlan(services, job.payload.roundId).catch(() => {});
     }
   }
+  // the next nightly run is in the queue while it is on (#48); an overdue one runs now
+  services.nightly.schedule();
   // the interactive MCP token and the VAPID keys exist from the first start on
   services.mcpTokens.interactiveToken();
   services.push.publicKey();
@@ -177,6 +180,7 @@ export function createServer(opts: ServerOptions): AppServer {
         skillPath: p.skillPath,
       }),
     );
+    worker.register(new NightlyJob(services));
     const t = opts.transcription ?? {};
     const tc = t.config ?? transcriptionConfig({});
     const backend =

@@ -134,12 +134,16 @@ export function planningNotification(
 /**
  * Called when a round's plan job ended for now (`PlanJob.settled`): sends the round's
  * notification to every subscription that wants `planning`, if the round ended (`done` or
- * `failed`) and its request isn't archived (the archive ended it: the user knows).
+ * `failed`) and its request isn't archived (the archive ended it: the user knows). A nightly
+ * request's first round (#48: the nightly run, or Regenerate) sends nothing: nobody asked, and it
+ * would be a 3 a.m. notification; the entry screen and the overview's quiet row show it. Rounds
+ * the user starts from it (steer, more) notify as any.
  */
 export async function notifyPlan(s: Services, roundId: string): Promise<DeliveryResult[]> {
   const round = s.repos.planningRounds.get(roundId);
   const request = round ? s.repos.planningRequests.get(round.requestId) : null;
   if (!round || !request || request.archivedAt !== null) return [];
+  if (request.origin === "nightly" && round.number === 1) return [];
   const message = planningNotification(request, round, s.repos.planningRounds.suggestions(roundId));
   if (!message) return [];
   return s.push.broadcast(message.event, message.payload, {

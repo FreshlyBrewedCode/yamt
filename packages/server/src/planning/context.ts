@@ -1,9 +1,12 @@
 import {
   addDays,
+  MAX_STARTERS,
   type MealSlot,
+  MIN_STARTERS,
   type PlanDay,
   type PlanningPreferences,
   type PlanningSuggestionView,
+  STARTER_KINDS,
 } from "@yamt/shared";
 import { isVoiceInput } from "../db/repos/planning-inputs.ts";
 import { HttpError } from "../domain/errors.ts";
@@ -166,6 +169,31 @@ export function planningContext(s: Services, roundId: string) {
     recentMeals: recentMeals(s, today, tz),
     leftovers: planningLeftovers(s),
     preferences: planningPreferences(s),
+    ...(request.origin === "nightly" ? { nightly: nightlyOut(s, request.id, today, tz) } : {}),
+  };
+}
+
+/**
+ * A nightly round's extra (#48): what its starters must look like and the user's recent requests
+ * (for a `last_request` starter's ref).
+ */
+function nightlyOut(s: Services, requestId: string, today: string, tz: string) {
+  const since = dayRange(addDays(today, -RECENT_DAYS), tz).from;
+  return {
+    starters: { min: MIN_STARTERS, max: MAX_STARTERS, kinds: STARTER_KINDS },
+    recentRequests: s.repos.planningRequests
+      .listOpen(50)
+      .filter((r) => r.origin === "user" && r.id !== requestId && r.createdAt >= since)
+      .slice(0, 5)
+      .map((r) => ({
+        requestId: r.id,
+        title: r.title,
+        at: isoLocal(r.createdAt, tz),
+        filters: r.filters,
+        text:
+          s.repos.planningInputs.listForRequest(r.id).find((i) => i.kind === "text" && i.retractedAt === null)
+            ?.text ?? null,
+      })),
   };
 }
 
@@ -211,6 +239,7 @@ function recentMeals(s: Services, today: string, tz: string) {
       d.meals
         .filter((m) => m.totals !== null)
         .map((m) => ({
+          mealId: m.mealId,
           date: d.date,
           slot: m.slot,
           title: m.title,

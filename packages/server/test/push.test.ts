@@ -597,4 +597,18 @@ describe("notifications from the plan job (#45)", () => {
       s.repos.pushSubscriptions.delete(s.repos.pushSubscriptions.byEndpoint(b.subscription.endpoint)!.id);
     }
   });
+
+  test("a nightly round notifies nothing (#48); a round the user asks for from it does", async () => {
+    const phone = browser();
+    s.repos.pushSubscriptions.upsert(phone.subscription);
+    const { request } = s.nightly.regenerate({});
+    const first = s.repos.planningRounds.listForRequest(request.id)[0]!;
+    await waitFor("the nightly round done", () => s.repos.planningRounds.get(first.id)!.status === "done");
+    await Bun.sleep(200);
+    expect(received(phone)).toEqual([]);
+    s.planningRequests.more(request.id);
+    const [more] = await waitFor("a notification", () => received(phone).length === 1 && received(phone));
+    expect(more).toMatchObject({ event: "planning", url: `/plan/requests/${request.id}` });
+    s.repos.pushSubscriptions.delete(s.repos.pushSubscriptions.byEndpoint(phone.subscription.endpoint)!.id);
+  });
 });

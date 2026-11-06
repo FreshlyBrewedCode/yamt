@@ -37,6 +37,12 @@
 // A round an earlier attempt left with ready suggestions keeps its outline: the script only
 // completes the ideas still outlined. What it did goes to `plan` in fake-agent.json.
 //
+// A nightly round (#48: request.origin "nightly", round 1) has no text input, so its script comes
+// from the env, FAKE_ACP_NIGHTLY=<script>[:<arg>] (default plan); it proposes dinner first, then
+// the other slots, and saves four starters with save_starters before the outline: protein_gap
+// (tonight, dinner, high protein), like_meal (ref: the newest recent meal; other without one),
+// season and variety, each with made-up English text. FAKE_ACP_NIGHTLY_STARTERS=0 skips them.
+//
 // Everything it receives (system prompt, session/new fields, prompt blocks, model, permission
 // outcomes, tool results) goes to `fake-agent.json` in its working directory (the run dir).
 //
@@ -515,10 +521,16 @@ type Call = (
 ) => Promise<{ isError: boolean; text: string }>;
 
 interface PlanContext {
-  request: { filters: { slots: string[]; sourceMode: string; portionsCooked: number } };
+  request: { origin: string; filters: { slots: string[]; sourceMode: string; portionsCooked: number } };
   inputs: { kind: string; text?: string }[];
-  round: { roundId: string; count: number; earlierAttempt?: { position: number; status: string }[] };
+  round: {
+    roundId: string;
+    number: number;
+    count: number;
+    earlierAttempt?: { position: number; status: string }[];
+  };
   days: { date: string }[];
+  recentMeals: { mealId: string; title: string | null }[];
 }
 
 const DISHES = [
@@ -552,11 +564,14 @@ async function planRound(o: {
     return;
   }
   const ctx = JSON.parse(got.text) as PlanContext;
+  const nightly = ctx.request.origin === "nightly" && ctx.round.number === 1;
   const directive =
     ctx.inputs
       .map((i) => /\bfake:(plan[\w-]*(?::\w+)?)/.exec(i.text ?? "")?.[1])
       .filter(Boolean)
-      .at(-1) ?? "plan";
+      .at(-1) ??
+    (nightly ? process.env.FAKE_ACP_NIGHTLY : undefined) ??
+    "plan";
   const [script, arg] = directive.split(":") as [string, string | undefined];
   const attempt = Number(/attempt (\d+) of/.exec(o.promptText)?.[1] ?? 1);
   if (script === "plan-auth")
@@ -566,8 +581,50 @@ async function planRound(o: {
   record.days = ctx.days.map((d) => d.date);
   save(s);
 
+  if (nightly && process.env.FAKE_ACP_NIGHTLY_STARTERS !== "0") {
+    const meal = ctx.recentMeals[0];
+    record.starters = await tool(
+      "save_starters",
+      {
+        roundId,
+        starters: [
+          {
+            kind: "protein_gap",
+            text: "High protein tonight",
+            detail: "Made up for the tests: a lean dinner",
+            filters: { when: "today", slots: ["dinner"], constraints: ["high_protein"] },
+          },
+          meal
+            ? {
+                kind: "like_meal",
+                text: `Like ${meal.title ?? "that meal"}, but lighter`,
+                detail: "Made up for the tests",
+                ref: { mealId: meal.mealId },
+              }
+            : { kind: "other", text: "Something new", detail: "Made up for the tests" },
+          {
+            kind: "season",
+            text: "Kürbis while it lasts",
+            detail: "Made up for the tests: in season now",
+            filters: { when: "tomorrow" },
+          },
+          {
+            kind: "variety",
+            text: "Fish again",
+            detail: "Made up for the tests",
+            filters: { when: "week", slots: ["dinner"], count: 2 },
+          },
+        ],
+      },
+      c,
+    );
+    save(s);
+  }
+
   const { count } = ctx.round;
-  const slot = ctx.request.filters.slots[0] ?? "dinner";
+  const slots = nightly ? [...ctx.request.filters.slots].reverse() : ctx.request.filters.slots;
+  const slotOf = (n: number) => slots[n % Math.max(1, slots.length)] ?? "dinner";
+  const slot = slotOf(0);
   const mode = ctx.request.filters.sourceMode;
   const source = (n: number) =>
     mode === "composed"
@@ -590,7 +647,7 @@ async function planRound(o: {
           sourceMode: mode,
           ...(mode === "composed" ? {} : { sourceUrl: `https://example.com/rezepte/${n + 1}` }),
           proposedDate: dateOf(n),
-          proposedSlot: slot,
+          proposedSlot: nightly ? slotOf(n) : slot,
         })),
       },
       c,

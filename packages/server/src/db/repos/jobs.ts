@@ -12,8 +12,10 @@ export interface JobPayloads {
   /** A voice capture's transcript, or a voice planning input's (#44). */
   transcribe: { captureId: string } | { inputId: string };
   analyse: { mealId: string };
-  /** Fills a planning round with suggestions (#45 registers the handler; until then it waits). */
+  /** Fills a planning round with suggestions (#45). */
   plan: { roundId: string };
+  /** The daily nightly planning run (#48): makes today's nightly request, then queues the next day's. */
+  nightly: Record<string, never>;
 }
 export type JobType = keyof JobPayloads;
 export type JobStatus = "queued" | "running" | "done" | "failed" | "cancelled";
@@ -39,13 +41,16 @@ export type Job = { [T in JobType]: JobBase & { type: T; payload: JobPayloads[T]
 
 /**
  * One open analysis per meal, one transcription per voice capture or voice planning input, one
- * open `plan` job per planning request (its rounds run one after the other).
+ * open `plan` job per planning request (its rounds run one after the other), one scheduled
+ * `nightly` run.
  */
 export const dedupeKeys = {
   analyse: (mealId: string) => `analyse:${mealId}`,
   transcribe: (captureId: string) => `transcribe:${captureId}`,
   transcribeInput: (inputId: string) => `transcribe:input:${inputId}`,
   plan: (requestId: string) => `plan:${requestId}`,
+  /** One scheduled nightly run at a time. */
+  nightly: "nightly",
 };
 
 /** Wait before retry n (1-based): 30 s, 2 min, 8 min, … capped at an hour. */
@@ -239,6 +244,11 @@ export class JobRepo {
   /** Whether a job with this key waits in the queue (e.g. another analysis of the meal). */
   hasQueued(dedupeKey: string): boolean {
     return this.queuedWithKey(dedupeKey) !== null;
+  }
+
+  /** The job with this key waiting in the queue, if any (e.g. the next nightly run). */
+  queued(dedupeKey: string): Job | null {
+    return this.queuedWithKey(dedupeKey);
   }
 
   /**

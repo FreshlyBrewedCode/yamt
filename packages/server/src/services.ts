@@ -14,6 +14,7 @@ import { CalendarService } from "./domain/calendar.ts";
 import { FoodService } from "./domain/foods.ts";
 import { GoalService } from "./domain/goals.ts";
 import { MEAL_REMOVED, MealService } from "./domain/meals.ts";
+import { NightlyService } from "./domain/nightly.ts";
 import { PlanningService } from "./domain/planning.ts";
 import { PlanningRequestService, REQUEST_ARCHIVED } from "./domain/planning-requests.ts";
 import { RecipeService } from "./domain/recipes.ts";
@@ -48,6 +49,8 @@ export interface Services {
   planning: PlanningService;
   /** Planning requests: inputs, rounds, suggestions and picking them (#44). */
   planningRequests: PlanningRequestService;
+  /** The nightly run (#48): its schedule, today's nightly requests, Regenerate, the starters. */
+  nightly: NightlyService;
   /** Bearer tokens for /mcp: the interactive one and per-run ones (#8 mints and revokes). */
   mcpTokens: McpTokens;
   /** Outbound fetch (food databases, recipe pages); a fixture-backed fake in tests. */
@@ -151,6 +154,7 @@ export function createServices(opts: ServicesOptions): Services {
     recipes,
     planning,
     planningRequests,
+    nightly: new NightlyService(repos, planning, planningRequests, timeZone),
     mcpTokens,
     fetch: fetchFn,
     timeZone,

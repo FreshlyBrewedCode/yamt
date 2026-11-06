@@ -1,4 +1,13 @@
-import { MAX_SUGGESTIONS, MealSlot, type NutrientTotals, RecipeSourceMode } from "@yamt/shared";
+import {
+  MAX_STARTERS,
+  MAX_SUGGESTIONS,
+  MealSlot,
+  MIN_STARTERS,
+  type NutrientTotals,
+  RecipeSourceMode,
+  STARTER_KINDS,
+  StarterInput,
+} from "@yamt/shared";
 import { z } from "zod";
 import { MAX_WHY_LINES } from "../domain/planning-requests.ts";
 import { localDate } from "../domain/time.ts";
@@ -241,6 +250,23 @@ export function planningTools(s: Services): Tool[] {
             left > 0
               ? `Go on with the next idea (${left} still outlined).`
               : "That was the last one: end the turn with one short sentence.",
+        };
+      },
+    }),
+
+    tool({
+      name: "save_starters",
+      scope: "plan",
+      description: `Nightly rounds only (request.origin "nightly"): save ${MIN_STARTERS}–${MAX_STARTERS} starters, ideas the app's planning screen offers until the next night; a second call replaces the set. Each: kind (${STARTER_KINDS.join(", ")}), text (the idea as a short headline, English, dishes and produce in German: "Lachs mal wieder"), detail (one line why, from the context, no numbers you computed), filters a tap applies (when today|tomorrow|week, slots, timeCapMin, constraints, useUp texts, sourceMode, portionsCooked, count; only what the idea needs) and ref, the id it is about (mealId from recentMeals, requestId from recentRequests, recipeId; leftoverId from leftovers). Never a number in text or detail: the app computes each starter's number live from the kind and ref (protein open now, days since that meal, …).`,
+      schema: z.object({
+        roundId,
+        starters: z.array(StarterInput).min(MIN_STARTERS).max(MAX_STARTERS),
+      }),
+      run({ roundId, starters }) {
+        const saved = s.nightly.saveStarters(roundId, starters);
+        return {
+          saved: saved.map((x) => ({ position: x.position, kind: x.kind, text: x.text })),
+          next: "Go on with the round's suggestions (or end the turn if they are all saved).",
         };
       },
     }),
