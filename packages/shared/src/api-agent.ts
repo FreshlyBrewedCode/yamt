@@ -16,6 +16,8 @@ export const agentPaths = {
   agent: "/api/agent",
   /** GET `?harness=…[&model=…][&refresh=1]`: the harness's models and efforts (`AgentOptionsResponse`). */
   options: "/api/agent/options",
+  /** PUT the planning agent (#46), same body and checks as `agent`; it's part of `AgentResponse.planning`. */
+  planningAgent: "/api/agent/planning",
 } as const;
 
 export const HARNESS_KINDS = ["claude-code", "opencode", "custom"] as const;
@@ -47,8 +49,7 @@ export interface HarnessInfo {
   reason: string | null;
 }
 
-/** `GET /api/agent`. */
-export interface AgentResponse {
+export interface AgentPart {
   harness: SourcedValue<HarnessKind>;
   /** Null: the harness's own default model. */
   model: SourcedValue<string | null>;
@@ -56,6 +57,14 @@ export interface AgentResponse {
   effort: SourcedValue<string | null>;
   /** Every harness yamt knows; `custom` only when config.json or the env configure one. */
   harnesses: HarnessInfo[];
+}
+
+/**
+ * `GET /api/agent`: the analysis agent, and `planning` (#46) the planning agent (#45), the same
+ * shape, resolved and saved separately (`PUT /api/agent` and `PUT /api/agent/planning`).
+ */
+export interface AgentResponse extends AgentPart {
+  planning: AgentPart;
 }
 
 const OptionValue = z.string().trim().min(1).max(200);
