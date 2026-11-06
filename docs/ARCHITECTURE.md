@@ -5,7 +5,8 @@ MCP server, #7, the analysis job over ACP, #8, the transcription worker, #9, the
 meal capture, #10, the meal detail with questions and corrections, #11, the day view with
 goals and weight, #12, Web Push notifications, #13, the guided goal setup, #24, paste and
 the iOS Shortcut share target, #26, the agent settings, #28, logging a meal again, #30, the
-calendar, #33, removing a meal, and the data underneath meal planning, #39), how it
+calendar, #33, removing a meal, the data underneath meal planning, #39, planning requests,
+#44, and the suggestion job that fills their rounds, #45), how it
 fits together, and what comes after wave 1. Why it is built this way:
 [ADR 0001](adr/0001-wave-1-architecture.md), for planning [ADR 0003](adr/0003-meal-planning.md). Commands and conventions: [AGENTS.md](../AGENTS.md).
 The design: [design/design.md](design/design.md).
@@ -26,15 +27,18 @@ yamt start   (one Bun process, binds 127.0.0.1:7890 only)
   │                           loopback callers only; the agent's only way to read and write
   ├─ SPA             /*       packages/web/dist   (dev: Vite on 7891 proxies /api); the PWA:
   │                           manifest, icons, /sw.js (app shell, push and notification taps)
-  ├─ job worker      drains the `jobs` table: `analyse` (one at a time), `transcribe` (one batch
-  │    │             at a time, alongside)
+  ├─ job worker      drains the `jobs` table: `analyse` and `plan` (one at a time each),
+  │    │             `transcribe` (one batch at a time, alongside)
   │    ├─ analysis run: one harness process per run, ACP over stdio, cwd ~/.yamt/runs/<run>/
   │    │    claude-agent-acp (node) → `claude` │ `opencode acp` │ custom ACP command
   │    │    (harness, model and effort: Settings → Agent, see Agent settings)
   │    │    └─ MCP over HTTP back to 127.0.0.1:7890/mcp with a per-run token
+  │    ├─ planning run (#45): the same, for one planning round, with the plan-meals skill and
+  │    │    a token scoped to the round (planning settings: env > app > config.json `planning`)
   │    ├─ transcription batch: ffmpeg per memo → 16 kHz WAV in a temp dir, then one
   │    │    services/stt process (uv, Python, faster-whisper on the CPU) for the batch
-  │    └─ a settled analysis → Web Push (web-push: aes128gcm + VAPID) to each subscription
+  │    └─ a settled analysis or planning round → Web Push (web-push: aes128gcm + VAPID) to
+  │         each subscription
   └─ SQLite          ~/.yamt/yamt.db   (WAL, foreign keys, 0600)
      data dir        ~/.yamt/  (0700): yamt.db, media/, runs/, models/, config.json, mcp-token,
                                vapid.json
@@ -129,16 +133,22 @@ packages/server/src/
                           (storeUpload: an upload into the store, for captures and planning inputs; storedFile)
   db/                     index.ts (open, pragmas, migration runner, newId), migrations/*.sql,
                           repos/ (one per aggregate: meals, captures, transcripts, jobs, weight,
-                          foods, revisions, runs, goals, profile, push, settings, recipes, planned-meals,
+                          foods, revisions, runs (analysis and planning runs), goals, profile, push,
+                          settings, recipes, planned-meals,
                           planning-requests, planning-inputs, planning-rounds (rounds and their suggestions);
                           transcripts.ts holds both transcript tables)
   push/                   vapid.ts (the key pair in vapid.json), sender.ts (PushSender: encrypt, sign,
-                          deliver, 404/410 cleanup), messages.ts (what a meal's notification says,
-                          notifyMeal)
+                          deliver, 404/410 cleanup), messages.ts (what a meal's and a planning round's
+                          notification says, notifyMeal, notifyPlan)
+  planning/               the suggestion job (#45): job.ts (PlanJob, settleRound, the turn's cap),
+                          prompt.ts (the round's prompt), tools.ts (the planning MCP tools), context.ts
+                          (get_planning_context; preferences and leftovers for #46/#49), budget.ts (the
+                          slot budget), matcher.ts (match_ingredients: routing and ranking)
 packages/server/test/     bun tests, temp dirs only; fixtures/ holds made-up images and, in
                           nutrition/, recorded OFF/FDC answers and a trimmed recipe page
                           (record.ts re-records them; the gate never hits the network);
-                          fake-agent.ts is a scripted ACP agent (tests never start a real harness),
+                          fake-agent.ts is a scripted ACP agent for analyses and planning rounds
+                          (`fake:<script>` texts; tests never start a real harness),
                           fake-stt.ts a scripted STT process and fake-ffmpeg.ts an ffmpeg stand-in
                           (tests never load a speech model); fixtures/memo-de.m4a is synthetic speech
 packages/shared/test/     bun tests: goal-calc (the fixture, equations, caps, floors, rounding, defaults),
@@ -306,6 +316,11 @@ new value never needs a table rebuild.
   with), or `failed` with an error. Derived, so replaceable: `upsertPending` resets it for a new
   run (`POST /api/captures/:id/transcribe`).
 - **jobs**: see the queue below.
+- **planning_runs** (#45): one per attempt of a round's `plan` job, the columns of `runs` with
+  `round_id` (NOT NULL) instead of the meal and `ready` (the round's ready suggestions when it
+  ended) instead of the revision; never deleted. A sibling rather than a nullable `runs.meal_id`,
+  which SQLite could only loosen by rebuilding `runs` (`meal_revisions` references it, and the
+  migration runner keeps foreign keys on). `RunRepo` and `PlanningRunRepo` share their SQL.
 - **runs**: one per analysis attempt: `meal_id`, `job_id`, `attempt`, `harness`, `model` (the one
   that answered, as the harness reports it), `requested_model` (what the settings asked for; null:
   the harness's default), `requested_effort` and `effort` (asked for, and the harness's effort option
@@ -337,11 +352,12 @@ new value never needs a table rebuild.
   drops it (the numbers are no longer what it explains); a note-only fix keeps it.
 - **push_subscriptions** (#13): one per device and browser that turned notifications on:
   `endpoint` (unique; the push service's URL for it), the browser's keys `p256dh` and `auth`,
-  `events` (JSON toggles `{"analysed": true, "needs_input": true, "failed": true}`; a missing key
-  counts as on), `last_sent_at`, `last_error`. Deleted when the push service answers 404/410 or
+  `events` (JSON toggles `{"analysed": true, "needs_input": true, "failed": true, "planning":
+  true}`; a missing key counts as on, and a PATCH that leaves one out keeps it), `last_sent_at`, `last_error`. Deleted when the push service answers 404/410 or
   the device turns notifications off.
 - **settings** (#28): app settings as `key` → JSON `value`, `updated_at`. `agent`: `{harness,
-  model, effort}` (null model or effort: not set here). Never secrets: those stay in config.json and
+  model, effort}` (null model or effort: not set here). `planning-agent` (#45 reads it, #46's
+  Settings → Agent writes it): the same shape, for planning rounds. Never secrets: those stay in config.json and
   the env.
 - **foods**: the food cache. `source` (`off`, `fdc`, `label`, `custom`) and `source_ref`
   (barcode or FDC id; unique per source, so a refetch updates the row), `name`, `brand`, the core
@@ -389,8 +405,9 @@ new value never needs a table rebuild.
   `transcripts` (`TranscriptRepo` and `PlanningTranscriptRepo` share their SQL).
 - **planning_rounds** (#44): `request_id`, `number` (1, 2, … unique per request), `kind` (`first` |
   `more` | `steer`), `status` (`queued` → `running` → `done` | `failed`), `count` (suggestions asked
-  for), `run_id` (the run filling it, #45; no foreign key yet), `error`, `created_at`, `started_at`,
-  `ended_at`. A partial unique index allows one `queued` or `running` round per request.
+  for), `run_id` (the current or last `planning_runs` row filling it; triggers refuse an id that
+  isn't one of the round's own runs, as a foreign key would without rebuilding the table), `error`,
+  `created_at`, `started_at`, `ended_at`. A partial unique index allows one `queued` or `running` round per request.
 - **planning_suggestions** (#44): `round_id`, `position` (0, 1, … in the outline's order; unique
   per round), `status` (`outlined` → `ready` | `failed`), `title`, `approach` (one line),
   `source_mode`, `source_url`, `proposed_date`, `proposed_slot`, `recipe_id` (set when ready: the
@@ -424,8 +441,7 @@ new value never needs a table rebuild.
 
 `jobs` (`db/repos/jobs.ts`) is a small SQLite queue for one in-process worker loop (analyse,
 transcribe, plan). Types and payloads: `transcribe {captureId}` or `{inputId}` (a voice planning
-input, #44), `analyse {mealId}`, `plan {roundId}` (#44 enqueues it; #45 registers the handler,
-until then it waits in the queue).
+input, #44), `analyse {mealId}`, `plan {roundId}` (#44 enqueues it, #45's `PlanJob` runs it).
 
 - `enqueue(type, payload, {dedupeKey, runAfter, maxAttempts})` is idempotent per `dedupe_key`
   while a job is `queued` (a partial unique index backs it): one open `analyse:<meal>` per meal,
@@ -453,17 +469,18 @@ until then it waits in the queue).
 **The worker loop** (`jobs/worker.ts`, `JobWorker`): one per server process, started by
 `createServer({worker: true})` (`yamt start` does, unless `--no-worker`; tests and tools that
 only need the API don't, so they never spawn an agent or an STT process). Handlers register by
-job type with their own concurrency (`analyse`: 1; `transcribe`: 1 batch, running alongside).
+job type with their own concurrency (`analyse`: 1; `plan`: 1; `transcribe`: 1 batch; each lane
+runs alongside the others).
 Every poll (1 s, or at once after `wake()`) fills each type's lane with `claim({types: [type]})`;
 a batch handler (`runBatch`, `batchSize`) claims up to that many due jobs per slot and returns one
 outcome each. The queue already keeps two jobs with the same key (one meal) from running together. A handler
 returns `done`, `failed` (`retryable: false` fails at once), `reschedule` (no attempt spent) or
 `cancelled` (no longer wanted); throwing counts as a retryable failure. `settled(job)` then sees
 the job as it ended up (`done`, `queued`, `failed`, `cancelled`). `stop()` (server shutdown) aborts
-the running handlers' signal and waits for them; the analysis requeues itself without spending an
-attempt. `cancel(key, reason)` aborts the one running job with that dedupe key (and the batch it is
+the running handlers' signal and waits for them; an analysis or planning round requeues itself
+without spending an attempt. `cancel(key, reason)` aborts the one running job with that dedupe key (and the batch it is
 in) with a `JobCancelled` as the signal's reason; the services reach it as `services.queue.cancel`
-(removing a meal).
+(removing a meal, archiving a planning request).
 
 ## Nutrition layer (#7)
 
@@ -562,8 +579,14 @@ sessions' only way to read and write yamt data.
   with the projection's `progress` against the goal), `get_recipe`, `save_recipe` (an agent-made
   recipe with matched items, validated like revision items; returns the computed totals per portion
   and for the whole recipe), `plan_meal` (a recipe onto a date's slot with portions) and
-  `unplan_meal`. `get_meal` names a meal's `plannedMealId` and marks a revision `kind: "plan"`. Times
-  go out as ISO 8601 with the zone's offset.
+  `unplan_meal`. `get_meal` names a meal's `plannedMealId` and marks a revision `kind: "plan"`. For
+  planning rounds (#45, `planning/tools.ts`, [below](#the-suggestion-job-45)): `get_planning_context`,
+  `match_ingredients`, `save_round_outline`, `save_suggestion`, `fail_suggestion`. Times go out as
+  ISO 8601 with the zone's offset.
+- **Scopes** (`allowed`, `callTool`): `meal` tools take a `mealId` an analysis run's token must
+  match, `plan` tools a `roundId` a planning run's token must match, `food` tools (`search_foods`,
+  `get_food`, `lookup_barcode`, `create_food`, `fetch_recipe`, `match_ingredients`) are open to
+  every token, `interactive` tools only to the interactive token, which may use them all.
 - **Tokens** (`mcp/tokens.ts`, `services.mcpTokens`): `yamt_` + 256 random bits, compared as
   SHA-256 hashes.
   - *Interactive:* one long-lived token in `<data>/mcp-token` (0600), created at the first start
@@ -573,8 +596,12 @@ sessions' only way to read and write yamt data.
   - *Per run:* `mintRun({runId, mealId, ttlMs})` → a token scoped to one meal, in memory only
     (runs don't outlive the server), revoked by `revokeRun(runId)` and expiring after 2 h
     regardless. A run token sees `get_meal`/`save_meal_revision` for its meal only, the food tools,
-    and none of the `interactive` ones (`get_day_summary`, `get_goals`, the planning tools); the revision it saves records its `run_id`, and a second
+    and none of the `interactive` ones (`get_day_summary`, `get_goals`, the plan and recipe tools)
+    or the `plan` ones; the revision it saves records its `run_id`, and a second
     `save_meal_revision` with the same run token is refused (a run saves exactly one).
+  - *Per planning run* (#45): `mintPlanRun({runId, roundId})`, the same lifetime: the `plan` tools
+    of its round only, the food tools, no meal tools (`create_food` takes no `captureId` from it).
+    Revoked when the run ends and at once when its request is archived.
 
 ## Analysis (#8)
 
@@ -676,8 +703,9 @@ about the database or HTTP.
 
 ### Agent settings (#28)
 
-Which harness runs yamt's agent work (today the analysis), which model and which reasoning
-effort. Settings → Agent sets them; nothing about the options is hard-coded.
+Which harness runs yamt's agent work (the analysis; planning rounds have their own line, below),
+which model and which reasoning effort. Settings → Agent sets them; nothing about the options is
+hard-coded.
 
 - **Discovery** (`acp/discover.ts`, `agent/discovery.ts`): the server starts the harness in
   `<data>/discovery/` (one scratch dir: harnesses keep per-directory state), `initialize`,
@@ -704,6 +732,14 @@ effort. Settings → Agent sets them; nothing about the options is hard-coded.
   for (config.json's for its `harness`, default Claude Code); the env's always. `command`/`args`
   (or `YAMT_ANALYSIS_COMMAND`) replace the command line of config.json's harness; the custom
   harness is only offered with one, and the app never edits a command line.
+- **The planning agent** (#45, `resolvePlanningAgent`, `AgentService.forPlanning`), resolved the
+  same way per value: env (`YAMT_PLANNING_HARNESS`, `_MODEL`, `_EFFORT`) > the app's planning
+  setting (`settings` key `planning-agent`, `{harness, model, effort}`; #46 adds it to Settings →
+  Agent) > config.json `planning` (`harness`, `model`, `effort`) > built-in defaults: Claude Code,
+  and for it `claude-opus-5-5` at effort `medium` (spike #38: `low` skipped research and ignored
+  the source mode; Sonnet 5 took 2.3× as long for the same cost). Harness command lines are the
+  analysis's (`analysis.command` / `YAMT_ANALYSIS_COMMAND` for the harness they name), so a
+  `custom` planning harness is the analysis's custom one. `yamt start` prints both lines.
 - **Harnesses found here**: Claude Code when its adapter resolves (node or Bun), OpenCode when
   `opencode` is on PATH, custom when configured; the others are listed as not available.
 - **API**: `GET /api/agent` (the three values with `source` `env` | `app` | `config` | `default`
@@ -739,6 +775,9 @@ text and hash, then the ACP events above, `run.end` with the verdict, usage and 
 are written synchronously, so a crash keeps everything up to it. The run token is redacted
 wherever it appears and image data is replaced by its size. `GET /api/runs/:id/trace` serves the
 file as `application/x-ndjson` (not cached; it grows while the run runs); the meal detail's trace viewer (#11) renders it.
+Planning runs (#45) write the same trace in the same place (`run.start` names the round and the
+request, `run.end` the ready suggestions and the round's status); the route serves both kinds,
+and `GET /api/planning/runs/:id` the planning run's row (`PlanningRun`).
 
 ## Transcription (#9)
 
@@ -856,7 +895,9 @@ All behind the identity check, writes also same-origin; paths in `mealPaths` / `
   retract, transcribe) is a 409 "the meal was removed"; a capture retried with an id that is
   already stored is still answered (200). Reads (`GET /api/meals/:id`, its revisions, media) work.
 - `GET /api/meals/:id` also lists the meal's analysis runs (`runs`, newest first); a revision's
-  `runId` names its run. `GET /api/runs/:id` (the run), `GET /api/runs/:id/trace` (NDJSON).
+  `runId` names its run. `GET /api/runs/:id` (the run), `GET /api/runs/:id/trace` (NDJSON, an
+  analysis or a planning run's), `GET /api/planning/runs/:id` (a planning run, #45; a round's
+  `runId` names its current or last one).
 - `GET /api/meals/:id/revisions` (#11): every revision, newest first, each a full view (items,
   questions with answers, totals computed from its own items by `computeTotals`), so the UI can
   show what a correction changed.
@@ -1099,8 +1140,8 @@ force. Design: spike #31's direction D · Plan ([design.md](design/design.md#com
 
 Planning meals on the phone (epic #36, [ADR 0003](adr/0003-meal-planning.md)). #39 is the data
 underneath: recipes, planned meals, the plan and "Ate it", with interactive MCP tools as the side
-door. Planning requests, rounds and suggestions (#44, [below](#planning-requests-44)) build on it;
-the agent job that fills a round is #45's.
+door. Planning requests, rounds and suggestions (#44, [below](#planning-requests-44)) build on it,
+and the suggestion job (#45, [below](#the-suggestion-job-45)) fills the rounds.
 
 - **Recipes** (`RecipeService`, `domain/recipes.ts`): saved with items matched to foods
   (`resolveItems`, the same validation as `RevisionService.save`: a food with an energy value, or
@@ -1155,14 +1196,14 @@ the agent job that fills a round is #45's.
   times, source and changes.
 - **MCP** (`interactive` scope only): `get_plan`, `get_recipe`, `save_recipe`, `plan_meal`,
   `unplan_meal` (see [MCP server](#mcp-server)), so a Claude Code session can fill the plan before
-  the phone's planning flow exists. The batch ingredient matcher and the suggestion tools come
-  with #45 (spike #38 shaped them).
+  the phone's planning flow exists. The batch ingredient matcher and the suggestion tools are
+  #45's ([below](#the-suggestion-job-45)).
 
 ### Planning requests (#44)
 
 What the user asks for and what comes back (`PlanningRequestService`,
 `domain/planning-requests.ts`; contracts in `api-planning-requests.ts`). The `plan` job that fills
-a round is #45's; here a round is queued and its rules are complete.
+a round is [below](#the-suggestion-job-45).
 
 - **A request** (`POST /api/planning/requests` `{id?, filters?, text?, tz?}`, idempotent with a
   client id): structured `filters` (`days` as local dates in `tz`, `slots`, `timeCapMin`,
@@ -1189,7 +1230,7 @@ a round is #45's; here a round is queued and its rules are complete.
   (`round_id`, set once): an input that arrives while a round is queued or running belongs to the
   next one. It enqueues `plan {roundId}` under `plan:<request>`. One open round per request: a
   second while one is queued or running is a 409 (and a partial unique index refuses it).
-- **The agent's side** (for #45's job and tools, tested here through the service): `startRound`
+- **The agent's side** (what #45's job and tools call): `startRound`
   (`queued` → `running`, with the run), `saveOutline` (exactly `count` ideas, each with title,
   approach, source mode and URL, proposed date and slot, saved as `outlined` suggestions 0, 1, …;
   an earlier outline is replaced while none of it is ready; `requestTitle` renames the request),
@@ -1222,13 +1263,107 @@ a round is #45's; here a round is queued and its rules are complete.
   its live and pending inputs, for the overview strip and the entry screen.
 - **Archiving** (`POST …/:id/archive`, `…/unarchive`, idempotent): out of the list. An open round
   fails ("the planning request was archived", its ideas not yet ready too), its queued `plan` job
-  is cancelled and a running one aborted. An archived request is still readable; every write but
-  an unarchive is a 409.
+  is cancelled and a running one aborted (its run token revoked at once, so a late save can't
+  land). An archived request is still readable; every write but an unarchive is a 409.
+
+### The suggestion job (#45)
+
+The agent fills a round in the background: outline first, then each suggestion as soon as it is
+done, every ingredient matched to real foods, code computing the numbers; a push when the round
+ends. Spike #38's numbers shaped it ([ADR 0003](adr/0003-meal-planning.md), 11–15).
+
+- **The job** (`PlanJob`, `planning/job.ts`; `plan {roundId}`, its own lane next to `analyse` and
+  `transcribe`, concurrency 1). Per attempt:
+  1. A voice input of the round with a `pending` transcript reschedules it 15 s later without
+     spending an attempt; the finished transcript makes it due at once (`nudgeWaiting`). A failed
+     transcript doesn't block: the prompt names it.
+  2. A `planning_runs` row, `<data>/runs/<run id>/` (cwd and trace), the round `running` with the
+     run (`startRound`), a run token scoped to the round (`mintPlanRun`).
+  3. The turn (`runPrompt`): the planning agent (`AgentService.forPlanning`, read per run; model
+     before effort from the session's `configOptions`, as for analysis), the plan-meals skill as the
+     appended system prompt, the yamt MCP server with the run token, web search and fetch, reading
+     the request's photos and files, and the prompt (`planning/prompt.ts`: the round, its number,
+     kind and request title, "attempt n of 3", how to continue an interrupted outline, the photos
+     as image blocks or paths). The turn is capped at `planTurnMs(count)`: 2 min per suggestion +
+     1 min, at most 15; the idle timeouts are the analysis's (3 min, 5 with a tool open).
+  4. **The verdict**: at least one `ready` suggestion → `finishRound` (`done`, ideas left
+     `outlined` fail "didn't complete"), whatever happened after (a crash after the first save
+     still counts; the run's `error` says what followed). None → the attempt fails with the reason
+     ("the agent ended its turn without saving a suggestion (end_turn); it said: …", a timeout, a
+     crash) and the queue retries after 30 s and 2 min (3 attempts; the next outline replaces the
+     failed one's); a missing harness or login fails at once. An archived request stops the run
+     (`cancelled`; the archive failed the round). A server stop requeues it without spending an
+     attempt; ready suggestions stay, and the next run is told to keep the outline and complete the
+     ideas still outlined.
+- **Settling** (`settleRound`, from `PlanJob.settled` and at startup after `releaseInterrupted`):
+  a round is never left `running` without a run. A job back in the queue (retry, reschedule, a
+  crash's interrupted attempt) puts a running round back to `queued` with the reason; a job that
+  failed for good, or was cancelled while the round was open, fails the round with the error.
+- **Tools** (`planning/tools.ts`; scope `plan` unless said otherwise; the interactive token may use
+  them too, writes only on a `running` round):
+  - `get_planning_context {roundId}` (`planning/context.ts`): the request (title, complete
+    filters), every live input (text, link, transcript, photo or file with its local path, the
+    round it came with, `newThisRound` for a steer's), this round (number, kind, count, what an
+    earlier attempt outlined), the earlier rounds with their suggestions (status, title, approach,
+    source, why, failure, **the user's verdict**, per-portion kcal and protein, main ingredients),
+    each requested day (meals eaten with their slot, meals planned, eaten, projected, open slots)
+    with **a budget per requested slot** (`slotBudget`), the goal in force, the analysed meals of
+    the last 14 days with their main items (variety), `leftovers` (`[]` until #49) and
+    `preferences` (null until #46: `PlanningPreferences`, filled in `planningPreferences`).
+  - `match_ingredients` (scope `food`) `{ingredients (≤ 30: name, grams for the whole recipe, state
+    raw|dry|cooked|canned|as_sold, kind generic|product, query?, fdcQuery?), servings, slot?,
+    roundId?, candidates?}` (`planning/matcher.ts`), every ingredient in parallel: the user's
+    **history** first (a strong hit, score ≥ 1.5, complete, plausible, the right state, ends it),
+    then **every cached food** (`FoodRepo.searchCached`, FTS over `foods`, no network; a strong
+    hit ≥ 1.2 ends it), then **USDA** for a `generic` ingredient with an `fdcQuery`, **Open Food
+    Facts** for a `product` (or without FDC), the other one if the first found nothing. Ranked by
+    `scoreCandidate`, then adjusted (`MATCH_ADJUST`): a state word in the name against the
+    ingredient's state −0.4, the right one +0.1, a processed-product word ("granuliert", "Salsa",
+    "Chips", …) the ingredient doesn't use −0.35 for a plain ingredient, no fibre −0.05. Per
+    ingredient: the sources asked, ranked candidates (food id, name, brand, `foundIn`, core per
+    100 g, what the grams come to, state and processed words, `missing` values, score) and
+    warnings (wrong state, processed, energy that doesn't add up to 4P + 4C + 9F + 2 fibre within
+    25 %, no energy); plus one portion with every first candidate (`computeTotals`) and, with a
+    slot, its `fitToSlot` and what the day has open after it. The agent still picks.
+  - `save_round_outline {roundId, ideas: [{title, approach, sourceMode, sourceUrl?, proposedDate,
+    proposedSlot}], requestTitle?}`: exactly the round's count (`saveOutline`), no day in the past.
+  - `save_suggestion {roundId, position, title, summary, why[] (≤ 4), sourceMode, sourceUrl?,
+    sourceName?, changes[], servings, timeActiveMin?, timeTotalMin, steps[], notes?, items
+    (food or estimate, grams for the whole recipe, provenance, confidence, note?, optional?),
+    proposedDate?, proposedSlot?}`: the recipe (validated like `save_recipe`) and the idea `ready`
+    (`saveSuggestion`; the same position again replaces it). Returns the per-portion totals, the
+    day with it (kcal left, protein open), the slot's budget and `fitToSlot`, how many items are
+    estimates, a warning over the request's time cap, and what to do next.
+  - `fail_suggestion {roundId, position, reason}`: an idea given up, with the reason the user reads.
+- **The slot budget** (`planning/budget.ts`, `slotBudget`): per target, what is open (target −
+  projected, never below 0), minus room for a snack while none is eaten or planned that day
+  (`SNACK_RESERVE_SHARE`, 10 % of the target), shared by weight (`SLOT_WEIGHTS`, breakfast 25,
+  lunch 35, dinner 35) between the main slots still open, this one included, and **capped at
+  `MAIN_MEAL_MAX_SHARE` (42 %) of the day's target** (a snack at `SNACK_MAX_SHARE`, 15 %). A
+  ceiling for one portion, not a target: spike #38's worst problem was portions sized to all that
+  was still open. Without a goal there is none.
+- **The plan-meals skill** (`.agents/skills/plan-meals/SKILL.md`): how a round is planned, the
+  counterpart of log-meal and the one place to change planning behaviour. Read at the start of
+  every run (frontmatter stripped) and appended to the system prompt; interactive sessions find it
+  as a skill. It covers reading the text against the filters (the text wins, which slots),
+  realistic portions (the budget as a ceiling, what a plate carries), variety by dish type across
+  recent meals and earlier rounds, steering from earlier rounds and verdicts, the outline and its
+  discipline, the source modes and their fallbacks (a dead link → the next hit; nothing usable →
+  say so or fail the idea), one `match_ingredients` call per recipe, grounding by reference to
+  log-meal (state, fats and oils), German titles like meal titles, and short factual why-lines
+  with numbers only from the tools.
+- **Push**: `PlanJob.settled` calls `notifyPlan` once the job is `done` or `failed` for good (and
+  the server at startup for one that failed while none ran); see [Notifications](#notifications-13).
+- **Fakes**: `test/fake-agent.ts` plays planning rounds when the prompt names one, scripted by the
+  request's last `fake:plan…` text (`plan`, `plan-match`, `plan-partial`, `plan-none`, `plan-once`,
+  `plan-slow:<ms>`, `plan-crash`, `plan-hang`, `plan-auth`; see its header). The e2e server runs
+  planning on it too (`YAMT_PLANNING_HARNESS=custom`).
 
 ## Notifications (#13)
 
 Web Push to the home-screen app: the phone hears when an analysis is done, needs input or
-failed, and a tap opens the meal.
+failed, and a tap opens the meal; and when a planning round is done or failed (#45), and a tap
+opens the request.
 
 - **Keys:** a VAPID key pair (P-256) is made at the first start and kept in `<data>/vapid.json`
   (0600); every subscription is bound to its public key, so it never changes on its own (a broken
@@ -1250,6 +1385,9 @@ failed, and a tap opens the meal.
   moment and sent to every subscription whose toggle for the event is on. An analysis that failed
   for good while no server ran (`releaseInterrupted` at the start) is notified too. Interactive
   sessions saving a revision over MCP don't notify, nor does logging a meal again (#30).
+  `PlanJob.settled` calls `notifyPlan` the same way when a round's job is `done` or `failed` for
+  good: the event `planning` (its own toggle, "Suggestions"; a missing key counts as on), nothing
+  for an archived request (the user ended it), nothing for a retry or a wait.
 - **What it says** (`push/messages.ts`; personal data only inside the encrypted payload):
   analysed "<title> · <kcal> kcal" with "Protein · Fat · Carbs" (from the revision view, i.e.
   `computeTotals`); needs input "<title> · needs input" with the first question ("(+1 more)");
@@ -1257,7 +1395,10 @@ failed, and a tap opens the meal.
   error's first clause and "Tap to retry.". The payload (`PushPayload`) carries `url`
   (`/meals/<id>`, `#questions` for needs input) and `tag` (`meal-<id>`: one notification per meal).
   A removed meal is never notified: `notifyMeal` sends nothing for it, and a run stopped by the
-  removal ends `cancelled`, which isn't notified anyway.
+  removal ends `cancelled`, which isn't notified anyway. A planning round (`planningNotification`):
+  done "3 suggestions for Dinners Tue–Thu" (or "2 of 3 …") with the ready titles; failed "No
+  suggestions for Dinners Tue–Thu" with the error's first clause; `url` `/plan/requests/<id>`
+  (#47's screen), `tag` `plan-<request id>`, `Topic` the request id.
 - **Service worker** (`sw.js`): `push` always shows a notification (iOS revokes subscriptions
   that receive pushes silently) with the tag (`renotify`), and tells open windows to refresh;
   `notificationclick` focuses an open window of the app and posts it the URL, which the router

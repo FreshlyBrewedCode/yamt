@@ -50,6 +50,13 @@ bun packages/server/src/cli.ts mcp-token [--rotate] [--data-dir …]   # print t
   (`YAMT_ANALYSIS_COMMAND="bun $PWD/packages/server/test/fake-agent.ts"`, scripted by a
   `fake:<script>` text capture, with config options like a real harness, see its header) and keep
   live runs few.
+- Meal planning (#45): the worker fills a planning round's suggestions with the same harnesses,
+  by default Claude Code with `claude-opus-5-5` at effort `medium`; over that `"planning":
+  {"harness", "model", "effort"}` in `<data>/config.json`, the app's planning setting (#46; the
+  `planning-agent` setting), and `YAMT_PLANNING_HARNESS` / `YAMT_PLANNING_MODEL` /
+  `YAMT_PLANNING_EFFORT` over everything. Command lines are the analysis's, so the fake agent
+  plays planning too with `YAMT_PLANNING_HARNESS=custom` (scripted by a `fake:plan…` text input,
+  see its header). A real round costs about $0.8 and 2–3 minutes.
 - Transcription: the worker transcribes voice memos on the CPU with faster-whisper
   large-v3-turbo (int8, German) by running `services/stt/run.sh transcribe` once per batch (a uv
   project; Python 3.12 comes from uv). Tools, on this NixOS VM neither is on PATH: **uv** from PATH,
@@ -125,8 +132,9 @@ API, auth, SQLite), `packages/web` (Vite + React + TanStack Router/Query + Tailw
   (#30) copies a revision's items with their per-100 g snapshots (grams × the portion) into a
   `copy` revision without a run; it never re-reads foods or asks a model. "Ate it" (#39) does the
   same with a planned recipe's items (a `plan` revision); recipes, like revisions, are insert-only
-  and carry their per-100 g snapshots. New MCP tools go into `mcp/tools.ts` with a zod schema and
-  a scope (`meal`, `food`, `interactive`), and get a test in `mcp.test.ts` through the SDK client.
+  and carry their per-100 g snapshots. New MCP tools go into `mcp/tools.ts` (planning ones into
+  `planning/tools.ts`) with a zod schema and a scope (`meal`, `plan`, `food`, `interactive`), and
+  get a test through the SDK client (`mcp.test.ts`, `planning-tools.test.ts`).
   Tests never hit the network (`fixtureFetch`).
 - Analysis: how the agent analyses a meal lives in one place, `.agents/skills/log-meal/SKILL.md`
   (the job's appended system prompt and the interactive skill); change behaviour there, not in the
@@ -136,6 +144,15 @@ API, auth, SQLite), `packages/web` (Vite + React + TanStack Router/Query + Tailw
   Harness options (model, effort) are never hard-coded: read them from the session's
   `configOptions` (`acp/config-options.ts`: model by category `model`, effort by `thought_level`
   then known ids) and set the model before the effort.
+- Planning: how the agent plans a round lives in one place, `.agents/skills/plan-meals/SKILL.md`
+  (the plan job's appended system prompt and the interactive skill); change planning behaviour
+  there, not in the prompt code. Code computes what the model must not: the slot budget
+  (`planning/budget.ts`, named constants), the matcher's routing and ranking
+  (`planning/matcher.ts`), every total. A round is `done` with at least one ready suggestion.
+  Tests and the e2e run planning on the fake agent only (`fake:plan`, `plan-match`,
+  `plan-partial`, `plan-none`, `plan-once`, `plan-slow:<ms>`, `plan-crash`, `plan-hang`,
+  `plan-auth`; `fakePlanningConfig()` in `test/helpers.ts`): a server with `worker` set and no
+  planning config would start a real Claude Code for a round.
 - Transcription: the STT backend sits behind `SttBackend` (`transcription/backend.ts`); the
   Python side speaks the NDJSON protocol in `services/stt/yamt_stt/protocol.py`, so change both
   sides together. Python follows vibe-center's services: exact pins in `pyproject.toml`,
