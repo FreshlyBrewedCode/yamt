@@ -122,9 +122,11 @@ API, auth, SQLite), `packages/web` (Vite + React + TanStack Router/Query + Tailw
   available carbohydrate excluding fiber (EU labels), fiber separate: sources that include fiber
   (USDA, US labels) are mapped by subtracting it (`nutrition/nutrients.ts`). Logging a meal again
   (#30) copies a revision's items with their per-100 g snapshots (grams × the portion) into a
-  `copy` revision without a run; it never re-reads foods or asks a model. New MCP tools go into
-  `mcp/tools.ts` with a zod schema and a scope (`meal`, `food`, `interactive`), and get a test in
-  `mcp.test.ts` through the SDK client. Tests never hit the network (`fixtureFetch`).
+  `copy` revision without a run; it never re-reads foods or asks a model. "Ate it" (#39) does the
+  same with a planned recipe's items (a `plan` revision); recipes, like revisions, are insert-only
+  and carry their per-100 g snapshots. New MCP tools go into `mcp/tools.ts` with a zod schema and
+  a scope (`meal`, `food`, `interactive`), and get a test in `mcp.test.ts` through the SDK client.
+  Tests never hit the network (`fixtureFetch`).
 - Analysis: how the agent analyses a meal lives in one place, `.agents/skills/log-meal/SKILL.md`
   (the job's appended system prompt and the interactive skill); change behaviour there, not in the
   prompt code. `acp/` stays free of DB and HTTP (it reports events; `analysis/` stores them). A run

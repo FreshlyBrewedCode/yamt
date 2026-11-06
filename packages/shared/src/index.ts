@@ -4,6 +4,7 @@ export * from "./api-calendar.ts";
 export * from "./api-goals.ts";
 export * from "./api-meals.ts";
 export * from "./api-nutrition.ts";
+export * from "./api-planning.ts";
 export * from "./api-profile.ts";
 export * from "./api-push.ts";
 export * from "./api-runs.ts";

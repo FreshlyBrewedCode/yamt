@@ -5,9 +5,9 @@ MCP server, #7, the analysis job over ACP, #8, the transcription worker, #9, the
 meal capture, #10, the meal detail with questions and corrections, #11, the day view with
 goals and weight, #12, Web Push notifications, #13, the guided goal setup, #24, paste and
 the iOS Shortcut share target, #26, the agent settings, #28, logging a meal again, #30, the
-calendar, #33, and removing a meal), how it
+calendar, #33, removing a meal, and the data underneath meal planning, #39), how it
 fits together, and what comes after wave 1. Why it is built this way:
-[ADR 0001](adr/0001-wave-1-architecture.md). Commands and conventions: [AGENTS.md](../AGENTS.md).
+[ADR 0001](adr/0001-wave-1-architecture.md), for planning [ADR 0003](adr/0003-meal-planning.md). Commands and conventions: [AGENTS.md](../AGENTS.md).
 The design: [design/design.md](design/design.md).
 
 ## Components
@@ -20,7 +20,8 @@ iPhone (Safari / home-screen PWA), on the tailnet
 yamt start   (one Bun process, binds 127.0.0.1:7890 only)
   ├─ Hono JSON API   /api/*   identity-header auth (except /api/health), same-origin writes,
   │                           zod-validated bodies; meals, captures, media, weight, goals, days, months,
-  │                           push subscriptions, the share target (/api/share: an iOS Shortcut)
+  │                           push subscriptions, the share target (/api/share: an iOS Shortcut), the plan,
+  │                           recipes and planned meals
   ├─ MCP server      /mcp     bearer tokens (agent runs, interactive Claude Code sessions),
   │                           loopback callers only; the agent's only way to read and write
   ├─ SPA             /*       packages/web/dist   (dev: Vite on 7891 proxies /api); the PWA:
@@ -62,6 +63,9 @@ packages/shared/src/      contracts shared by server and web (no runtime deps bu
                           presets as data, `defaultChoices`, `goalWeight`, `refusalFor`; pure, no zod
   api-profile.ts          the profile and guided goals: `profilePaths`, `ProfileBody`, `GuidedGoalBody`
   api-nutrition.ts        foods, revisions, items, questions, totals: enums and types
+  api-planning.ts         meal planning (#36): `planningPaths`, `RecipeSourceMode`, `MealSlot`, `MAIN_SLOTS`,
+                          `PlannedMealStatus`, recipes and their views, planned meals, `PlanQuery` / `PlanResponse`
+                          (`PlanDay`), the bodies, "Ate it" (`LogPlannedMealBody`), `slotOf` (an eaten meal's slot)
   api-runs.ts             analysis runs and trace lines: `runPaths`, `AnalysisRun`, `TraceEntry`
   api-push.ts             Web Push: `pushPaths`, `PUSH_EVENTS`, `SubscribeBody`, `PushEventsBody`,
                           `PushPayload` (what the service worker receives)
@@ -94,7 +98,8 @@ packages/server/src/
   build-stamp.ts          rebuild packages/web/dist when its sources changed
   auth/identity.ts        requireTailnetIdentity: the Tailscale-User-Login check, dev bypass
   auth/bearer.ts          requireBearer: token auth for machine clients (/mcp)
-  http/                   api.ts (mounts), meals.ts, runs.ts, weight.ts, goals.ts, push.ts, share.ts and agent.ts (routes), file-response.ts
+  http/                   api.ts (mounts), meals.ts, runs.ts, weight.ts, goals.ts, push.ts, share.ts, agent.ts and
+                          planning.ts (routes), file-response.ts
                           (media, ranges), middleware.ts (sameOrigin, errors, readJson),
                           origin.ts (originAllowed, publicOrigin), static.ts
   domain/                 errors.ts (HttpError), meals.ts (MealService: captures, retract, analyse,
@@ -102,8 +107,9 @@ packages/server/src/
                           remove and restore),
                           revisions.ts (RevisionService: save, views, day summary), foods.ts
                           (FoodService: search, barcode, create), goals.ts (GoalService: goals and the
-                          day view), calendar.ts (CalendarService: a month, #33), share.ts (ShareService: the share target), time.ts (days and local
-                          times)
+                          day view), calendar.ts (CalendarService: a month, #33; goalsByDate), share.ts (ShareService:
+                          the share target), recipes.ts (RecipeService: save and view, portionItems), planning.ts
+                          (PlanningService: planned meals, the plan, "Ate it", #36), time.ts (days and local times)
   nutrition/              nutrients.ts (OFF/FDC → core set), totals.ts (the only totals), ranking.ts,
                           off.ts / fdc.ts (clients), http.ts (timeouts, size caps, rate limits,
                           User-Agent), recipe.ts (fetch + schema.org Recipe JSON-LD)
@@ -113,7 +119,7 @@ packages/server/src/
                           heic.ts (HEIC → JPEG), downscale.ts (JPEG → ≤ 1600 px, upright)
   db/                     index.ts (open, pragmas, migration runner, newId), migrations/*.sql,
                           repos/ (one per aggregate: meals, captures, transcripts, jobs, weight,
-                          foods, revisions, runs, goals, profile, push, settings)
+                          foods, revisions, runs, goals, profile, push, settings, recipes, planned-meals)
   push/                   vapid.ts (the key pair in vapid.json), sender.ts (PushSender: encrypt, sign,
                           deliver, 404/410 cleanup), messages.ts (what a meal's notification says,
                           notifyMeal)
@@ -254,6 +260,9 @@ new value never needs a table rebuild.
   `current_revision_id` points at the latest revision (null before the first analysis).
   `source_meal_id` (#30): the meal this one was logged again from (null for a meal of its own);
   such a meal starts with no captures, its time pinned (`user`) to the one chosen.
+  `source_planned_meal_id` (#39): the planned meal it was logged from ("Ate it"), likewise without
+  captures and pinned; no foreign key (removing the meal puts the planned meal back to `planned`,
+  which may then be unplanned).
   `removed_at`: when the user removed the meal (soft, see [Removing a meal](#removing-a-meal));
   null for a meal in use. Every query over meals but the lookup by id leaves removed ones out, and
   triggers (`captures_not_on_removed_meal`, `revisions_not_on_removed_meal`) refuse new captures
@@ -321,8 +330,9 @@ new value never needs a table rebuild.
   the source payload (`raw`) and `fetched_at`. `foods_fts` (FTS5, `unicode61 remove_diacritics
   2`, keyed by `food_id`, kept by triggers) indexes name and brand.
 - **meal_revisions**: one per analysis, numbered per meal: `run_id` (the #8 run; null when an
-  interactive session saved it, or for a copy), `kind` (`analysis`, or `copy` for a meal logged
-  again, #30, with `source_revision_id`: the source meal's revision it copied), `title`,
+  interactive session saved it, or for a copy), `kind` (`analysis`, `copy` for a meal logged
+  again, #30, with `source_revision_id`: the source meal's revision it copied, or `plan` for a
+  meal logged from the plan, #39, with no source revision), `title`,
   `summary`, `eaten_at`, `assumptions` (JSON list), `status` (`analysed` | `needs_input`). **meal_items**: `food_id` (null for a pure estimate),
   `description` as captured, `grams`, `provenance` (`weighed`, `label`, `database`, `estimate`),
   `confidence` (`high`, `medium`, `low`), `note`, and the core set per 100 g **copied from the food
@@ -330,6 +340,20 @@ new value never needs a table rebuild.
   **meal_questions**: `question`, `why_it_matters`, `impact_kcal`, `answered_by_capture_id` (the
   latest live answer; recomputed when one arrives or is retracted). Revisions, items and
   questions are immutable and never deleted (triggers); only the answer link changes.
+- **recipes** (#39): `title`, `summary` (one line), `source_mode` (`published` | `adapted` |
+  `composed`), `source_url`, `source_name`, `changes` (JSON list: what an adapted recipe changed),
+  `servings` (the portions the item grams are for), `time_active_min`, `time_total_min`, `steps`
+  (JSON list), `notes`. **recipe_items**: as `meal_items` (food or estimate, `description` as
+  written, `grams` for the whole recipe, provenance, confidence, note, the core set per 100 g copied
+  when saved) plus `optional`. Both **insert-only** (triggers): a changed recipe is a new row, so a
+  planned meal's numbers never move under it.
+- **planned_meals** (#39): `date` (local `YYYY-MM-DD`, like goals), `slot` (`breakfast` | `lunch` |
+  `dinner` | `snack`), `position` (0, 1, … within the date's slot), `recipe_id`, `title` (the
+  recipe's), `portions_cooked` (default 1), `portion_eaten` (a factor of one portion, default 1),
+  `status` (`planned` → `logged` | `skipped`), `logged_meal_id` (unique), `leftover_of` (the
+  planned meal whose extra portion this is; for #36's leftovers, null for now), `suggestion_id`
+  (null until #36's suggestions), `note`. Only a `planned` one can be deleted (unplanned; a trigger
+  keeps logged and skipped ones).
 
 ### Media
 
@@ -485,7 +509,12 @@ sessions' only way to read and write yamt data.
   `get_day_summary` (the meals of a date in the server's zone or a given one, removed ones left
   out, with their totals and the day's, the goal in force with `progress` per target — eaten, target, left, over
   — and the weight measured that day), `get_goals` (every goal newest first with the last day it
-  held, `until`, and whether a same-day goal replaced it; and the one in force on a date). Times
+  held, `until`, and whether a same-day goal replaced it; and the one in force on a date), and for
+  planning (#39) `get_plan` (the plan of a date range, default a week from today, as `GET /api/plan`
+  with the projection's `progress` against the goal), `get_recipe`, `save_recipe` (an agent-made
+  recipe with matched items, validated like revision items; returns the computed totals per portion
+  and for the whole recipe), `plan_meal` (a recipe onto a date's slot with portions) and
+  `unplan_meal`. `get_meal` names a meal's `plannedMealId` and marks a revision `kind: "plan"`. Times
   go out as ISO 8601 with the zone's offset.
 - **Tokens** (`mcp/tokens.ts`, `services.mcpTokens`): `yamt_` + 256 random bits, compared as
   SHA-256 hashes.
@@ -496,7 +525,7 @@ sessions' only way to read and write yamt data.
   - *Per run:* `mintRun({runId, mealId, ttlMs})` → a token scoped to one meal, in memory only
     (runs don't outlive the server), revoked by `revokeRun(runId)` and expiring after 2 h
     regardless. A run token sees `get_meal`/`save_meal_revision` for its meal only, the food tools,
-    and not `get_day_summary` or `get_goals`; the revision it saves records its `run_id`, and a second
+    and none of the `interactive` ones (`get_day_summary`, `get_goals`, the planning tools); the revision it saves records its `run_id`, and a second
     `save_meal_revision` with the same run token is refused (a run saves exactly one).
 
 ## Analysis (#8)
@@ -800,6 +829,9 @@ All behind the identity check, writes also same-origin; paths in `mealPaths` / `
   measured that day.
 - `GET /api/months/:month?tz` (#33, `calendarPaths`; `YYYY-MM`, else 400): see
   [Calendar](#calendar-33).
+- **Planning** (#39, `planningPaths`): `GET /api/plan?from&to&tz`, `GET /api/recipes/:id`, `POST
+  /api/planned-meals`, `PATCH` / `DELETE /api/planned-meals/:id`, `POST
+  /api/planned-meals/:id/skip` / `unskip` / `log`: see [Planning](#planning-36).
 
 - **Profile and guided goals** (#24, `profilePaths`): `GET /api/profile` (`{profile}`, null before
   the first guided setup), `PUT /api/profile` (`ProfileBody`), `POST /api/goals/guided`
@@ -960,6 +992,10 @@ undone. Raw first (ADR 0001, 5) holds: nothing is deleted.
   current revision, time). Transcriptions the removal cancelled are queued again (their
   transcripts were left `pending`); a stopped analysis is not: the user presses Analyse (a run costs
   money and quota). Restoring a draft bumps `updated_at`, so it can be the share target again.
+- **A meal logged from the plan** (#39): removing it puts its planned meal back to `planned`
+  (`logged_meal_id` cleared), so the plan counts it as planned again and "Ate it" works again;
+  restoring it marks the planned meal `logged` again if it is still `planned` (else the meal stays
+  one of its own).
 - **No notification** for a removed meal (`notifyMeal`).
 - **The phone:** the meal's screen (detail or capture view) ends with a "Remove meal" row with an
   inline confirm; it posts the removal (one request, not through the upload queue: offline it
@@ -1003,6 +1039,63 @@ force. Design: spike #31's direction D · Plan ([design.md](design/design.md#com
   (`dailyWeights`, the same as the goals screen's trend).
 - **The screen** (`/calendar?month&day`): see [Screens](#screens-10-11-12-13-24-30-33). The web
   app classifies with the same shared functions; the server sends inputs, not verdicts.
+
+## Planning (#36)
+
+Planning meals on the phone (epic #36, [ADR 0003](adr/0003-meal-planning.md)). #39 is the data
+underneath: recipes, planned meals, the plan and "Ate it", with interactive MCP tools as the side
+door. Planning requests, rounds and suggestions (#36's subtasks 5–6) build on it.
+
+- **Recipes** (`RecipeService`, `domain/recipes.ts`): saved with items matched to foods
+  (`resolveItems`, the same validation as `RevisionService.save`: a food with an energy value, or
+  `estimatePer100g` for a pure estimate that can't claim `database` / `label`), the food's per-100 g
+  numbers copied. A `published` or `adapted` recipe names its source (URL or name); only an
+  `adapted` one lists `changes`; the total time includes the active time. Insert-only. **One portion**
+  is each item's grams ÷ `servings` (`portionItems`, to 0.01 g); totals per portion and for the
+  whole recipe come from `computeTotals` whenever the recipe is read. Macros never come from a
+  recipe page.
+- **Planned meals** (`PlanningService`, `domain/planning.ts`): a recipe on a date's slot, at the
+  slot's end, with `portionsCooked` (1–20; later the shopping list's amount) and `portionEaten`
+  (0.1–10, what the plan counts: one portion × it). Idempotent creates with a client `id` (200
+  with the stored one; an id of a planned meal of another recipe is a 409). While `planned` it can
+  be moved (a new date or slot: to its end unless `position` says where; the slots it touches are
+  renumbered 0, 1, …), reordered, re-portioned, skipped and unplanned (deleted); a `skipped` one
+  can only be unskipped, a `logged` one is history (409).
+- **"Ate it"** (`PlanningService.log`, `POST /api/planned-meals/:id/log` `{id?, eatenAt,
+  portionEaten?, excludeItemIds}`), the #30 copy mechanism: in one transaction a new meal
+  (`source_planned_meal_id`, `eatenAt` pinned as `user`) with revision 1 of kind `plan`, no run, no
+  questions: the recipe's items minus the excluded ones (unknown ids and excluding everything are a
+  400), grams = one portion × `portionEaten` (default the planned meal's; to 0.01 g, the same
+  rounding the plan uses, so the logged meal's totals are exactly what the plan counted), the
+  per-100 g snapshots as stored, title and summary from the recipe, and assumptions in English:
+  "Logged from the plan: Kürbis-Curry, 1 of 2 portions, without Feta" and, for a recipe of more
+  than one serving, that the descriptions are for the whole recipe. The planned meal becomes
+  `logged` with `logged_meal_id` and the portion eaten. Idempotent with the new meal's client `id`
+  (200; an id of a meal not from this planned meal is a 409); a second log with a fresh id is a
+  409. No queue, no notification (like Log again); offline it fails. Later changes go through
+  captures and re-analysis as with a copy; the log-meal skill says what a `plan` revision means.
+- **`GET /api/plan?from&to&tz`** (`PlanningService.plan`; `from` ≤ `to`, at most
+  `MAX_PLAN_DAYS` = 31 days, else 400): one pass over the planned meals of the dates (with their
+  recipes and items), the meals eaten in the days' range in the phone's zone and their current
+  revisions' items, and the goals. Per day: `plannedMeals` (every status, by slot then position,
+  each with `perPortion` and `eaten` totals), `meals` (removed ones and empty drafts left out; each
+  with the slot it fills), `eaten` (over the analysed meals, as the day view counts; null when none
+  counts), `projected` (eaten + the planned meals still `planned`; logged ones count through their
+  meal, skipped ones not at all; null when there is neither), the goal in force as a `PlanGoal`
+  (`goalsByDate`, shared with the calendar), `openSlots` (main slots with nothing eaten or still
+  planned) and `mostlyKnown`: a past day, or one with breakfast, lunch and dinner each eaten or
+  planned (snacks optional). An eaten meal's slot is its planned meal's when logged from the plan,
+  else its local time's (`slotOf`: from 4, 11 and 16 o'clock; before 4 a snack), and an analysed one
+  under `SNACK_KCAL` (150) is a snack whatever the time. The web app classifies `projected` with
+  the calendar's functions (`dayInput`, `classifyDay`) only when the day is mostly known, else it
+  shows "rest open"; the server sends inputs, not verdicts.
+- **`GET /api/recipes/:id`**: the recipe with its items (grams and nutrients for the whole recipe
+  and per portion, the matched food or the estimate), `perPortion` and `whole` totals, steps,
+  times, source and changes.
+- **MCP** (`interactive` scope only): `get_plan`, `get_recipe`, `save_recipe`, `plan_meal`,
+  `unplan_meal` (see [MCP server](#mcp-server)), so a Claude Code session can fill the plan before
+  the phone's planning flow exists. The batch ingredient matcher and the suggestion tools are
+  spike #38's to shape.
 
 ## Notifications (#13)
 
@@ -1292,6 +1385,7 @@ with the MCP server (#7), the ACP runtime with the analysis job and worker loop 
 transcription worker (#9), the PWA with meal capture (#10), the meal detail with questions and
 corrections (#11), the day view with goals and weight (#12) and Web Push notifications (#13)
 are in: wave 1 is complete. On top of it, the guided goal setup (#24), paste with the iOS
-Shortcut share target (#26), the agent settings (#28), logging a meal again (#30) and the calendar (#33,
-from spike #31). Spike #4 (speech-to-text) decided ADR 0002; spike #5's chosen design is
+Shortcut share target (#26), the agent settings (#28), logging a meal again (#30), the calendar (#33,
+from spike #31), removing a meal, and the data underneath meal planning (#39, epic #36: recipes,
+planned meals, the plan and "Ate it"; [ADR 0003](adr/0003-meal-planning.md)). Spike #4 (speech-to-text) decided ADR 0002; spike #5's chosen design is
 [design/design.md](design/design.md). See the epic for the decisions each one builds on.

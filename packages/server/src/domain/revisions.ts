@@ -22,6 +22,74 @@ export const MAX_QUESTIONS = 2;
 /** How far ahead of the server an `eatenAt` may lie (client clocks, time zones). */
 const FUTURE_SLACK_MS = 60 * 60_000;
 
+/** An item as the agent (or a session) gives it: a revision's, and a recipe's (#36). */
+export interface ItemInput {
+  /** A food from search_foods / lookup_barcode / create_food … */
+  foodId?: string | null;
+  /** … or, for a pure estimate without a food, its numbers per 100 g (energy required). */
+  estimatePer100g?: (Partial<Nutrients> & { energyKcal: number }) | null;
+  description: string;
+  grams: number;
+  provenance: Provenance;
+  confidence: Confidence;
+  note?: string | null;
+}
+
+/** An item checked and resolved: its food's per-100 g numbers copied (or the estimate). */
+export interface ResolvedItem {
+  foodId: string | null;
+  description: string;
+  grams: number;
+  provenance: Provenance;
+  confidence: Confidence;
+  note: string | null;
+  per100g: Nutrients;
+}
+
+/**
+ * Validates items and copies each one's numbers: a food with an energy value, or
+ * `estimatePer100g` for a pure estimate, which can't claim `database` / `label` provenance.
+ * Errors name the item (`items[2]: …`). The result is in the input's order.
+ */
+export function resolveItems(repos: Repos, input: readonly ItemInput[]): ResolvedItem[] {
+  const foods = repos.foods.getMany(input.flatMap((i) => (i.foodId ? [i.foodId] : [])));
+  return input.map((it, n) => {
+    const where = `items[${n}]`;
+    if (it.foodId && it.estimatePer100g) {
+      throw new HttpError(400, `${where}: give either foodId or estimatePer100g, not both`);
+    }
+    let per100g: Nutrients;
+    if (it.foodId) {
+      const food = foods.get(it.foodId);
+      if (!food)
+        throw new HttpError(400, `${where}.foodId: no food ${it.foodId} (search or create it first)`);
+      if (food.per100g.energyKcal === null) {
+        throw new HttpError(
+          400,
+          `${where}: ${food.name} has no energy value; pick another food or create_food with the label's numbers`,
+        );
+      }
+      per100g = food.per100g;
+    } else if (it.estimatePer100g) {
+      if (it.provenance === "database" || it.provenance === "label") {
+        throw new HttpError(400, `${where}: provenance ${it.provenance} needs a foodId`);
+      }
+      per100g = { ...emptyNutrients(), ...it.estimatePer100g };
+    } else {
+      throw new HttpError(400, `${where}: give a foodId, or estimatePer100g for a pure estimate`);
+    }
+    return {
+      foodId: it.foodId ?? null,
+      description: it.description.trim(),
+      grams: it.grams,
+      provenance: it.provenance,
+      confidence: it.confidence,
+      note: it.note?.trim() || null,
+      per100g,
+    };
+  });
+}
+
 export interface SaveRevisionInput {
   mealId: string;
   /** The analysis run (#8) saving it; null for interactive sessions. */
@@ -30,17 +98,7 @@ export interface SaveRevisionInput {
   summary: string;
   eatenAt: number | null;
   assumptions: string[];
-  items: {
-    /** A food from search_foods / lookup_barcode / create_food … */
-    foodId?: string | null;
-    /** … or, for a pure estimate without a food, its numbers per 100 g (energy required). */
-    estimatePer100g?: (Partial<Nutrients> & { energyKcal: number }) | null;
-    description: string;
-    grams: number;
-    provenance: Provenance;
-    confidence: Confidence;
-    note?: string | null;
-  }[];
+  items: ItemInput[];
   questions: { question: string; whyItMatters: string; impactKcal: number }[];
 }
 
@@ -96,42 +154,7 @@ export class RevisionService {
       throw new HttpError(400, "eatenAt lies in the future");
     }
 
-    const foods = this.repos.foods.getMany(input.items.flatMap((i) => (i.foodId ? [i.foodId] : [])));
-    const items = input.items.map((it, n) => {
-      const where = `items[${n}]`;
-      if (it.foodId && it.estimatePer100g) {
-        throw new HttpError(400, `${where}: give either foodId or estimatePer100g, not both`);
-      }
-      let per100g: Nutrients;
-      if (it.foodId) {
-        const food = foods.get(it.foodId);
-        if (!food)
-          throw new HttpError(400, `${where}.foodId: no food ${it.foodId} (search or create it first)`);
-        if (food.per100g.energyKcal === null) {
-          throw new HttpError(
-            400,
-            `${where}: ${food.name} has no energy value; pick another food or create_food with the label's numbers`,
-          );
-        }
-        per100g = food.per100g;
-      } else if (it.estimatePer100g) {
-        if (it.provenance === "database" || it.provenance === "label") {
-          throw new HttpError(400, `${where}: provenance ${it.provenance} needs a foodId`);
-        }
-        per100g = { ...emptyNutrients(), ...it.estimatePer100g };
-      } else {
-        throw new HttpError(400, `${where}: give a foodId, or estimatePer100g for a pure estimate`);
-      }
-      return {
-        foodId: it.foodId ?? null,
-        description: it.description.trim(),
-        grams: it.grams,
-        provenance: it.provenance,
-        confidence: it.confidence,
-        note: it.note?.trim() || null,
-        per100g,
-      };
-    });
+    const items = resolveItems(this.repos, input.items);
 
     const status = input.questions.length > 0 ? "needs_input" : "analysed";
     const revision = this.repos.db.transaction(() => {

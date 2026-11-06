@@ -180,7 +180,7 @@ describe("/mcp", () => {
     expect(res.headers.get("content-type")).toContain("application/json");
     expect(res.headers.get("mcp-session-id")).toBeNull();
     const body = (await res.json()) as { result: { tools: unknown[] } };
-    expect(body.result.tools).toHaveLength(9);
+    expect(body.result.tools).toHaveLength(14);
     const get = await fetch(app.mcpUrl, { headers: { Authorization: `Bearer ${interactive}` } });
     expect(get.status).toBe(405);
     expect(get.headers.get("allow")).toBe("POST");
@@ -201,6 +201,11 @@ describe("/mcp", () => {
       "save_meal_revision",
       "get_day_summary",
       "get_goals",
+      "get_plan",
+      "get_recipe",
+      "save_recipe",
+      "plan_meal",
+      "unplan_meal",
     ]);
     const save = tools.find((t) => t.name === "save_meal_revision")!;
     expect(save.inputSchema.required).toEqual(["mealId", "title", "items"]);
@@ -723,6 +728,151 @@ describe("tools end to end (fixtures)", () => {
   });
 });
 
+describe("planning (#39)", () => {
+  interface RecipeOut {
+    recipeId: string;
+    servings: number;
+    items: { itemId: string; grams: number; portionGrams: number; optional?: boolean; food: unknown }[];
+    perPortion: Record<string, number>;
+    whole: Record<string, number>;
+  }
+  interface PlannedOut {
+    plannedMealId: string;
+    status: string;
+    slot: string;
+    eaten: Record<string, number>;
+    perPortion: Record<string, number>;
+  }
+
+  test("a session saves a recipe, plans it, reads the plan and unplans it", async () => {
+    const client = await connect(interactive);
+    const lentils = s.foods.create({
+      source: "custom",
+      name: "Rote Linsen, trocken",
+      per100g: { energyKcal: 340, protein: 24, fat: 1.5, carbohydrate: 50, fiber: 11 },
+    });
+    const recipe = await ok<RecipeOut>(client, "save_recipe", {
+      title: "Linsen-Dal",
+      summary: "Rote Linsen mit Tomaten",
+      sourceMode: "composed",
+      servings: 2,
+      steps: ["Alles 15 Minuten köcheln."],
+      items: [
+        {
+          foodId: lentils.id,
+          description: "150 g rote Linsen",
+          grams: 150,
+          provenance: "database",
+          confidence: "high",
+        },
+        {
+          description: "1 Dose Tomaten",
+          grams: 400,
+          provenance: "estimate",
+          confidence: "medium",
+          estimatePer100g: { energyKcal: 20, protein: 1, carbohydrate: 3 },
+        },
+        {
+          description: "Koriander, optional",
+          grams: 10,
+          provenance: "estimate",
+          confidence: "low",
+          optional: true,
+          estimatePer100g: { energyKcal: 23 },
+        },
+      ],
+    });
+    // 75 g lentils (255) + 200 g tomatoes (40) + 5 g coriander (1) per portion
+    expect(recipe.perPortion.energyKcal).toBe(296);
+    expect(recipe.whole.energyKcal).toBe(592);
+    expect(recipe.items.map((i) => [i.grams, i.portionGrams, i.optional ?? false])).toEqual([
+      [150, 75, false],
+      [400, 200, false],
+      [10, 5, true],
+    ]);
+    expect(await fails(client, "save_recipe", { ...recipeArgs(), sourceMode: "published" })).toContain(
+      "names its source",
+    );
+    expect(await fails(client, "save_recipe", { ...recipeArgs(), items: [] })).toContain("invalid arguments");
+
+    const got = await ok<RecipeOut>(client, "get_recipe", { recipeId: recipe.recipeId });
+    expect(got.items).toHaveLength(3);
+
+    const date = "2026-09-15";
+    const planned = await ok<PlannedOut>(client, "plan_meal", {
+      recipeId: recipe.recipeId,
+      date,
+      slot: "dinner",
+      portionsCooked: 2,
+      portionEaten: 1,
+    });
+    expect(planned).toMatchObject({ status: "planned", slot: "dinner" });
+    expect(planned.eaten.energyKcal).toBe(296);
+    const plan = await ok<{
+      days: {
+        date: string;
+        mostlyKnown: boolean;
+        openSlots: string[];
+        plannedMeals: PlannedOut[];
+        projected: Record<string, number> | null;
+      }[];
+    }>(client, "get_plan", { from: date, to: "2026-09-16", timeZone: TZ });
+    expect(plan.days.map((d) => d.date)).toEqual([date, "2026-09-16"]);
+    expect(plan.days[0]!.plannedMeals.map((p) => p.plannedMealId)).toEqual([planned.plannedMealId]);
+    expect(plan.days[0]!.projected?.energyKcal).toBe(296);
+    expect(plan.days[0]!.openSlots).toEqual(["breakfast", "lunch"]);
+    expect(await fails(client, "get_plan", { from: date, to: "2026-11-15" })).toContain("at most 31 days");
+
+    // logged from the plan, get_meal says so
+    const logged = await api<{ meal: { id: string } }>(
+      "POST",
+      `/api/planned-meals/${planned.plannedMealId}/log`,
+      {
+        eatenAt: Date.now() - 3_600_000,
+        excludeItemIds: [recipe.items[2]!.itemId],
+      },
+    );
+    expect(logged.status).toBe(201);
+    const meal = await ok<{
+      meal: { plannedMealId?: string };
+      currentRevision: { kind: string; assumptions: string[] };
+    }>(client, "get_meal", { mealId: logged.body.meal.id });
+    expect(meal.meal.plannedMealId).toBe(planned.plannedMealId);
+    expect(meal.currentRevision.kind).toBe("plan");
+    expect(meal.currentRevision.assumptions[0]).toBe(
+      "Logged from the plan: Linsen-Dal, 1 of 2 portions, without Koriander, optional",
+    );
+    expect(await fails(client, "unplan_meal", { plannedMealId: planned.plannedMealId })).toContain(
+      "already logged",
+    );
+
+    const other = await ok<PlannedOut>(client, "plan_meal", {
+      recipeId: recipe.recipeId,
+      date,
+      slot: "lunch",
+    });
+    expect(await ok(client, "unplan_meal", { plannedMealId: other.plannedMealId })).toEqual({
+      unplanned: other.plannedMealId,
+    });
+    expect(s.repos.plannedMeals.get(other.plannedMealId)).toBeNull();
+  });
+
+  const recipeArgs = () => ({
+    title: "Test",
+    sourceMode: "composed",
+    servings: 1,
+    items: [
+      {
+        description: "x",
+        grams: 100,
+        provenance: "estimate",
+        confidence: "low",
+        estimatePer100g: { energyKcal: 50 },
+      },
+    ],
+  });
+});
+
 describe("run tokens", () => {
   test("see their meal only, record the run on the revision, stop working when revoked", async () => {
     const meal = await newMeal();
@@ -733,6 +883,9 @@ describe("run tokens", () => {
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name)).not.toContain("get_day_summary");
     expect(tools.map((t) => t.name)).not.toContain("get_goals");
+    for (const name of ["get_plan", "get_recipe", "save_recipe", "plan_meal", "unplan_meal"]) {
+      expect(tools.map((t) => t.name)).not.toContain(name);
+    }
     expect(await fails(client, "get_day_summary", {})).toContain("no tool");
     expect(await fails(client, "get_meal", { mealId: other.id })).toContain(`only use meal ${meal.id}`);
     await ok(client, "get_meal", { mealId: meal.id });

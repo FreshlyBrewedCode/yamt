@@ -52,6 +52,13 @@ assumption says from which meal and by what factor). The meal then has no captur
 until the user adds some, so everything captured counts as new. Start from the copy like from any
 earlier revision: the user's captures say what was different this time.
 
+A current revision of kind `plan` was not analysed either: the user logged a planned meal from
+their meal plan ("Ate it"), and yamt took the planned recipe's items, scaled to the portion they
+said they ate, minus the ingredients they switched off (its assumptions say which recipe, how
+much of how many portions, and without what; item descriptions are as the recipe wrote them, for
+the whole recipe). It is what was planned, not what was observed. Start from it like from a copy:
+the user's captures say what differed from the plan (more oil, no rice, a bigger portion).
+
 ## 3. Split the meal into items
 
 - One item per food as eaten: "2 Scheiben Vollkornbrot", "Butter", "Gouda", not "Käsebrot".

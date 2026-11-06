@@ -4,8 +4,10 @@ import { FoodRepo } from "./foods.ts";
 import { GoalRepo } from "./goals.ts";
 import { JobRepo } from "./jobs.ts";
 import { MealRepo } from "./meals.ts";
+import { PlannedMealRepo } from "./planned-meals.ts";
 import { ProfileRepo } from "./profile.ts";
 import { PushSubscriptionRepo } from "./push.ts";
+import { RecipeRepo } from "./recipes.ts";
 import { RevisionRepo } from "./revisions.ts";
 import { RunRepo } from "./runs.ts";
 import { SettingsRepo } from "./settings.ts";
@@ -30,5 +32,7 @@ export function createRepos(db: Db) {
     profile: new ProfileRepo(db),
     pushSubscriptions: new PushSubscriptionRepo(db),
     settings: new SettingsRepo(db),
+    recipes: new RecipeRepo(db),
+    plannedMeals: new PlannedMealRepo(db),
   };
 }

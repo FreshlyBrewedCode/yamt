@@ -103,6 +103,8 @@ export interface Meal {
   analysisError: string | null;
   /** The meal this one was logged again from (#30); null for a meal of its own. */
   sourceMealId: string | null;
+  /** The planned meal it was logged from ("Ate it", #36); null for a meal of its own. */
+  sourcePlannedMealId: string | null;
   /**
    * When the meal was removed (soft: nothing of it is deleted); null for a meal in use. A removed
    * meal is left out of every list, day, month, total and history, and takes no writes but a

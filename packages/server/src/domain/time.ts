@@ -76,6 +76,9 @@ export function localDate(ms: number, timeZone: string): string {
   return `${p.y}-${String(p.m).padStart(2, "0")}-${String(p.d).padStart(2, "0")}`;
 }
 
+/** The wall-clock hour (0–23) of `ms` in the zone. */
+export const localHour = (ms: number, timeZone: string): number => parts(ms, timeZone).h;
+
 /** ISO 8601 with the zone's offset, to the second: `2026-11-02T12:30:00+01:00`. */
 export function isoLocal(ms: number, timeZone: string): string {
   const p = parts(ms, timeZone);

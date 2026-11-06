@@ -9,6 +9,7 @@ interface Row {
   current_revision_id: string | null;
   analysis_error: string | null;
   source_meal_id: string | null;
+  source_planned_meal_id: string | null;
   removed_at: number | null;
   created_at: number;
   updated_at: number;
@@ -22,6 +23,7 @@ const toMeal = (r: Row): Meal => ({
   currentRevisionId: r.current_revision_id,
   analysisError: r.analysis_error,
   sourceMealId: r.source_meal_id,
+  sourcePlannedMealId: r.source_planned_meal_id,
   removedAt: r.removed_at,
   createdAt: r.created_at,
   updatedAt: r.updated_at,
@@ -29,6 +31,18 @@ const toMeal = (r: Row): Meal => ({
 
 /** What the meals table knows about a meal in the overview; the service adds the revision's part. */
 export type MealCaptureSummary = Omit<MealSummary, "title" | "totals" | "openQuestions">;
+
+/** A meal as the calendar and the plan count it (`MealRepo.tallyBetween`). */
+export interface MealTally {
+  id: string;
+  eatenAt: number;
+  currentRevisionId: string | null;
+  /** The current revision's title; null before the first analysis. */
+  title: string | null;
+  sourcePlannedMealId: string | null;
+  /** Live captures. */
+  captures: number;
+}
 
 /**
  * A removed meal (soft removal) is in no list, day, month, total or history: every query over
@@ -42,20 +56,33 @@ export const CAPTURE_TIME_SQL = "COALESCE(taken_at, captured_at, created_at)";
 export class MealRepo {
   constructor(private readonly db: Db) {}
 
-  /** A new draft; `eatenAt` pins the time (`user`). `sourceMealId`: logged again from that meal (#30). */
-  insert(m: { id?: string; eatenAt?: number; sourceMealId?: string; now?: number } = {}): Meal {
+  /**
+   * A new draft; `eatenAt` pins the time (`user`). `sourceMealId`: logged again from that meal
+   * (#30); `sourcePlannedMealId`: logged from that planned meal ("Ate it", #36).
+   */
+  insert(
+    m: {
+      id?: string;
+      eatenAt?: number;
+      sourceMealId?: string;
+      sourcePlannedMealId?: string;
+      now?: number;
+    } = {},
+  ): Meal {
     const id = m.id ?? newId();
     const now = m.now ?? Date.now();
     this.db
       .query(
-        `INSERT INTO meals (id, status, eaten_at, eaten_at_source, source_meal_id, created_at, updated_at)
-         VALUES (?, 'draft', ?, ?, ?, ?, ?)`,
+        `INSERT INTO meals (id, status, eaten_at, eaten_at_source, source_meal_id, source_planned_meal_id,
+           created_at, updated_at)
+         VALUES (?, 'draft', ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
         m.eatenAt ?? now,
         m.eatenAt === undefined ? "created" : "user",
         m.sourceMealId ?? null,
+        m.sourcePlannedMealId ?? null,
         now,
         now,
       );
@@ -178,27 +205,35 @@ export class MealRepo {
   }
 
   /**
-   * The calendar's pass over meals eaten in [from, to) (#33): one row per meal with its time,
-   * current revision and live captures, in one query.
+   * The calendar's (#33) and the plan's (#36) pass over meals eaten in [from, to): one row per
+   * meal with its time, current revision (and its title), live captures and the planned meal it
+   * was logged from, in one query.
    */
-  tallyBetween(
-    from: number,
-    to: number,
-  ): { id: string; eatenAt: number; currentRevisionId: string | null; captures: number }[] {
+  tallyBetween(from: number, to: number): MealTally[] {
     return this.db
       .query<
-        { id: string; eaten_at: number; current_revision_id: string | null; captures: number },
+        {
+          id: string;
+          eaten_at: number;
+          current_revision_id: string | null;
+          title: string | null;
+          source_planned_meal_id: string | null;
+          captures: number;
+        },
         [number, number]
       >(
-        `SELECT m.id, m.eaten_at, m.current_revision_id,
+        `SELECT m.id, m.eaten_at, m.current_revision_id, r.title, m.source_planned_meal_id,
            (SELECT count(*) FROM captures c WHERE c.meal_id = m.id AND c.retracted_at IS NULL) AS captures
-         FROM meals m WHERE m.eaten_at >= ? AND m.eaten_at < ? AND m.${LIVE} ORDER BY m.eaten_at, m.id`,
+         FROM meals m LEFT JOIN meal_revisions r ON r.id = m.current_revision_id
+         WHERE m.eaten_at >= ? AND m.eaten_at < ? AND m.${LIVE} ORDER BY m.eaten_at, m.id`,
       )
       .all(from, to)
       .map((r) => ({
         id: r.id,
         eatenAt: r.eaten_at,
         currentRevisionId: r.current_revision_id,
+        title: r.title,
+        sourcePlannedMealId: r.source_planned_meal_id,
         captures: r.captures,
       }));
   }

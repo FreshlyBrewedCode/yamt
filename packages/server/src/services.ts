@@ -8,6 +8,8 @@ import { CalendarService } from "./domain/calendar.ts";
 import { FoodService } from "./domain/foods.ts";
 import { GoalService } from "./domain/goals.ts";
 import { MEAL_REMOVED, MealService } from "./domain/meals.ts";
+import { PlanningService } from "./domain/planning.ts";
+import { RecipeService } from "./domain/recipes.ts";
 import { RevisionService } from "./domain/revisions.ts";
 import { ShareService } from "./domain/share.ts";
 import { localTimeZone } from "./domain/time.ts";
@@ -33,6 +35,10 @@ export interface Services {
   goals: GoalService;
   /** The calendar's months (#33). */
   calendar: CalendarService;
+  /** Recipes (#36): saved with matched items, never changed. */
+  recipes: RecipeService;
+  /** Planned meals, the plan and "Ate it" (#36). */
+  planning: PlanningService;
   /** Bearer tokens for /mcp: the interactive one and per-run ones (#8 mints and revokes). */
   mcpTokens: McpTokens;
   /** Outbound fetch (food databases, recipe pages); a fixture-backed fake in tests. */
@@ -114,6 +120,8 @@ export function createServices(opts: ServicesOptions): Services {
     share: new ShareService(repos, meals, timeZone),
     goals: new GoalService(repos, meals, timeZone),
     calendar: new CalendarService(repos, timeZone),
+    recipes: new RecipeService(repos),
+    planning: new PlanningService(repos, revisions, timeZone),
     mcpTokens,
     fetch: fetchFn,
     timeZone,
