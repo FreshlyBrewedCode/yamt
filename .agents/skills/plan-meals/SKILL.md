@@ -34,10 +34,12 @@ Call `get_planning_context` with the round id from the prompt. Then decide, with
   changes what the request is for, give the outline a `requestTitle` ("Mittagessen Mi–Fr").
 - **Hard rules**: the time cap (total time, prep included), constraints (`no_oven`, `one_pot`,
   `vegetarian`, `vegan`, `high_protein`, `low_carb`, or free text like "ohne Pilze"), the
-  preferences' `neverEat` and missing equipment. A suggestion that breaks one is wrong.
+  preferences' `neverEat`, missing equipment, and on a weekday (Monday–Friday)
+  `preferences.weekdayCookingMin` as a second time cap (the request's own `timeCapMin` still
+  applies on any day). A suggestion that breaks one is wrong.
 - **Soft wishes**: leftovers to use up (`useUp`, `leftovers`; use at least one in most
   suggestions, in amounts a leftover really has), dislikes (avoid), favourite sites (look there
-  first), the weekday cooking time.
+  first for a real recipe).
 - **Photos and voice**: a photo of the fridge or a package says what is there; a transcript is the
   user speaking. Open photos by their path when they are not attached.
 

@@ -76,6 +76,8 @@ packages/shared/src/      contracts shared by server and web (no runtime deps bu
   api-planning-requests.ts  planning requests (#44): `planningRequestPaths`, `PlanningFilters` /
                           `ResolvedPlanningFilters` / `PLANNING_DEFAULTS`, `requestTitle`, the input, round and
                           suggestion enums and types (`PlanningSuggestionView` with `SuggestionFit`), the bodies
+  api-planning-settings.ts  Settings → Planning (#46): `planningSettingsPaths`, `PlanningSettingsBody`
+                          (count, source mode, portions, `PlanningPreferences`), `DEFAULT_PLANNING_SETTINGS`
   api-runs.ts             analysis runs and trace lines: `runPaths`, `AnalysisRun`, `TraceEntry`
   api-push.ts             Web Push: `pushPaths`, `PUSH_EVENTS`, `SubscribeBody`, `PushEventsBody`,
                           `PushPayload` (what the service worker receives)
@@ -110,7 +112,7 @@ packages/server/src/
   auth/identity.ts        requireTailnetIdentity: the Tailscale-User-Login check, dev bypass
   auth/bearer.ts          requireBearer: token auth for machine clients (/mcp)
   http/                   api.ts (mounts), meals.ts, runs.ts, weight.ts, goals.ts, push.ts, share.ts, agent.ts,
-                          planning.ts and planning-requests.ts (routes), file-response.ts
+                          planning.ts, planning-requests.ts and planning-settings.ts (routes), file-response.ts
                           (media, ranges), middleware.ts (sameOrigin, errors, readJson, readUpload),
                           origin.ts (originAllowed, publicOrigin), static.ts
   domain/                 errors.ts (HttpError), meals.ts (MealService: captures, retract, analyse,
@@ -122,7 +124,7 @@ packages/server/src/
                           the share target), recipes.ts (RecipeService: save and view), planning.ts
                           (PlanningService: planned meals, the plan, "Ate it", #36), planning-requests.ts
                           (PlanningRequestService: requests, inputs, rounds, suggestions, picking, #44),
-                          time.ts (days and local times)
+                          planning-settings.ts (the `planning` setting, #46), time.ts (days and local times)
   nutrition/              nutrients.ts (OFF/FDC → core set), totals.ts (re-exports the shared totals), ranking.ts,
                           off.ts / fdc.ts (clients), http.ts (timeouts, size caps, rate limits,
                           User-Agent), recipe.ts (fetch + schema.org Recipe JSON-LD)
@@ -142,8 +144,8 @@ packages/server/src/
                           notification says, notifyMeal, notifyPlan)
   planning/               the suggestion job (#45): job.ts (PlanJob, settleRound, the turn's cap),
                           prompt.ts (the round's prompt), tools.ts (the planning MCP tools), context.ts
-                          (get_planning_context; preferences and leftovers for #46/#49), budget.ts (the
-                          slot budget), matcher.ts (match_ingredients: routing and ranking)
+                          (get_planning_context; preferences from #46's setting, leftovers `[]` until
+                          #49), budget.ts (the slot budget), matcher.ts (match_ingredients: routing and ranking)
 packages/server/test/     bun tests, temp dirs only; fixtures/ holds made-up images and, in
                           nutrition/, recorded OFF/FDC answers and a trimmed recipe page
                           (record.ts re-records them; the gate never hits the network);
@@ -188,7 +190,9 @@ packages/web/src/
                           add-strip (photo/note/link/audio/paste, the paste sheet), capture-list (+ useCaptureRows),
                           meal-detail (the detail screen), items-list (provenance, confidence,
                           source), revision-history, trace-view, agent-settings (Settings → Agent, the
-                          model picker), log-again (the Log again sheet, the "Again?" list), calendar (the
+                          model picker, the analysis and planning lines, #46), planning-settings (Settings →
+                          Planning: count, source mode, portions, the preferences sheets, #46), log-again
+                          (the Log again sheet, the "Again?" list), calendar (the
                           month grid, the selected day, the summary, the legend, #33), remove-meal (the
                           Remove meal row, the day's undo strip, a removed meal), planning (the planned-meal
                           row, the Log | Plan slab, the totals note, the fit bar, the Ate-it and Plan-for
@@ -357,8 +361,11 @@ new value never needs a table rebuild.
   the device turns notifications off.
 - **settings** (#28): app settings as `key` → JSON `value`, `updated_at`. `agent`: `{harness,
   model, effort}` (null model or effort: not set here). `planning-agent` (#45 reads it, #46's
-  Settings → Agent writes it): the same shape, for planning rounds. Never secrets: those stay in config.json and
-  the env.
+  Settings → Agent writes it): the same shape, for planning rounds. `planning` (#46, Settings →
+  Planning): `{count, sourceMode, portionsCooked, preferences}` — a new request's filter defaults
+  and the preferences `get_planning_context` returns (`PlanningSettingsBody`,
+  `domain/planning-settings.ts`'s `planningSettings`). Never secrets: those stay in config.json
+  and the env.
 - **foods**: the food cache. `source` (`off`, `fdc`, `label`, `custom`) and `source_ref`
   (barcode or FDC id; unique per source, so a refetch updates the row), `name`, `brand`, the core
   set per 100 g as columns (`energy_kcal`, `protein_g`, `fat_g`, `saturated_fat_g`,
@@ -742,11 +749,14 @@ hard-coded.
   `custom` planning harness is the analysis's custom one. `yamt start` prints both lines.
 - **Harnesses found here**: Claude Code when its adapter resolves (node or Bun), OpenCode when
   `opencode` is on PATH, custom when configured; the others are listed as not available.
-- **API**: `GET /api/agent` (the three values with `source` `env` | `app` | `config` | `default`
-  and the env var, plus the harnesses), `GET /api/agent/options?harness&model&refresh=1`
-  (discovered models and efforts, flattened with labels; 503 with `hint` `not_installed` | `auth` |
-  `error`), `PUT /api/agent` (`{harness, model, effort}`: the harness must be here, the model
-  offered, the effort offered for the model that will run; what the env fixes is kept as it was).
+- **API**: `GET /api/agent` (the analysis's three values with `source` `env` | `app` | `config` |
+  `default` and the env var, the harnesses, and `planning` (#46): the same shape for the planning
+  agent), `GET /api/agent/options?harness&model&refresh=1` (discovered models and efforts,
+  flattened with labels; 503 with `hint` `not_installed` | `auth` | `error`), `PUT /api/agent`
+  (`{harness, model, effort}`: the harness must be here, the model offered, the effort offered for
+  the model that will run; what the env fixes is kept as it was) and `PUT /api/agent/planning`,
+  checked and saved the same way under the `planning-agent` key (`AgentService.saveLayer`, shared
+  by both).
 - **Applying**: every run reads the settings afresh (a change applies to the next run), sets the
   model, then the effort. A saved value the harness doesn't offer any more is skipped: the
   harness's default runs and the run's `config_note` says so (Claude Code's unlisted models still
@@ -1141,7 +1151,8 @@ force. Design: spike #31's direction D · Plan ([design.md](design/design.md#com
 Planning meals on the phone (epic #36, [ADR 0003](adr/0003-meal-planning.md)). #39 is the data
 underneath: recipes, planned meals, the plan and "Ate it", with interactive MCP tools as the side
 door. Planning requests, rounds and suggestions (#44, [below](#planning-requests-44)) build on it,
-and the suggestion job (#45, [below](#the-suggestion-job-45)) fills the rounds.
+the suggestion job (#45, [below](#the-suggestion-job-45)) fills the rounds, and Settings → Planning
+(#46, [below](#planning-settings-46)) holds the defaults and preferences both of them read.
 
 - **Recipes** (`RecipeService`, `domain/recipes.ts`): saved with items matched to foods
   (`resolveItems`, the same validation as `RevisionService.save`: a food with an energy value, or
@@ -1209,11 +1220,13 @@ a round is [below](#the-suggestion-job-45).
   client id): structured `filters` (`days` as local dates in `tz`, `slots`, `timeCapMin`,
   `constraints` (`PLANNING_CONSTRAINTS` ids or free strings), `useUp` (`{leftoverId}` or `{text}`),
   `sourceMode`, `portionsCooked`, `count`), stored **complete**: what is missing comes from
-  `PLANNING_DEFAULTS` (tonight's dinner, `adapted`, 1 portion, 3 suggestions; Planning settings,
-  #46, will supply their own) and today in `tz` (days before today are a 400, a span over
-  `MAX_PLAN_DAYS` too). The title is code's (`requestTitle`: "Dinners Tue–Thu", "Lunch and dinner
-  Fri", dates once the days span a week; weekdays rather than "tonight" so it stays true), until an
-  outline names one. `text` becomes the first input. `origin` is `user` (`nightly` for #48).
+  `requestDefaults` — `PLANNING_DEFAULTS` (tonight's dinner, time cap, constraints, use-up) with
+  Settings → Planning's `count`, `sourceMode` and `portionsCooked` laid over it (`planningSettings`,
+  #46; its own defaults — 3, `adapted`, 1 — until something is saved) — and today in `tz` (days
+  before today are a 400, a span over `MAX_PLAN_DAYS` too). The title is code's (`requestTitle`:
+  "Dinners Tue–Thu", "Lunch and dinner Fri", dates once the days span a week; weekdays rather than
+  "tonight" so it stays true), until an outline names one. `text` becomes the first input. `origin`
+  is `user` (`nightly` for #48).
 - **Inputs** (`POST …/:id/inputs`: multipart `file` + `id`, `kind` (audio, image, file),
   `capturedAt`, or JSON `text` / `link`): stored like captures through the same code (`storeUpload`:
   sniffing, the original byte for byte, EXIF time, a JPEG for HEIC), idempotent with a client id
@@ -1309,7 +1322,8 @@ ends. Spike #38's numbers shaped it ([ADR 0003](adr/0003-meal-planning.md), 11�
     each requested day (meals eaten with their slot, meals planned, eaten, projected, open slots)
     with **a budget per requested slot** (`slotBudget`), the goal in force, the analysed meals of
     the last 14 days with their main items (variety), `leftovers` (`[]` until #49) and
-    `preferences` (null until #46: `PlanningPreferences`, filled in `planningPreferences`).
+    `preferences` (#46's Settings → Planning setting, `planningPreferences`: dislikes, never eat,
+    equipment, weekday cooking time, favourite sites; its defaults — all empty — until saved).
   - `match_ingredients` (scope `food`) `{ingredients (≤ 30: name, grams for the whole recipe, state
     raw|dry|cooked|canned|as_sold, kind generic|product, query?, fdcQuery?), servings, slot?,
     roundId?, candidates?}` (`planning/matcher.ts`), every ingredient in parallel: the user's
@@ -1358,6 +1372,41 @@ ends. Spike #38's numbers shaped it ([ADR 0003](adr/0003-meal-planning.md), 11�
   request's last `fake:plan…` text (`plan`, `plan-match`, `plan-partial`, `plan-none`, `plan-once`,
   `plan-slow:<ms>`, `plan-crash`, `plan-hang`, `plan-auth`; see its header). The e2e server runs
   planning on it too (`YAMT_PLANNING_HARNESS=custom`).
+
+### Planning settings (#46)
+
+Settings → Planning: the defaults a new request's filters fall back to, and the preferences the
+plan-meals skill reads. One setting (`domain/planning-settings.ts`, key `planning`), a whole
+replace like the Agent setting.
+
+- **`PlanningSettingsBody`** (`api-planning-settings.ts`): `count` (suggestions per round, 2–5,
+  default 3), `sourceMode` (default `adapted`), `portionsCooked` (1–4, default 1) — narrower than
+  a request's own filters, which may still ask for more or fewer — and `preferences`: `dislikes`,
+  `neverEat`, `equipment`, `favouriteSites` (string lists, one line each) and
+  `weekdayCookingMin` (5–240 minutes, or no limit). Preferences are personal data: the database
+  only, never the repo or a log.
+- **`GET`/`PUT /api/planning/settings`**: the saved settings, or `DEFAULT_PLANNING_SETTINGS` until
+  something is saved; a PUT is a whole replace, zod-validated like every other write.
+- **Applying**: `requestDefaults` (`domain/planning-requests.ts`) layers `count`, `sourceMode` and
+  `portionsCooked` over `PLANNING_DEFAULTS` for a new request's `resolveFilters`; `preferences`
+  reaches the agent through `planningPreferences` → `get_planning_context` (above). The nightly
+  options (#48) are not here.
+- **The skill** (`.agents/skills/plan-meals/SKILL.md`): `neverEat` is a hard rule (a suggestion
+  with one is wrong), as is missing `equipment` and, on a weekday, `weekdayCookingMin` as a second
+  time cap; `dislikes` are avoided and `favouriteSites` are looked at first for a real recipe.
+- **Settings → Agent** gets a second line, **planning**: model and effort (and, matching
+  `AgentSettingsBody`, the harness), defaulting to "Opus 5.5 · medium" as `resolvePlanningAgent`
+  does (not "same as analysis": #45 and spike #38 settled on Opus medium for planning
+  specifically). `GET /api/agent` grows a `planning` part (the same shape, its own `harnesses`);
+  `PUT /api/agent/planning` saves it under the `planning-agent` key, checked against what the
+  harness offers the same way as the analysis line (`AgentService.saveLayer`, shared by both
+  `save` and `savePlanning`).
+- **The phone** (`components/planning-settings.tsx`, `components/agent-settings.tsx`): a second
+  "Agent" strip for the planning line (the same harness/model/effort UI, parameterised by an `id`
+  so its test ids don't clash with the analysis line's), and a **Planning** section with a
+  stepper for the count, choice rows for the source mode, a stepper for portions, and a
+  preferences list whose rows open a small sheet (a text field, one line each; a number field for
+  the cooking time).
 
 ## Notifications (#13)
 
@@ -1635,7 +1684,14 @@ square corners. The tokens are in `index.css` (shadcn's names mapped onto the pa
   discovered values, each heading with where its value comes from ("Set here", "From
   config.json", "Default", "Fixed by YAMT_ANALYSIS_…"; fixed controls are greyed out), Refresh
   ("Read 4 min ago"), loading and failure (orange, with how to fix it) states. A harness switch
-  clears model and effort; a model switch keeps the effort only if the new model offers it.
+  clears model and effort; a model switch keeps the effort only if the new model offers it. A
+  second strip repeats the same form for **planning** (#46: `PUT /api/agent/planning`), defaulting
+  to "Opus 5.5 · medium", its sources "Fixed by YAMT_PLANNING_…" and independent of the analysis
+  line. Then **Planning** (#46, `components/planning-settings.tsx`): a stepper for suggestions per
+  round (2–5), choice rows for the recipe source (real recipes only, based on a real recipe,
+  free), a stepper for portions to cook (1–4), and a preferences list (never eat, dislikes,
+  equipment, favourite sites, weekday cooking time) whose rows open a small sheet — a text field,
+  one line each, or a number field for the cooking time.
 - **Live status:** the overview polls `GET /api/meals` every 3 s while a meal is
   queued, analysing or has a pending transcript, the meal screen polls its meal likewise. A push
   arriving while the app is open refreshes the meals at once.

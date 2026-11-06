@@ -17,9 +17,16 @@ import { configStep, effortOption, modelOption } from "../src/acp/config-options
 import type * as acp from "../src/acp/protocol.ts";
 import { AgentDiscovery, DiscoveryError } from "../src/agent/discovery.ts";
 import { PLANNING_AGENT_SETTINGS_KEY, resolveAgent, resolvePlanningAgent } from "../src/agent/settings.ts";
-import { type AnalysisConfig, analysisConfig, dataPaths, loadConfig, planningConfig } from "../src/config.ts";
+import {
+  type AnalysisConfig,
+  analysisConfig,
+  dataPaths,
+  loadConfig,
+  type PlanningAgentConfig,
+  planningConfig,
+} from "../src/config.ts";
 import { type AppServer, createServer } from "../src/server.ts";
-import { FAKE_AGENT, fakeAgentConfig, tempDir } from "./helpers.ts";
+import { FAKE_AGENT, fakeAgentConfig, fakePlanningConfig, tempDir } from "./helpers.ts";
 
 setDefaultTimeout(30_000);
 
@@ -274,7 +281,11 @@ describe("the OpenCode adapter", () => {
 
 // ---- the API and the runs ---------------------------------------------------------------------
 
-function start(analysis: AnalysisConfig, which?: (c: string) => string | null): AppServer {
+function start(
+  analysis: AnalysisConfig,
+  which?: (c: string) => string | null,
+  planning?: PlanningAgentConfig,
+): AppServer {
   return createServer({
     dataDir: join(tempDir(), "data"),
     port: 0,
@@ -286,6 +297,7 @@ function start(analysis: AnalysisConfig, which?: (c: string) => string | null): 
       agent: { which },
       timeouts: { idleMs: 3000, toolIdleMs: 3000, turnMs: 10_000, cancelGraceMs: 300 },
     },
+    ...(planning ? { planning: { config: planning } } : {}),
   });
 }
 
@@ -434,6 +446,50 @@ describe("GET/PUT /api/agent and the runs", () => {
       "Model fake-retired isn't offered by the harness, so its default model ran.",
     );
     expect(record(app, gone.id).configCalls).toEqual([]);
+  });
+});
+
+describe("GET/PUT /api/agent/planning (#46): the planning line, saved and checked separately", () => {
+  // the fake agent as both the analysis's and (via fakePlanningConfig) the planning's custom harness
+  const app = start(fakeAgentConfig({}, {}), undefined, fakePlanningConfig({ model: "fake-smart" }));
+  servers.push(app);
+
+  test("GET /api/agent includes the planning part, independent of the analysis one", async () => {
+    const r = await call<AgentResponse>(app, "GET", agentPaths.agent);
+    expect(r.body.planning.harness).toEqual({ value: "custom", source: "config" });
+    expect(r.body.planning.model).toEqual({ value: "fake-smart", source: "config" });
+    expect(r.body.planning.effort).toEqual({ value: null, source: "default" });
+    expect(r.body.planning.harnesses.map((h) => h.kind)).toEqual(["claude-code", "opencode", "custom"]);
+  });
+
+  test("PUT /api/agent/planning is checked against what the harness offers, and doesn't touch the analysis setting", async () => {
+    const bad = await call<ApiError>(app, "PUT", agentPaths.planningAgent, {
+      harness: "custom",
+      model: "gpt-9",
+      effort: null,
+    });
+    expect(bad.body.error).toBe("Custom agent doesn't offer the model gpt-9");
+
+    const ok = await call<AgentResponse>(app, "PUT", agentPaths.planningAgent, {
+      harness: "custom",
+      model: "fake-smart",
+      effort: "max",
+    });
+    expect(ok.status).toBe(200);
+    expect(ok.body.planning.model).toEqual({ value: "fake-smart", source: "app" });
+    expect(ok.body.planning.effort).toEqual({ value: "max", source: "app" });
+    // the analysis setting (a different key) is untouched
+    expect(ok.body.model).toEqual({ value: null, source: "default" });
+    expect(app.services.repos.settings.get("planning-agent")).toEqual({
+      harness: "custom",
+      model: "fake-smart",
+      effort: "max",
+    });
+    expect(app.services.repos.settings.get("agent")).toBeNull();
+  });
+
+  test("the next planning round reads the saved setting", () => {
+    expect(app.services.agent.forPlanning()).toMatchObject({ model: "fake-smart", effort: "max" });
   });
 });
 

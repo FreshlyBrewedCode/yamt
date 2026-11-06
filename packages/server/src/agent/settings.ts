@@ -188,7 +188,8 @@ export class AgentService {
   }
 
   view(): AgentResponse {
-    return { ...this.effective(), harnesses: this.harnesses() };
+    const harnesses = this.harnesses();
+    return { ...this.effective(), harnesses, planning: { ...this.planningEffective(), harnesses } };
   }
 
   /** What `kind` offers with `model` selected (null: its default). Throws HttpError. */
@@ -212,8 +213,37 @@ export class AgentService {
    * fixes can't be changed here: those values are kept as they were.
    */
   async save(body: AgentSettingsBody): Promise<AgentResponse> {
-    const env = this.o.config.env;
-    const prev = this.saved();
+    await this.saveLayer(body, this.o.config, AGENT_SETTINGS_KEY, ENV_VARS, (h) => ({
+      model: h === "claude-code" ? DEFAULT_ANALYSIS_MODEL : null,
+      effort: null,
+    }));
+    return this.view();
+  }
+
+  /** Saves the app's planning setting (#46), checked the same way, under its own key. */
+  async savePlanning(body: AgentSettingsBody): Promise<AgentResponse> {
+    await this.saveLayer(
+      body,
+      this.o.planning ?? { env: {}, file: {} },
+      PLANNING_AGENT_SETTINGS_KEY,
+      PLANNING_ENV_VARS,
+      (h) =>
+        h === "claude-code"
+          ? { model: DEFAULT_PLANNING_MODEL, effort: DEFAULT_PLANNING_EFFORT }
+          : { model: null, effort: null },
+    );
+    return this.view();
+  }
+
+  private async saveLayer(
+    body: AgentSettingsBody,
+    cfg: { env: AgentLayer; file: AgentLayer },
+    key: string,
+    envVars: EnvVars,
+    defaults: (harness: HarnessKind) => { model: string | null; effort: string | null },
+  ): Promise<void> {
+    const env = cfg.env;
+    const prev = this.o.repo.get<AgentSettingsBody>(key);
     const harness = env.harness ?? body.harness;
     const sameHarness = prev?.harness === harness;
     const next: AgentSettingsBody = {
@@ -233,7 +263,7 @@ export class AgentService {
         throw new HttpError(400, `${label} doesn't offer the model ${next.model}`);
     }
     if (!env.effort && next.effort !== null) {
-      const model = resolveAgent(this.o.config, next).model.value;
+      const model = resolveLayers(cfg, next, envVars, defaults).model.value;
       const opts = await this.options(harness, model);
       if (!opts.effort)
         throw new HttpError(400, `${label} has no effort setting${model ? ` for ${model}` : ""}`);
@@ -243,8 +273,7 @@ export class AgentService {
           `${label} doesn't offer the effort ${next.effort}${model ? ` for ${model}` : ""}`,
         );
     }
-    this.o.repo.set(AGENT_SETTINGS_KEY, next);
-    return this.view();
+    this.o.repo.set(key, next);
   }
 
   /** Why a harness can't run here, or null. */
