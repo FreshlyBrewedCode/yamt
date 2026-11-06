@@ -16,6 +16,8 @@ import {
   type GuidedGoalBody,
   goalPaths,
   type HealthResponse,
+  type LogPlannedMealBody,
+  type LogPlannedMealResponse,
   type MealDetailResponse,
   type MealResponse,
   type MealRevisionsResponse,
@@ -23,13 +25,17 @@ import {
   type MealsResponse,
   type MonthResponse,
   mealPaths,
+  type PlannedMealResponse,
+  type PlanResponse,
   type ProfileResponse,
   type PushEvents,
   type PushResponse,
   type PushSubscriptionResponse,
   type PushTestResponse,
+  planningPaths,
   profilePaths,
   pushPaths,
+  type RecipeView,
   type RemoveMealResponse,
   type RepeatableResponse,
   type RepeatMealResponse,
@@ -38,6 +44,7 @@ import {
   runPaths,
   type TranscribeResponse,
   type UpdateMealBody,
+  type UpdatePlannedMealBody,
   type WeightEntryResponse,
   type WeightResponse,
   weightPaths,
@@ -63,6 +70,12 @@ export const keys = {
   day: (date: string, tz: string) => ["meals", "day", date, tz] as const,
   /** Under "meals" too (and goals and weight refresh "meals" as well): the calendar's month. */
   month: (month: string, tz: string) => ["meals", "month", month, tz] as const,
+  /** Under "meals" (#40): logging from the plan, and every meal change, refresh the plan. */
+  plan: (from: string, to: string, tz: string) => ["meals", "plan", from, to, tz] as const,
+  /** Under "meals" too: its status changes when a meal logged from it is removed or restored. */
+  plannedMeal: (id: string) => ["meals", "planned", id] as const,
+  /** Recipes are insert-only: one never changes. */
+  recipe: (id: string) => ["recipe", id] as const,
   goals: ["goals"] as const,
   weight: ["weight"] as const,
   weightRange: (from: number, to: number) => ["weight", { from, to }] as const,
@@ -292,6 +305,106 @@ export function useMonth(month: string) {
     queryKey: keys.month(month, tz),
     queryFn: () => api.get<MonthResponse>(`${calendarPaths.month(month)}?tz=${encodeURIComponent(tz)}`),
   });
+}
+
+// ---- Planning (#36, #40) ---------------------------------------------------------------------------
+
+/**
+ * The plan from `from` to `to` (`YYYY-MM-DD`, inclusive, the phone's zone): per day its planned
+ * meals, the meals eaten, the eaten and projected totals, the goal, open slots and whether the day
+ * is mostly known.
+ */
+export function usePlan(from: string, to: string, enabled = true) {
+  const tz = browserZone();
+  return useQuery({
+    queryKey: keys.plan(from, to, tz),
+    queryFn: () =>
+      api.get<PlanResponse>(`${planningPaths.plan}?from=${from}&to=${to}&tz=${encodeURIComponent(tz)}`),
+    enabled: enabled && from !== "" && to !== "",
+  });
+}
+
+/** One planned meal (any status); null when there is none (unplanned, or never was). */
+export function usePlannedMeal(id: string | null) {
+  return useQuery({
+    queryKey: keys.plannedMeal(id ?? ""),
+    queryFn: async () => {
+      try {
+        return (await api.get<PlannedMealResponse>(planningPaths.plannedMeal(id ?? ""))).plannedMeal;
+      } catch (e) {
+        if (e instanceof ApiError && e.status === 404) return null;
+        throw e;
+      }
+    },
+    enabled: id !== null,
+  });
+}
+
+/** A recipe with its items (whole and per portion) and totals; recipes never change. */
+export function useRecipe(id: string | undefined) {
+  return useQuery({
+    queryKey: keys.recipe(id ?? ""),
+    queryFn: () => api.get<RecipeView>(planningPaths.recipe(id ?? "")),
+    enabled: !!id,
+    staleTime: Number.POSITIVE_INFINITY,
+  });
+}
+
+/** The planned meal as the server answered, then everything under "meals" (the plan, the days). */
+const plannedChanged = (r: PlannedMealResponse) => {
+  queryClient.setQueryData(keys.plannedMeal(r.plannedMeal.id), r.plannedMeal);
+  void queryClient.invalidateQueries({ queryKey: keys.meals });
+};
+
+/** Move, re-portion or note a planned meal (only while `planned`). */
+export function useUpdatePlannedMeal() {
+  return useMutation({
+    mutationFn: (v: { id: string; body: UpdatePlannedMealBody }) =>
+      api.patch<PlannedMealResponse>(planningPaths.plannedMeal(v.id), v.body),
+    onSuccess: plannedChanged,
+  });
+}
+
+/** Skip it (it won't be eaten: counts nothing, fills no slot), or undo that. */
+export function useSkipPlannedMeal() {
+  return useMutation({
+    mutationFn: (v: { id: string; skip: boolean }) =>
+      api.post<PlannedMealResponse>(v.skip ? planningPaths.skip(v.id) : planningPaths.unskip(v.id)),
+    onSuccess: plannedChanged,
+  });
+}
+
+/** Unplan: the planned meal is deleted (only while `planned`; the recipe stays). */
+export function useUnplanMeal() {
+  return useMutation({
+    mutationFn: (id: string) => api.delete(planningPaths.plannedMeal(id)),
+    onSuccess: (_r, id) => {
+      queryClient.setQueryData(keys.plannedMeal(id), null);
+      void queryClient.invalidateQueries({ queryKey: keys.meals });
+    },
+  });
+}
+
+/**
+ * "Ate it": a new meal from the planned meal's recipe, without a model. One request, not a
+ * capture, so not through the upload queue; offline it fails and says so (`planError`). `body.id`
+ * (a UUIDv7 made when the sheet opened) makes a retry answer the same meal.
+ */
+export function useLogPlannedMeal() {
+  return useMutation({
+    mutationFn: (v: { plannedMealId: string; body: LogPlannedMealBody }) =>
+      api.post<LogPlannedMealResponse>(planningPaths.log(v.plannedMealId), v.body),
+    onSuccess: (r) => queryClient.setQueryData(keys.plannedMeal(r.plannedMeal.id), r.plannedMeal),
+    onSettled: () => void queryClient.invalidateQueries({ queryKey: keys.meals }),
+  });
+}
+
+/** What a failed planning request says: offline is the usual reason, and it needs the server. */
+export function planError(e: Error, what: string): string {
+  if (!(e instanceof ApiError) || !navigator.onLine) {
+    return `No connection: ${what} needs yamt. Try again once you're online.`;
+  }
+  return `Couldn't do it: ${e.message}`;
 }
 
 /** Every goal, newest first (a short list); `goalInForce` picks a day's. */
