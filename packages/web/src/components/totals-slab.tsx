@@ -14,7 +14,7 @@ const MACROS = [
 /**
  * The ink totals slab: the hero kcal with its label, something on the right (`aside`), then
  * protein, fat, carbs and fibre, and an optional `note` under a thin line (e.g. meals not
- * counted yet). With `targets` (the goal in force, #12) the right side says how much is left of
+ * counted yet; an array for several lines). With `targets` (the goal in force, #12) the right side says how much is left of
  * the kcal target (or how far over), and every target gets "/160" and a bar; `showLeft` adds
  * each macro's "88 left" / "12 over". Without targets it shows the plain numbers, never
  * invented goals.
@@ -34,9 +34,13 @@ export function TotalsSlab({
   aside?: React.ReactNode;
   targets?: Targets | null;
   showLeft?: boolean;
-  note?: React.ReactNode;
+  /** One line, or several (each its own line); empty ones are left out. */
+  note?: React.ReactNode | React.ReactNode[];
 } & React.ComponentProps<"section">) {
   const n = totals?.nutrients;
+  const notes = (Array.isArray(note) ? note : [note]).filter(
+    (x) => x !== undefined && x !== null && x !== false,
+  );
   const kcalTarget = targets?.energyKcal ?? null;
   const eatenKcal = n?.energyKcal ?? 0;
   const right =
@@ -81,10 +85,16 @@ export function TotalsSlab({
           );
         })}
       </div>
-      {note && (
-        <Label className="mt-4 flex items-center gap-2 border-ink-line border-t pt-3 text-ink-muted">
-          {note}
-        </Label>
+      {notes.length > 0 && (
+        <div className="mt-4 space-y-1.5 border-ink-line border-t pt-3">
+          {notes.map((n, i) => (
+            // a fixed list of at most a few lines, in a fixed order
+            // biome-ignore lint/suspicious/noArrayIndexKey: the notes have no identity of their own
+            <Label key={i} className="flex items-center gap-2 text-ink-muted">
+              {n}
+            </Label>
+          ))}
+        </div>
       )}
     </Band>
   );

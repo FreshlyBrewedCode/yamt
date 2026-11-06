@@ -8,7 +8,7 @@ import {
   type Transcript,
 } from "@yamt/shared";
 import { cn } from "cn";
-import { Mic, Pause, Pencil, Play, Plus, Repeat, Square, X, Zap } from "lucide-react";
+import { ChefHat, Mic, Pause, Pencil, Play, Plus, Repeat, Square, X, Zap } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { type Recording, useRecorder } from "@/hooks/use-recorder";
 import { formatDayTime, formatNumber, fromLocalInput, plural, toLocalInput } from "@/lib/format";
@@ -20,11 +20,12 @@ import {
   type PendingCapture,
   useMealOutbox,
 } from "@/lib/outbox";
-import { useUpdateMeal } from "@/lib/queries";
+import { usePlannedMeal, useUpdateMeal } from "@/lib/queries";
 import { formatDuration, recordingName } from "@/lib/recorder";
 import { CaptureList, useCaptureRows } from "./capture-list";
 import { ItemsList } from "./items-list";
 import { LogAgainSheet, type RepeatSource } from "./log-again";
+import { whenWords } from "./planning";
 import { RemoveMealRow } from "./remove-meal";
 import { RevisionHistory } from "./revision-history";
 import { BackButton, Band, BottomSlab, Disclosure, Label, SlabButton, StatusLabel, Strip } from "./slab";
@@ -290,12 +291,13 @@ export function MealDetail({ detail }: { detail: MealDetailResponse }) {
             <TraceView run={traceRun} />
           </Disclosure>
         ) : (
-          view?.revision.kind === "copy" && (
+          (view?.revision.kind === "copy" || view?.revision.kind === "plan") && (
             <Disclosure title="Trace" meta="no analysis" data-testid="trace-section">
               <p className="bg-tint px-5 py-4 font-medium text-sm" data-testid="no-analysis">
-                Nothing was analysed: this meal was logged again from {detail.source?.title ?? "another meal"}
-                , and its items were copied from there. Add something to it and re-analyse to have it
-                analysed.
+                {view.revision.kind === "copy"
+                  ? `Nothing was analysed: this meal was logged again from ${detail.source?.title ?? "another meal"}, and its items were copied from there.`
+                  : "Nothing was analysed: this meal was logged from the plan, its items taken from the recipe and scaled to the portion."}{" "}
+                Add something to it and re-analyse to have it analysed.
               </p>
             </Disclosure>
           )
@@ -485,9 +487,44 @@ function DetailHeader({ detail }: { detail: MealDetailResponse }) {
             </span>
           </Link>
         )}
+        {meal.sourcePlannedMealId && <FromThePlan plannedMealId={meal.sourcePlannedMealId} />}
       </header>
       {editing && <EatenAtEditor meal={meal} onDone={() => setEditing(false)} />}
     </>
+  );
+}
+
+/**
+ * "Logged from the plan · Today, dinner" under the title of a meal logged with "Ate it" (#40),
+ * linking to its planned meal; a plain line once the planned meal is gone (unplanned).
+ */
+function FromThePlan({ plannedMealId }: { plannedMealId: string }) {
+  const q = usePlannedMeal(plannedMealId);
+  const p = q.data;
+  const content = (
+    <>
+      <ChefHat className="size-4 shrink-0" strokeWidth={2.5} />
+      <span className="min-w-0">
+        Logged from the plan
+        {p && (
+          <>
+            {" "}
+            · <span className="font-bold text-foreground underline underline-offset-4">{whenWords(p)}</span>
+          </>
+        )}
+      </span>
+    </>
+  );
+  const className =
+    "-mb-2 mt-1 flex min-h-11 items-center gap-2 font-medium text-muted-foreground text-sm outline-none focus-visible:underline";
+  return p ? (
+    <Link to="/planned/$id" params={{ id: p.id }} className={className} data-testid="from-the-plan">
+      {content}
+    </Link>
+  ) : (
+    <p className={className} data-testid="from-the-plan">
+      {content}
+    </p>
   );
 }
 

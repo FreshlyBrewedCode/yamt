@@ -2,8 +2,9 @@ import { createFileRoute, Link, redirect, useNavigate } from "@tanstack/react-ro
 import { addDays, goalLabel, LocalDate } from "@yamt/shared";
 import { cn } from "cn";
 import { ArrowRight, CalendarDays, ChevronLeft, ChevronRight, Scale, Square } from "lucide-react";
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { groupByDay, MealRow } from "@/components/meal-row";
+import { AteItSheet, PlannedNote, PlannedRow } from "@/components/planning";
 import { RemovedStrip } from "@/components/remove-meal";
 import { BackButton, Band, BottomSlab, iconButtonClass, Label, Strip } from "@/components/slab";
 import { TotalsSlab } from "@/components/totals-slab";
@@ -19,7 +20,8 @@ import {
   plural,
 } from "@/lib/format";
 import { useOutbox } from "@/lib/outbox";
-import { useDay } from "@/lib/queries";
+import { stillPlanned, withPlanned } from "@/lib/planning";
+import { useDay, usePlan } from "@/lib/queries";
 
 interface DaySearch {
   /** A meal of the day was just removed: the strip offers Undo. */
@@ -41,7 +43,8 @@ export const Route = createFileRoute("/days/$date")({
 /**
  * One calendar day: its totals against the goal in force that day (the ink slab, with what's
  * left or over per target and the meals not counted yet), the goal line (to the goals screen),
- * the day's meals and its weight. The bottom slab steps to the day before or after. Right after
+ * the day's meals (its planned ones still to log after them, #40, with Ate it) and its weight.
+ * The bottom slab steps to the day before or after. Right after
  * a meal of the day was removed, a strip at the top offers Undo.
  */
 function DayView() {
@@ -55,6 +58,10 @@ function DayView() {
   const outbox = useOutbox();
   const isToday = date === today;
   const data = day.data?.date === date ? day.data : undefined;
+  const plan = usePlan(date, date);
+  const planDay = plan.data?.days.find((d) => d.date === date);
+  const planned = stillPlanned(planDay);
+  const [ate, setAte] = useState<string | null>(null);
 
   const rows = useMemo(
     () => groupByDay(data?.meals ?? [], outbox.entries).find((d) => d.start === start)?.rows ?? [],
@@ -104,14 +111,15 @@ function DayView() {
           targets={goal?.targets}
           showLeft
           data-testid="day-totals"
-          note={
-            waiting > 0 ? (
+          note={[
+            waiting > 0 && (
               <>
                 <Square className="size-2.5 fill-current" strokeWidth={0} />
                 {plural(waiting, "meal")} not counted yet
               </>
-            ) : undefined
-          }
+            ),
+            withPlanned(planDay) && <PlannedNote day={planDay} />,
+          ]}
         />
 
         <Link
@@ -132,8 +140,11 @@ function DayView() {
         </Link>
 
         <section aria-label="Meals">
-          <Strip title="Meals" meta={plural(rows.length, "meal")} />
-          {rows.length === 0 ? (
+          <Strip
+            title="Meals"
+            meta={`${plural(rows.length, "meal")}${planned.length ? ` · ${planned.length} planned` : ""}`}
+          />
+          {rows.length === 0 && planned.length === 0 ? (
             <p className="px-5 py-6 font-medium text-muted-foreground">
               {day.isPending
                 ? "Loading…"
@@ -145,6 +156,9 @@ function DayView() {
             <ul className="divide-y divide-border">
               {rows.map((r) => (
                 <MealRow key={r.id} row={r} />
+              ))}
+              {planned.map((p) => (
+                <PlannedRow key={p.id} planned={p} onAte={() => setAte(p.id)} />
               ))}
             </ul>
           )}
@@ -192,6 +206,14 @@ function DayView() {
           />
         </Band>
       </BottomSlab>
+      <AteItSheet
+        planned={planned.find((p) => p.id === ate) ?? null}
+        onClose={() => setAte(null)}
+        onLogged={({ meal }) => {
+          setAte(null);
+          void navigate({ to: "/meals/$mealId", params: { mealId: meal.id } });
+        }}
+      />
     </>
   );
 }

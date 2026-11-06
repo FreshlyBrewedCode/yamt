@@ -10,6 +10,7 @@ import { runMeta, TraceView } from "./trace-view";
 /** What arrived between the revision before and this one ("after 1 answer · 1 correction"). */
 function trigger(captures: Capture[], revision: MealRevision, from: number | null): string {
   if (revision.kind === "copy") return "logged again";
+  if (revision.kind === "plan") return "logged from the plan";
   const to = revision.createdAt;
   if (from === null) return "first analysis";
   const kinds: Partial<Record<CaptureKind, number>> = {};
