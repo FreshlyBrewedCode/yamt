@@ -154,8 +154,11 @@ API, auth, SQLite), `packages/web` (Vite + React + TanStack Router/Query + Tailw
   there, not in the prompt code. Code computes what the model must not: the slot budget
   (`planning/budget.ts`, named constants), the matcher's routing and ranking
   (`planning/matcher.ts`), every total, and every starter's number (the nightly run stores a
-  starter's kind, text, filters and reference; the app computes its number, `lib/starters.ts`). A
-  round is `done` with at least one ready suggestion.
+  starter's kind, text, filters and reference; the app computes its number, `lib/starters.ts`), and
+  the leftovers and the shopping list (#49): cooked leftovers come from "Ate it" in its
+  transaction, the shopping list's sums, leftover subtraction and aisles are `shoppingLines` and
+  `nutrition/aisles.ts` (deterministic, no model); the agent only notes pack remainders
+  (`note_leftover`). A round is `done` with at least one ready suggestion.
   Tests and the e2e run planning on the fake agent only (`fake:plan`, `plan-match`,
   `plan-partial`, `plan-none`, `plan-once`, `plan-slow:<ms>`, `plan-crash`, `plan-hang`,
   `plan-auth`; `fakePlanningConfig()` in `test/helpers.ts`): a server with `worker` set and no
