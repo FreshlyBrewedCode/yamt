@@ -176,8 +176,7 @@ Units sit next to numbers smaller and muted (`28g`, `72 /160`).
   analysis", opening to a tint line that says why.
 - **Split slab** (#40, the overview): the bottom slab in two, **Log** (lime, + icon, flex) | **Plan**
   (tint, the chef's hat, 42 %), 24 px captions. Planning is available but doesn't want the user;
-  the totals slab stays the screen's only ink. Until the planning entry screen exists, Plan opens the
-  plan view.
+  the totals slab stays the screen's only ink. Plan opens the planning entry screen (#47).
 - **Planned-meal row** (#40, the overview's and the day view's list, the plan view): a plain 84 px
   row like a meal row, but quiet: "Planned · Dinner" (chef's hat, micro-label, muted) where the
   time and status sit, the title in the muted foreground, "Cook 2 · eat 1" under it, the kcal muted
@@ -230,6 +229,81 @@ Units sit next to numbers smaller and muted (`28g`, `72 /160`).
   with the chef's hat, "Logged from the plan · **Today, dinner**" linking to the planned meal; the
   overview's row says "From the plan" where Log again's says "Logged again"; the revision history
   says "logged from the plan".
+- **Planning strip** (#47, the overview, under the totals): a "Planning" strip (meta "2 requests")
+  and one 84 px row per request that wants something, built like a meal row: a request whose
+  suggestions wait for a verdict is a **full lime row** ("Suggested · 2 for you" with sparkles, the
+  title in display 19 px, "Pick or steer · round 1 · 15:58" in lime-muted, an arrow), one still
+  suggesting is quiet ("Suggesting · 2 of 3 ready" with the pulsing square, the title muted, the
+  ready count in display 26 px over "of 3"), a failed round a **full orange row**. A request still in
+  the upload queue is a quiet row ("On this phone · waiting to send"). Nothing wants anything: no
+  strip.
+- **Starter band** (#47, the planning entry): an idea as a full-width band: its number on the left in
+  display 36 px (56 px on the ink slab) over what it is as a 10 px micro-label ("g protein open
+  tonight", "logged in 30 days", "Kürbis, Grünkohl, Rosenkohl, Birnen"), the idea in display 19 px
+  (24 px on ink) with one muted why-line, an arrow. The first starter is the entry screen's ink slab,
+  the rest alternate tint and plain, separated by dividers. Only starters with real data show
+  (no goal, no "protein open"); a tap fills the composer and the filters, never sends.
+- **Filter summary + composer dock** (#47, the planning entry and the request thread): the sticky
+  footer on the page colour. Above the composer on the entry screen a 48 px tint row: "For" as a
+  muted micro-label, the filters in bold 14 px joined by " · " ("Tonight · Dinner · ≤ 30 min · cook
+  2", only what differs from the defaults after when and which meals), a chevron; it opens the filter
+  page. A tint hint above it when the request can't go yet ("Pick a day in the filters."). The
+  composer: attachments as 44 px tint chips in a sideways-scrolling row (a photo's thumbnail or an
+  icon tile, the name bold, a 10 px micro-label "voice · transcribed later", a ✕), then a row of
+  48 px squares with 2 px gaps: **plus** (tint), the field (tint, lime-soft while focused, 16 px,
+  growing to five lines), the **mic** (tint; recording: lime with a stop square, and the field turns
+  into a lime-soft "● Recording 0:04" row), the **send** square (lime with sparkles once there is
+  something to send, else tint and muted). The keyboard never hides the dock: it rides on top of it.
+  In the thread the dock is the composer alone, with one muted line under it after a finished round
+  ("Pick above, steer here, or ask for more: a round takes minutes.").
+- **Attach sheet** (#47): the top sheet "Attach" over "To this request", plain 68 px rows with a
+  48 px tint icon tile, the name bold and a muted line: Photo, Link, File, Audio file, Paste.
+- **Filter page** (#47): the ink slab is the request **as the agent reads it**, one sentence pair
+  in display 24 px, "Plus what you type, say and attach · your goal, recent meals and preferences"
+  as a muted micro-label under an `ink-line` divider. Then groups of **toggle chips** (a micro-label,
+  44 px chips wrapping with 2 px gaps, tint, the chosen ones in the foreground fill with a check:
+  a choice, not lime): When (with the next seven days as 60 px chips once "Pick days" is chosen),
+  Which meals, Time, Only, Use up (the typed ones as chosen chips, a tint field to add one). A
+  "Recipes" strip (meta "default · based on a real recipe") with choice rows, a "Portions" strip
+  with preset chips for Cook and Suggestions per round (the default chip says "default"). The lime
+  bottom slab **Done**; "Back to the defaults" as a plain 56 px row when something changed.
+- **Slots slab** (#47, the request thread's ink slab): the request's days × slots in a 3-column grid
+  of 92 px cells (4 px gaps, 12 px side padding): the day and the slot as micro-labels on top, then
+  the dish in display 15 px and a 10 px line. A slot this request's pick fills takes the slab's
+  foreground ("1,971 with it"); one already eaten or planned otherwise shows that title on
+  `ink-line` at 40 %; an open one says "Open" and what the day has eaten. Under it, "1 of 3 slots
+  filled · a pick takes its proposed slot, else the next open one".
+- **You asked / You added** (#47): a tint band with the display 22 px title and a micro-label meta
+  ("Round 1 · 15:41", "for the next round"), the filters as page-colour chips (bold 13 px; the
+  first band only), the inputs as 15 px lines with a muted icon (texts and transcripts in quotes,
+  "· Text", "· Voice · 0:06", "· Link"); an input still in the upload queue adds "· Sending", "·
+  Waiting for network"; a refused one gets an orange line with Retry and Discard.
+- **Suggestion band** (#47): a ready suggestion as a full-width plain band: the title in display
+  22 px with its summary muted, the kcal per portion right (display 28 px, "kcal / portion"); the
+  **fit bar** on the page colour (the day's eaten and planned kcal in lime, this dish in the
+  foreground, past the target after a 2 px gap in the band's colour), "Sat with it" against "1,865 of
+  2,200 · 335 left"; the macros as small tint chips ("35 g P") and "35 of 88 g P open"; two why-lines
+  with filled squares; the times and the source label as one micro-label line. Then **Pick · Sat
+  dinner** in ink (available, but the screen doesn't need it: never lime) and a 96 px tint **No**.
+  No folds the band into a 48 px muted line "Title · no" with an underlined Undo; a picked band turns
+  tint, "Planned · Sat dinner" above the title, with two page-colour buttons **Change day ·
+  portions** and **Unplan**. Without a goal there is no bar and no "open" (nothing invented).
+- **Placeholder row** (#47): an outlined idea before the agent completes it, all muted: the title and
+  approach like a suggestion's, "—" for the kcal, a 12 px grey bar (the foreground at 8 %) where the
+  fit bar will be, then "Checking ingredients…" with a pulsing square on the one being worked on, else
+  "Queued", the source mode, and the proposed slot on the right. Under a running round a muted
+  paragraph says how a round works and that additions go into the next round.
+- **Couldn't-complete row** (#47): an idea that failed: title struck through (2 px), approach and
+  "—" muted, then a 15 px line with a hollow square, "**Couldn't complete.**" and the reason. Never
+  orange: only a round that failed as a whole gets an orange band (its error, "Try again below").
+- **Suggest more row** (#47, the end of a finished round): a 64 px full-width tint row with sparkles,
+  "SUGGEST MORE" and "same request · 3 more" as meta ("Try again" after a failed round); lime
+  **Suggest with it** ("1 addition") while additions wait for a round; a muted line while a round
+  waits in the upload queue. Under it a plain 56 px "Archive request" row (muted line, archive icon).
+- **Suggestion detail** (#47): the recipe detail in suggestion mode: "Suggestion · round 1 · for Sat,
+  dinner" as the header label, the ink slab for one portion against its day, "Why it fits" first on
+  the tint band, the ingredients for the request's portions; the bottom slab **Pick · Sat dinner**
+  in ink, tint **Undo No** for a rejected one, tint **Open the planned meal** once picked.
 - **`Disclosure`**: a collapsible 56 px row on the plain page (uppercase title, muted meta,
   chevron), stacked with dividers; its content mounts only when open, on tint. For what is
   secondary and heavy: captures, revision history, the trace.
