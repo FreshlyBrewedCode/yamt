@@ -57,6 +57,11 @@ bun packages/server/src/cli.ts mcp-token [--rotate] [--data-dir …]   # print t
   `YAMT_PLANNING_EFFORT` over everything. Command lines are the analysis's, so the fake agent
   plays planning too with `YAMT_PLANNING_HARNESS=custom` (scripted by a `fake:plan…` text input,
   see its header). A real round costs about $0.8 and 2–3 minutes.
+- Nightly suggestions (#48): off by default (a run a night costs a round). Settings → Planning
+  turns it on, with the time (the server's zone, default 03:00) and how many (1–5, default 3); a
+  queued `nightly` job runs it, and the entry screen's Regenerate runs it now. It plans today's
+  open main slots on the planning agent, writes the starters, and sends no push. The fake agent
+  plays it too (`FAKE_ACP_NIGHTLY=<script>` scripts a nightly round, which has no text).
 - Transcription: the worker transcribes voice memos on the CPU with faster-whisper
   large-v3-turbo (int8, German) by running `services/stt/run.sh transcribe` once per batch (a uv
   project; Python 3.12 comes from uv). Tools, on this NixOS VM neither is on PATH: **uv** from PATH,
@@ -148,11 +153,15 @@ API, auth, SQLite), `packages/web` (Vite + React + TanStack Router/Query + Tailw
   (the plan job's appended system prompt and the interactive skill); change planning behaviour
   there, not in the prompt code. Code computes what the model must not: the slot budget
   (`planning/budget.ts`, named constants), the matcher's routing and ranking
-  (`planning/matcher.ts`), every total. A round is `done` with at least one ready suggestion.
+  (`planning/matcher.ts`), every total, and every starter's number (the nightly run stores a
+  starter's kind, text, filters and reference; the app computes its number, `lib/starters.ts`). A
+  round is `done` with at least one ready suggestion.
   Tests and the e2e run planning on the fake agent only (`fake:plan`, `plan-match`,
   `plan-partial`, `plan-none`, `plan-once`, `plan-slow:<ms>`, `plan-crash`, `plan-hang`,
   `plan-auth`; `fakePlanningConfig()` in `test/helpers.ts`): a server with `worker` set and no
-  planning config would start a real Claude Code for a round.
+  planning config would start a real Claude Code for a round. Trigger the nightly run in tests
+  through `NightlyService.run` / Regenerate or by making its queued job due, never by waiting for
+  the clock.
 - Transcription: the STT backend sits behind `SttBackend` (`transcription/backend.ts`); the
   Python side speaks the NDJSON protocol in `services/stt/yamt_stt/protocol.py`, so change both
   sides together. Python follows vibe-center's services: exact pins in `pyproject.toml`,
