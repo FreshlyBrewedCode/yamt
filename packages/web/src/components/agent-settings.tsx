@@ -107,7 +107,7 @@ export function AgentSettings() {
 
       <Strip title="Agent" meta="planning" />
       <p className="px-5 pt-4 font-medium">
-        Which agent fills a planning round (#36), with which model and how hard it thinks. Opus 5.5 at medium
+        Which agent suggests meals when you plan, with which model and how hard it thinks. Opus 5.5 at medium
         effort unless set here.
       </p>
       {agent.isError ? null : a ? (
