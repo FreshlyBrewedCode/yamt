@@ -61,6 +61,14 @@ export function expandHome(p: string): string {
 /** The model the analysis asks for unless configured otherwise. */
 export const DEFAULT_ANALYSIS_MODEL = "claude-opus-5-5";
 
+/**
+ * What a planning round runs with unless configured otherwise (spike #38): Claude Code with Opus
+ * 5.5 at effort `medium` (low skipped research and ignored the source mode; Sonnet 5 took 2.3×
+ * as long for the same cost).
+ */
+export const DEFAULT_PLANNING_MODEL = "claude-opus-5-5";
+export const DEFAULT_PLANNING_EFFORT = "medium";
+
 /** What push services accept as the VAPID subject. */
 const PushSubject = z
   .string()
@@ -84,6 +92,17 @@ const AnalysisConfigFile = z
     /** The model of `harness` (default for Claude Code: claude-opus-5-5; others: their own). */
     model: z.string().trim().min(1).optional(),
     /** The reasoning effort of `harness`, a value of its effort option (default: the harness's). */
+    effort: z.string().trim().min(1).optional(),
+  })
+  .strict();
+
+const PlanningConfigFile = z
+  .object({
+    /** The harness planning rounds run on (default Claude Code); its command line is `analysis`'s. */
+    harness: HarnessKind.optional(),
+    /** Default for Claude Code: claude-opus-5-5. */
+    model: z.string().trim().min(1).optional(),
+    /** Default for Claude Code: medium. */
     effort: z.string().trim().min(1).optional(),
   })
   .strict();
@@ -124,6 +143,8 @@ export const AppConfigFile = z
   .object({
     /** The analysis agent (#8, #28); env YAMT_ANALYSIS_HARNESS, _COMMAND, _MODEL, _EFFORT. */
     analysis: AnalysisConfigFile.optional(),
+    /** The planning agent (#45); env YAMT_PLANNING_HARNESS, _MODEL, _EFFORT. */
+    planning: PlanningConfigFile.optional(),
     /** Speech-to-text of voice memos (#9); env YAMT_STT_* and YAMT_FFMPEG, see `transcriptionConfig`. */
     transcription: TranscriptionConfigFile.optional(),
     /** Web Push (#13); env YAMT_PUSH_SUBJECT. */
@@ -158,6 +179,17 @@ export interface AnalysisConfig {
   commands: Partial<Record<HarnessKind, { command: string; args: string[] }>>;
   /** Extra process env for the harness (config.json `analysis.env`). */
   processEnv: Record<string, string>;
+}
+
+/**
+ * The planning agent (#45) as config.json's `planning` and the env describe it; the app's
+ * setting sits between them. Harness command lines are the analysis's (`AnalysisConfig.commands`).
+ */
+export interface PlanningAgentConfig {
+  /** YAMT_PLANNING_HARNESS / _MODEL / _EFFORT. */
+  env: AgentLayer;
+  /** config.json `planning`. */
+  file: AgentLayer;
 }
 
 /** What the STT process is asked to do (the request's `settings`, see services/stt). */
@@ -198,6 +230,7 @@ export const STT_RUNNER = resolve(import.meta.dir, "../../../services/stt/run.sh
 export interface AppConfig {
   login: string | null;
   analysis: AnalysisConfig;
+  planning: PlanningAgentConfig;
   transcription: TranscriptionConfig;
   /** Null: FDC is reported as unavailable, searches use history and Open Food Facts. */
   fdcApiKey: string | null;
@@ -235,6 +268,7 @@ export function loadConfig(dataDir: string, env: Env = process.env): AppConfig {
     login,
     fdcApiKey,
     analysis: analysisConfig(file.analysis ?? {}, env),
+    planning: planningConfig(file.planning ?? {}, env),
     transcription: transcriptionConfig(file.transcription ?? {}, env),
     push: pushConfig(file.push ?? {}, env),
   };
@@ -322,6 +356,31 @@ export function analysisConfig(
     file: fileLayer,
     commands: command ? { [kind]: { command, args } } : {},
     processEnv: file.env ?? {},
+  };
+}
+
+/**
+ * The planning agent from config.json's `planning` and the env: YAMT_PLANNING_HARNESS,
+ * YAMT_PLANNING_MODEL, YAMT_PLANNING_EFFORT.
+ */
+export function planningConfig(
+  file: z.infer<typeof PlanningConfigFile>,
+  env: Env = process.env,
+): PlanningAgentConfig {
+  const e = (name: string) => env[name]?.trim() || undefined;
+  const kindEnv = e("YAMT_PLANNING_HARNESS");
+  if (kindEnv !== undefined && !HarnessKind.safeParse(kindEnv).success) {
+    throw new Error(
+      `YAMT_PLANNING_HARNESS: expected one of ${HarnessKind.options.join(", ")}, got ${kindEnv}`,
+    );
+  }
+  return {
+    env: clean({
+      harness: kindEnv as HarnessKind | undefined,
+      model: e("YAMT_PLANNING_MODEL"),
+      effort: e("YAMT_PLANNING_EFFORT"),
+    }),
+    file: clean({ harness: file.harness, model: file.model, effort: file.effort }),
   };
 }
 

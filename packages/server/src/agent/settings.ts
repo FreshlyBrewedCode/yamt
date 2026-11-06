@@ -11,7 +11,14 @@ import {
   type SourcedValue,
 } from "@yamt/shared";
 import { type HarnessConfig, resolveCommand } from "../acp/adapters/index.ts";
-import { type AgentLayer, type AnalysisConfig, DEFAULT_ANALYSIS_MODEL } from "../config.ts";
+import {
+  type AgentLayer,
+  type AnalysisConfig,
+  DEFAULT_ANALYSIS_MODEL,
+  DEFAULT_PLANNING_EFFORT,
+  DEFAULT_PLANNING_MODEL,
+  type PlanningAgentConfig,
+} from "../config.ts";
 import type { SettingsRepo } from "../db/repos/settings.ts";
 import { HttpError } from "../domain/errors.ts";
 import type { AgentDiscovery } from "./discovery.ts";
@@ -20,11 +27,25 @@ import { DiscoveryError } from "./discovery.ts";
 /** The settings key the app's choice is stored under. */
 export const AGENT_SETTINGS_KEY = "agent";
 
-const ENV_VARS = {
+/**
+ * The settings key of the app's planning agent (#45 reads it, #46's Settings → Agent writes it):
+ * an `AgentSettingsBody` like `agent`'s.
+ */
+export const PLANNING_AGENT_SETTINGS_KEY = "planning-agent";
+
+type EnvVars = Record<keyof AgentLayer, string>;
+
+const ENV_VARS: EnvVars = {
   harness: "YAMT_ANALYSIS_HARNESS",
   model: "YAMT_ANALYSIS_MODEL",
   effort: "YAMT_ANALYSIS_EFFORT",
-} as const;
+};
+
+const PLANNING_ENV_VARS: EnvVars = {
+  harness: "YAMT_PLANNING_HARNESS",
+  model: "YAMT_PLANNING_MODEL",
+  effort: "YAMT_PLANNING_EFFORT",
+};
 
 export interface EffectiveAgent {
   harness: SourcedValue<HarnessKind>;
@@ -39,31 +60,61 @@ export interface EffectiveAgent {
  * and for it `claude-opus-5-5`; otherwise null, the harness's own default model and effort.
  */
 export function resolveAgent(cfg: AnalysisConfig, app: AgentSettingsBody | null): EffectiveAgent {
+  return resolveLayers(cfg, app, ENV_VARS, (h) => ({
+    model: h === "claude-code" ? DEFAULT_ANALYSIS_MODEL : null,
+    effort: null,
+  }));
+}
+
+/**
+ * The planning agent in force (#45), resolved like the analysis's: env (YAMT_PLANNING_*) > the
+ * app's planning setting (`PLANNING_AGENT_SETTINGS_KEY`) > config.json `planning` > defaults:
+ * Claude Code, and for it `claude-opus-5-5` at effort `medium` (spike #38).
+ */
+export function resolvePlanningAgent(
+  cfg: PlanningAgentConfig,
+  app: AgentSettingsBody | null,
+): EffectiveAgent {
+  return resolveLayers(cfg, app, PLANNING_ENV_VARS, (h) =>
+    h === "claude-code"
+      ? { model: DEFAULT_PLANNING_MODEL, effort: DEFAULT_PLANNING_EFFORT }
+      : { model: null, effort: null },
+  );
+}
+
+function resolveLayers(
+  cfg: { env: AgentLayer; file: AgentLayer },
+  app: AgentSettingsBody | null,
+  envVars: EnvVars,
+  defaults: (harness: HarnessKind) => { model: string | null; effort: string | null },
+): EffectiveAgent {
   const fileHarness = cfg.file.harness ?? "claude-code";
   const harness: SourcedValue<HarnessKind> = cfg.env.harness
-    ? { value: cfg.env.harness, source: "env", envVar: ENV_VARS.harness }
+    ? { value: cfg.env.harness, source: "env", envVar: envVars.harness }
     : app
       ? { value: app.harness, source: "app" }
       : cfg.file.harness
         ? { value: cfg.file.harness, source: "config" }
         : { value: "claude-code", source: "default" };
+  const builtIn = defaults(harness.value);
   const pick = (what: "model" | "effort"): SourcedValue<string | null> => {
     const env = cfg.env[what];
-    if (env) return { value: env, source: "env", envVar: ENV_VARS[what] };
+    if (env) return { value: env, source: "env", envVar: envVars[what] };
     if (app && app.harness === harness.value) {
       const v = app[what];
       if (v !== null) return { value: v, source: "app" };
     }
-    const file = (cfg.file as AgentLayer)[what];
+    const file = cfg.file[what];
     if (file && fileHarness === harness.value) return { value: file, source: "config" };
-    const builtIn = what === "model" && harness.value === "claude-code" ? DEFAULT_ANALYSIS_MODEL : null;
-    return { value: builtIn, source: "default" };
+    return { value: builtIn[what], source: "default" };
   };
   return { harness, model: pick("model"), effort: pick("effort") };
 }
 
 export interface AgentServiceOptions {
   config: AnalysisConfig;
+  /** The planning agent's env and config.json layers (#45); default: none. */
+  planning?: PlanningAgentConfig;
   repo: SettingsRepo;
   discovery: AgentDiscovery;
   /** Seam for tests: finding a command on PATH. */
@@ -100,7 +151,25 @@ export class AgentService {
 
   /** The settings for the next run. */
   forRun(): RunAgent {
-    const e = this.effective();
+    return this.runAgent(this.effective());
+  }
+
+  /** The app's planning setting, if #46's Settings → Agent saved one. */
+  savedPlanning(): AgentSettingsBody | null {
+    return this.o.repo.get<AgentSettingsBody>(PLANNING_AGENT_SETTINGS_KEY);
+  }
+
+  /** The planning agent in force (`resolvePlanningAgent`). */
+  planningEffective(): EffectiveAgent {
+    return resolvePlanningAgent(this.o.planning ?? { env: {}, file: {} }, this.savedPlanning());
+  }
+
+  /** The settings for the next planning run (read per run, like `forRun`). */
+  forPlanning(): RunAgent {
+    return this.runAgent(this.planningEffective());
+  }
+
+  private runAgent(e: EffectiveAgent): RunAgent {
     return { harness: this.harnessConfig(e.harness.value), model: e.model.value, effort: e.effort.value };
   }
 

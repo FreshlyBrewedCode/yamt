@@ -61,6 +61,7 @@ describe("loadConfig", () => {
       login: null,
       fdcApiKey: null,
       analysis: { env: {}, file: {}, commands: {}, processEnv: {} },
+      planning: { env: {}, file: {} },
       transcription: {
         command: [STT_RUNNER, "transcribe"],
         ffmpeg: null,
