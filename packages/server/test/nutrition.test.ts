@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { Nutrients } from "@yamt/shared";
 import { dayRange, isoLocal, localDate } from "../src/domain/time.ts";
-import { FdcClient } from "../src/nutrition/fdc.ts";
+import { FDC_URLS, FdcClient } from "../src/nutrition/fdc.ts";
 import { getText, RateLimiter, USER_AGENT } from "../src/nutrition/http.ts";
 import { emptyNutrients, mapFdcFood, mapOffProduct } from "../src/nutrition/nutrients.ts";
 import { OFF_URLS, OffClient } from "../src/nutrition/off.ts";
@@ -213,6 +213,12 @@ describe("FoodData Central mapping", () => {
       ],
     });
     expect(f.per100g).toMatchObject({ energyKcal: 239, fat: 93.7, salt: 1 });
+  });
+
+  test("search sends Survey (FNDDS) with a literal paren and %20, never form-encoded +%28", () => {
+    expect(FDC_URLS.search("oats", 5, "DEMO_KEY")).toBe(
+      "https://api.nal.usda.gov/fdc/v1/foods/search?query=oats&dataType=Foundation%2CSR%20Legacy%2CSurvey%20(FNDDS)&pageSize=5&api_key=DEMO_KEY",
+    );
   });
 
   test("without a key the client is unavailable and never calls out", async () => {
