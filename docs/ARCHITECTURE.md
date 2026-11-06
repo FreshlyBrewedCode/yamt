@@ -6,7 +6,8 @@ meal capture, #10, the meal detail with questions and corrections, #11, the day 
 goals and weight, #12, Web Push notifications, #13, the guided goal setup, #24, paste and
 the iOS Shortcut share target, #26, the agent settings, #28, logging a meal again, #30, the
 calendar, #33, removing a meal, the data underneath meal planning, #39, planning requests,
-#44, and the suggestion job that fills their rounds, #45), how it
+#44, the suggestion job that fills their rounds, #45, planning settings, #46, and the planning
+screens, #47), how it
 fits together, and what comes after wave 1. Why it is built this way:
 [ADR 0001](adr/0001-wave-1-architecture.md), for planning [ADR 0003](adr/0003-meal-planning.md). Commands and conventions: [AGENTS.md](../AGENTS.md).
 The design: [design/design.md](design/design.md).
@@ -161,7 +162,8 @@ packages/web/
   public/                 manifest.webmanifest, icons/ (rendered by scripts/icons.ts)
   sw.js                   the service worker template (vite.config.ts fills in the build's files)
   test/                   bun tests: the upload queue, the recorder's logic, the trace parser, the weight
-                          trend, the clipboard mapping, the plan's reading (planning)
+                          trend, the clipboard mapping, the plan's reading (planning), the planning
+                          requests' filters, sentence, pick target and starters (plan-request)
 packages/web/src/
   main.tsx                router + query client, starts the upload queue, registers the worker
   routes/                 TanStack file routes: __root.tsx, index.tsx (the overview),
@@ -169,17 +171,28 @@ packages/web/src/
                           (the day view), calendar.tsx (the calendar, #33), goals.tsx (goals and weight), goals_.guided.tsx (the guided
                           setup, /goals/guided), settings.tsx (notifications, the agent, sharing),
                           plan.days.tsx (the plan view, /plan/days, #40), planned.$id.tsx (a planned
-                          meal's recipe, /planned/:id);
+                          meal's recipe, /planned/:id), plan.index.tsx (the planning entry, /plan, #47),
+                          plan.filters.tsx (the filter page), plan.requests.$id.index.tsx (a request's
+                          thread), plan.requests.$id.suggestions.$suggestionId.tsx (a suggestion's recipe);
                           routeTree.gen.ts
                           is generated
   lib/api.ts, queries.ts  the fetch client and every TanStack Query hook
   lib/outbox/             the upload queue: outbox.ts (Outbox), store.ts (IndexedDB), transport.ts
-                          (fetch/XHR), index.ts (the app's queue and its hooks)
+                          (fetch/XHR), index.ts (the app's queue and its hooks); meal captures and
+                          planning requests, inputs and rounds (#47)
   lib/recorder.ts         the recorder's state machine and helpers; hooks/use-recorder.ts wires it
   lib/trace.ts            a run's NDJSON trace → run metadata and a readable list (parseTrace)
   lib/weight.ts           the weight trend: raw points and the 7-day moving average (weightTrend), kgTicks
   lib/planning.ts         the plan's reading (#40): a day's squares (readDay), what is open before a dish
                           (openBefore), what "Ate it" logs (ateItTotals, the shared computeTotals), slot clashes
+  lib/plan-request.ts     a planning request on the phone (#47): filter overrides over the defaults
+                          (resolveDraft), the summary and the sentence the agent reads, where Pick goes
+                          (pickTarget), how far a round is (roundMeta); the overview's Planning strip
+                          (#54's follow-up): how an open request stands (requestState), whether it is
+                          past (isPastRequest), its open rows (stripRows) folded to one per state
+                          (groupStripRows)
+  lib/starters.ts         the entry screen's code-computed starters (computeStarters, SEASON)
+  lib/plan-draft.ts       the composers' drafts (in memory, per composer) and sendDraft (into the queue)
   lib/sw.ts, ids.ts, format.ts  worker registration and its messages, client UUIDv7s, number/date formatting
   lib/push.ts             this browser's push support, permission and subscription (subscribeDevice)
   lib/clipboard.ts        Paste: clipboard items and paste events → captures (pasteFromClipboard,
@@ -196,7 +209,10 @@ packages/web/src/
                           month grid, the selected day, the summary, the legend, #33), remove-meal (the
                           Remove meal row, the day's undo strip, a removed meal), planning (the planned-meal
                           row, the Log | Plan slab, the totals note, the fit bar, the Ate-it and Plan-for
-                          sheets, #40), recipe-detail (a planned meal's recipe); ui/ (shadcn:
+                          sheets, #40), recipe-detail (a planned meal's recipe, a suggestion's), composer
+                          (the planning dock and composer, #47), plan-request (starter bands, the filter
+                          summary and form, the slots slab, You asked, the suggestion, placeholder and
+                          failed rows, the overview's Planning strip, #47); ui/ (shadcn:
                           button, input, sheet)
   index.css               Tailwind 4 + the D · Slab theme tokens (light/dark)
 e2e/                      Playwright specs (phone viewport); calendar-seed.ts makes four made-up months for the
@@ -1143,7 +1159,7 @@ force. Design: spike #31's direction D · Plan ([design.md](design/design.md#com
   the days with totals, the mean kcal share of each day's own target, the goal in force on the
   last day. The weight: per day with entries the day's mean and the 7-day average
   (`dailyWeights`, the same as the goals screen's trend).
-- **The screen** (`/calendar?month&day`): see [Screens](#screens-10-11-12-13-24-30-33-40). The web
+- **The screen** (`/calendar?month&day`): see [Screens](#screens-10-11-12-13-24-30-33-40-47). The web
   app classifies with the same shared functions; the server sends inputs, not verdicts.
 
 ## Planning (#36)
@@ -1199,8 +1215,10 @@ the suggestion job (#45, [below](#the-suggestion-job-45)) fills the rounds, and 
   shows "rest open"; the server sends inputs, not verdicts.
 - **`GET /api/planned-meals/:id`** (#40): one planned meal in any status, with its numbers.
 - **The phone** (#40): the plan view, a planned meal's recipe, the Ate-it and Plan-for sheets, the
-  planned rows on the overview and the day view and the split Log | Plan slab: see
-  [Screens](#screens-10-11-12-13-24-30-33-40). It reads the plan with the calendar's functions and
+  planned rows on the overview and the day view and the split Log | Plan slab; planning requests
+  (#47): the entry screen with its starters, the filter page, the composer, the request thread and a
+  suggestion's recipe, and the overview's Planning strip: see
+  [Screens](#screens-10-11-12-13-24-30-33-40-47). It reads the plan with the calendar's functions and
   previews "Ate it" with the shared `computeTotals`; the server's numbers are the ones saved.
 - **`GET /api/recipes/:id`**: the recipe with its items (grams and nutrients for the whole recipe
   and per portion, the matched food or the estimate), `perPortion` and `whole` totals, steps,
@@ -1499,7 +1517,7 @@ square corners. The tokens are in `index.css` (shadcn's names mapped onto the pa
 `ink`, `lime`, `lime-soft`, `tint`, `orange` and their foregrounds); the primitives (`Band`,
 `Strip`, `Label`, `SlabButton`, `BottomSlab`, `StatusLabel`) in `components/slab.tsx`.
 
-### Screens (#10, #11, #12, #13, #24, #30, #33, #40)
+### Screens (#10, #11, #12, #13, #24, #30, #33, #40, #47)
 
 - **Overview** (`/`): today's totals as the ink slab against the goal in force today (kcal,
   protein, fat, carbs, fibre with what's left; "N meals not counted yet" for those without an
@@ -1518,7 +1536,18 @@ square corners. The tokens are in `index.css` (shadcn's names mapped onto the pa
   where the day view steps back as far as needed. The header's calendar opens the calendar on the
   current month (#33), the scale goals and weight.
   The bottom slab is split (#40): **Log** (lime, the meal capture; its accessible name stays "Log
-  meal") | **Plan** (tint), which opens the plan view until the planning entry screen exists (#36).
+  meal") | **Plan** (tint), which opens the planning entry screen (#47). Under the totals the
+  **Planning strip** (#47, `PlanningStrip`, `usePlanningRequests`, key under `meals`, polling while
+  a round runs) lists at most one row per state the open requests are in (#54's follow-up,
+  `stripRows` / `groupStripRows` / `requestState` in `lib/plan-request.ts`): suggestions waiting for
+  a verdict (lime, "Suggested · 2 for you", like a meal that needs input), additions waiting for a
+  round (lime), still suggesting (quiet, "Suggesting · 2 of 3 ready" with the count on the right), a
+  failed round (orange, like a failed meal), and requests still in the upload queue ("On this
+  phone · waiting to send"; orange once refused, never folded). Several open requests sharing a
+  state fold into one row instead of one each: the count in words ("3 requests with suggestions"),
+  their titles in the sub-line, opening the entry screen (`/plan`), where every open request is
+  listed. A request whose filter days are all before today (the phone's zone; `isPastRequest`) drops
+  off the strip, and a request whose suggestions all have a verdict leaves it.
   Goals come from `GET /api/goals` (`useGoals`), resolved per day with `goalInForce`.
 - **Day view** (`/days/:date`, `useDay` → `GET /api/days/:date?tz=<the phone's zone>`): the
   totals slab with the day's goal and per-target "left" / "over", the meals not counted yet, a
@@ -1550,8 +1579,8 @@ square corners. The tokens are in `index.css` (shadcn's names mapped onto the pa
   eaten · rest open", or the date) and its planned meals in every status (planned, "Logged ·
   Dinner" with its meal's kcal, "Skipped · Dinner" struck through), today's with Ate it, or
   "Nothing planned". The bottom slab is lime **Ate it · Dinner** while today has a planned meal to
-  log, else none. Leftovers and the shopping list (#36 wave 2) and a "Plan <day>" entry (the
-  planning screens) are left out until they exist.
+  log, else none. Leftovers and the shopping list (#36 wave 2) are left out until they exist, and
+  so is a "Plan <day>" row (the planning entry screen is the overview's Plan, #47).
 - **Planned meal** (#40, `/planned/:id`, `usePlannedMeal` → `GET /api/planned-meals/:id`, the
   recipe by `useRecipe` (cached for good: recipes never change) and the plan of its date;
   `components/recipe-detail.tsx`, to be reused for suggestions): the header with back and a tint
@@ -1583,6 +1612,83 @@ square corners. The tokens are in `index.css` (shadcn's names mapped onto the pa
   planned."), "<day> with it 1,784 of 2,200 · 416 left"; lime **Save · Mon dinner** (a PATCH of what
   changed), then **Skip it** (the planned meal shows as skipped, Unskip undoes it) and **Unplan**
   (an inline confirm; a DELETE, then the plan view).
+- **Planning entry** (#47, `/plan`, "What to cook?"; `routes/plan.index.tsx`): the header with back
+  and the plan view's calendar, then **starter bands** (`StarterBand`, `lib/starters.ts`, computed
+  by code from what the app has: what is open tonight (protein, else kcal, against the goal in force,
+  from `usePlan` of today and tomorrow; tomorrow once tonight's dinner is eaten or planned), the meal
+  logged most in 30 days ("Like Linsen-Dal, but different", `useRepeatable`), what is in season this
+  month (a static German list in code, `SEASON`), the last request ("Dinners Tue–Thu, like last
+  time": its filters again from today, its text); each only when its data is there, the first one the
+  screen's ink slab, the rest tint and plain). A tap fills the composer's text and replaces the
+  filters; both stay editable. Then the open requests as plain rows (and those still on this phone).
+  The sticky **dock** (`Dock`, `components/composer.tsx`): the **filter summary** row ("For
+  Tonight · Dinner · cook 2", `summaryWords`: when and which meals, then only what differs from the
+  defaults; it opens the filter page) above the **composer** (plus, field, mic, lime send). Send is
+  disabled while nothing is typed or attached, while no day is picked (a tint hint says so) and
+  until Settings → Planning has loaded (its defaults complete the filters). Sending queues the
+  request (`sendDraft`, see [the upload queue](#the-upload-queue-liboutbox)) and opens its thread.
+  Nightly suggestions and agent-written starters (#48) and leftovers (#49) are not there yet.
+- **Composer** (#47, `components/composer.tsx`): attachments above the row as 44 px chips (a photo's
+  thumbnail, a voice memo's length "voice · transcribed later", a link's host and path, a file's
+  name; each removable), then **plus** (a top sheet: Photo, the camera or library; Link, the link
+  sheet; File and Audio file, the Files picker; Paste, the clipboard or the paste sheet, pasted text
+  joining the field), the field (tint, lime-soft while focused, growing to five lines), the **mic**
+  (`useRecorder` in place: the field becomes a lime-soft "Recording 0:04" row, the mic a lime stop
+  square; the recording becomes a voice chip, transcribed on the server once sent) and the lime
+  **send** square (tint and disabled with nothing to send). What it holds is a draft per composer
+  (`lib/plan-draft.ts`, in memory for the session: the entry screen's with its filters, each
+  thread's), so the filter page or a recipe in between keep it; sending hands it to the upload
+  queue and clears it. While the on-screen keyboard is up (`visualViewport`) the dock sits on top
+  of it, the filter summary included.
+- **Filter page** (#47, `/plan/filters`, the entry screen's draft): back, "Request" / "Filters",
+  the request **as the agent will read it** as the ink slab (`requestSentence`: "Dinner tonight,
+  ≤ 30 min total, no oven, using ½ Hokkaido. 3 suggestions, based on a real recipe, 2 portions each
+  (eat one, keep the rest).") and what else it reads; then toggle chips for **when** (Today,
+  Tomorrow, Rest of the week, Pick days: the next seven as chips), **which meals**, **time** (≤ 20 /
+  30 / 45 min, any), **only** (`PLANNING_CONSTRAINTS`), **use up** (typed, one chip each), the
+  **recipe source** as choice rows ("default · …" from Settings → Planning), **portions to cook**
+  and **suggestions per round** as preset chips (the default one labelled). Changes apply at once;
+  "Back to the defaults" clears them; lime **Done** goes back. The filters are overrides
+  (`FilterDraft`) over `filterDefaults` (`PLANNING_DEFAULTS` with Settings → Planning's count,
+  source and portions), sent complete (`resolveDraft`).
+- **Request thread** (#47, `/plan/requests/:id`, the push's target; `usePlanningRequest`, key under
+  `meals`, polling while a round is queued or running): the header ("Request · Suggesting" /
+  "Suggested" / "Failed" / "Archived", the title, the plan view), the **slots slab** (ink: each of
+  the request's days × slots: this request's pick in the slab's foreground with the day "with it",
+  a slot already eaten or planned with its title, else "Open" and what the day has eaten; "1 of 3
+  slots filled"), **You asked** (tint: the filters as chips, `askedWords`, and the first round's
+  inputs: quoted texts and transcripts, links, photos, files; still-queued ones say "Sending",
+  "Waiting for network" or, refused, an orange line with Retry / Discard), then each round: **You
+  added** before a steering round with its inputs, a strip "Round 2" with how far it is
+  (`roundMeta`: "Queued", "Outlining…", "1 of 3 ready", "2 of 3 · 1 couldn't", "Same request · …"
+  for more), an orange band when the whole round failed (its error), and its rows: an **outlined
+  idea** as a quiet placeholder (title, approach, a grey bar, "Checking ingredients…" with a pulse on
+  the one being worked on, else "Queued", the source mode, the proposed slot), a **ready
+  suggestion** as a band (`SuggestionBand`: title and summary, kcal per portion, the day's fit bar
+  on the page colour with "Sat with it 1,865 of 2,200 · 335 left", the macros as chips and "35 of 88
+  g P open", two why-lines, times and the source label; **Pick · Sat dinner** in ink (where the pick
+  will go, `pickTarget`, mirroring the server) and **No**, which folds the band into "… · no" with
+  Undo (unreject); a picked one turns tint, "Planned · Sat dinner", with **Change day · portions**
+  (the Plan-for sheet of its planned meal) and **Unplan**), an **idea that couldn't be completed**
+  struck through and quiet, with the reason (no orange, no retry: Suggest more is the retry). Under
+  a running round a muted line says how it works and that additions go into the next round. At the
+  end: additions not in a round yet ("You added · for the next round" / "not asked yet"), then a tint
+  **Suggest more** row ("same request · 3 more"; "Try again" after a failed round) or, with
+  additions waiting, a lime **Suggest with it**; "Archive request" (out of the lists; stops a
+  running round; an archived thread has a tint band with Unarchive and no composer). The dock's
+  composer steers: with no round open, sending queues the text and attachments and a `suggest`
+  round (a steer); while one is queued or running it queues them only ("Add more for the next
+  round…"). Pick, No and Unplan are single requests (like "Ate it"), never queued; a failure is an
+  orange line in the band. A request still only in the upload queue shows what this phone holds
+  ("Kept on this phone: it goes out … as soon as yamt is reachable", or the refusal with Retry /
+  Discard).
+- **Suggestion detail** (#47, `/plan/requests/:id/suggestions/:suggestionId`, from a band's title;
+  `SuggestionDetail` in `components/recipe-detail.tsx`, the same sections as a planned meal's
+  recipe): "Suggestion · round 1 · for Sat, dinner", title, summary, source; the ink slab with one
+  portion against what its day has open (the suggestion's fit), **why it fits** and the changes on
+  tint, the leftover line for more than one portion cooked, the ingredients for the request's
+  portions, the steps and the source footer; the bottom slab **Pick · Sat dinner** (ink), **Undo
+  No** for a rejected one, **Open the planned meal** once picked.
 - **Goals** (`/goals`): the weight entry (lime: kg with a dot or comma, now or a chosen time, Undo
   right after), the trend (`lib/weight.ts`: per calendar day the mean of its entries, the 7-day
   moving average over the days with entries; six weeks shown, a week more fetched so the average
@@ -1693,8 +1799,10 @@ square corners. The tokens are in `index.css` (shadcn's names mapped onto the pa
   equipment, favourite sites, weekday cooking time) whose rows open a small sheet — a text field,
   one line each, or a number field for the cooking time.
 - **Live status:** the overview polls `GET /api/meals` every 3 s while a meal is
-  queued, analysing or has a pending transcript, the meal screen polls its meal likewise. A push
-  arriving while the app is open refreshes the meals at once.
+  queued, analysing or has a pending transcript, the meal screen polls its meal likewise; the
+  planning list and a thread poll while a round is queued or running (#47). A push arriving while
+  the app is open refreshes the meals at once, and with them (keys under `meals`) the planning
+  requests and threads.
 
 ### Recording
 
@@ -1730,8 +1838,20 @@ the API:
    holds it until the user retries or discards it.
 5. The queue starts with the app (`startOutbox` in `main.tsx`) and sends what an earlier visit
    left. Without IndexedDB (rare) it falls back to memory and says so in the console.
+6. **Planning requests** (#47) go the same way, with three more entry types: `plan-request` (the
+   request with its client id, complete filters and the phone's zone; a text alone goes along as its
+   first input), `plan-input` (a text, link, photo, voice memo or file of a request, checked like a
+   capture, uploaded with progress) and `plan-round` (its client id is the round's: `suggest`, the
+   first or a steer, or `more`). Inputs and the round wait while their request's entry is queued;
+   a round waits for the inputs queued before it (not for later ones, which go into the next round);
+   one waiting round per request (asking again answers it, and retries a refused one). A refused
+   request holds everything of it; discarding it drops its inputs and round too. `sendDraft`
+   (`lib/plan-draft.ts`) queues a composer's draft in that order: the request (with the text) or the
+   text as an input, the attachments, then a round unless one is open. After an entry is sent, the
+   thread's query is refreshed before the entry is forgotten (then the list), so nothing blinks.
 
-The screens merge the queue's entries (`useMealOutbox`) with the server's captures by id.
+The screens merge the queue's entries (`useMealOutbox`; `usePlanningOutbox` for planning requests,
+#47) with the server's captures and inputs by id.
 Removing a meal waits until none of its captures is left in the queue (see [Removing a
 meal](#removing-a-meal)); an upload that reaches a meal removed meanwhile (from another device) is
 refused with 409 and shows as refused, with Retry and Discard.
@@ -1764,5 +1884,7 @@ corrections (#11), the day view with goals and weight (#12) and Web Push notific
 are in: wave 1 is complete. On top of it, the guided goal setup (#24), paste with the iOS
 Shortcut share target (#26), the agent settings (#28), logging a meal again (#30), the calendar (#33,
 from spike #31), removing a meal, and the data underneath meal planning (#39, epic #36: recipes,
-planned meals, the plan and "Ate it"; [ADR 0003](adr/0003-meal-planning.md)). Spike #4 (speech-to-text) decided ADR 0002; spike #5's chosen design is
+planned meals, the plan and "Ate it"; [ADR 0003](adr/0003-meal-planning.md)), the plan view and
+recipe detail (#40), planning requests (#44), the suggestion job (#45), planning settings (#46) and
+the planning screens (#47). Spike #4 (speech-to-text) decided ADR 0002; spike #5's chosen design is
 [design/design.md](design/design.md). See the epic for the decisions each one builds on.

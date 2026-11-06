@@ -231,14 +231,16 @@ export function normaliseUrl(input: string): string | null {
   }
 }
 
-function LinkSheet({
+export function LinkSheet({
   open,
   onClose,
   onAdd,
+  notePlaceholder = "Optional: what of it you ate (e.g. half the recipe)",
 }: {
   open: boolean;
   onClose: () => void;
   onAdd: (url: string, note: string) => void;
+  notePlaceholder?: string;
 }) {
   const [url, setUrl] = useState("");
   const [note, setNote] = useState("");
@@ -265,7 +267,7 @@ function LinkSheet({
       <textarea
         value={note}
         onChange={(e) => setNote(e.target.value)}
-        placeholder="Optional: what of it you ate (e.g. half the recipe)"
+        placeholder={notePlaceholder}
         aria-label="Note about the link"
         rows={2}
         className={`${fieldClass} resize-none border-border border-t`}
@@ -298,7 +300,7 @@ const typeList = (types: string[]) => (types.length ? types.join(", ") : "nothin
  * arrives is added at once; if nothing usable does, the sheet says so and lists the types the
  * clipboard offered, so it's clear what the other app put there.
  */
-function PasteSheet({
+export function PasteSheet({
   open,
   fallback,
   onClose,

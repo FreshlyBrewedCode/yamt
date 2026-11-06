@@ -16,8 +16,12 @@ import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as DaysDateRouteImport } from './routes/days.$date'
 import { Route as GoalsGuidedRouteImport } from './routes/goals_.guided'
 import { Route as MealsMealIdRouteImport } from './routes/meals.$mealId'
+import { Route as PlanIndexRouteImport } from './routes/plan.index'
 import { Route as PlanDaysRouteImport } from './routes/plan.days'
+import { Route as PlanFiltersRouteImport } from './routes/plan.filters'
 import { Route as PlannedIdRouteImport } from './routes/planned.$id'
+import { Route as PlanRequestsIdIndexRouteImport } from './routes/plan.requests.$id.index'
+import { Route as PlanRequestsIdSuggestionsSuggestionIdRouteImport } from './routes/plan.requests.$id.suggestions.$suggestionId'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -54,9 +58,19 @@ const MealsMealIdRoute = MealsMealIdRouteImport.update({
   path: '/meals/$mealId',
   getParentRoute: () => rootRouteImport,
 } as any)
+const PlanIndexRoute = PlanIndexRouteImport.update({
+  id: '/plan/',
+  path: '/plan/',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const PlanDaysRoute = PlanDaysRouteImport.update({
   id: '/plan/days',
   path: '/plan/days',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PlanFiltersRoute = PlanFiltersRouteImport.update({
+  id: '/plan/filters',
+  path: '/plan/filters',
   getParentRoute: () => rootRouteImport,
 } as any)
 const PlannedIdRoute = PlannedIdRouteImport.update({
@@ -64,6 +78,17 @@ const PlannedIdRoute = PlannedIdRouteImport.update({
   path: '/planned/$id',
   getParentRoute: () => rootRouteImport,
 } as any)
+const PlanRequestsIdIndexRoute = PlanRequestsIdIndexRouteImport.update({
+  id: '/plan/requests/$id/',
+  path: '/plan/requests/$id/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PlanRequestsIdSuggestionsSuggestionIdRoute =
+  PlanRequestsIdSuggestionsSuggestionIdRouteImport.update({
+    id: '/plan/requests/$id/suggestions/$suggestionId',
+    path: '/plan/requests/$id/suggestions/$suggestionId',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -74,7 +99,11 @@ export interface FileRoutesByFullPath {
   '/goals/guided': typeof GoalsGuidedRoute
   '/meals/$mealId': typeof MealsMealIdRoute
   '/plan/days': typeof PlanDaysRoute
+  '/plan/filters': typeof PlanFiltersRoute
   '/planned/$id': typeof PlannedIdRoute
+  '/plan/': typeof PlanIndexRoute
+  '/plan/requests/$id/': typeof PlanRequestsIdIndexRoute
+  '/plan/requests/$id/suggestions/$suggestionId': typeof PlanRequestsIdSuggestionsSuggestionIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -85,7 +114,11 @@ export interface FileRoutesByTo {
   '/goals/guided': typeof GoalsGuidedRoute
   '/meals/$mealId': typeof MealsMealIdRoute
   '/plan/days': typeof PlanDaysRoute
+  '/plan/filters': typeof PlanFiltersRoute
   '/planned/$id': typeof PlannedIdRoute
+  '/plan': typeof PlanIndexRoute
+  '/plan/requests/$id': typeof PlanRequestsIdIndexRoute
+  '/plan/requests/$id/suggestions/$suggestionId': typeof PlanRequestsIdSuggestionsSuggestionIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -97,7 +130,11 @@ export interface FileRoutesById {
   '/goals_/guided': typeof GoalsGuidedRoute
   '/meals/$mealId': typeof MealsMealIdRoute
   '/plan/days': typeof PlanDaysRoute
+  '/plan/filters': typeof PlanFiltersRoute
   '/planned/$id': typeof PlannedIdRoute
+  '/plan/': typeof PlanIndexRoute
+  '/plan/requests/$id/': typeof PlanRequestsIdIndexRoute
+  '/plan/requests/$id/suggestions/$suggestionId': typeof PlanRequestsIdSuggestionsSuggestionIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -110,7 +147,11 @@ export interface FileRouteTypes {
     | '/goals/guided'
     | '/meals/$mealId'
     | '/plan/days'
+    | '/plan/filters'
     | '/planned/$id'
+    | '/plan/'
+    | '/plan/requests/$id/'
+    | '/plan/requests/$id/suggestions/$suggestionId'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -121,7 +162,11 @@ export interface FileRouteTypes {
     | '/goals/guided'
     | '/meals/$mealId'
     | '/plan/days'
+    | '/plan/filters'
     | '/planned/$id'
+    | '/plan'
+    | '/plan/requests/$id'
+    | '/plan/requests/$id/suggestions/$suggestionId'
   id:
     | '__root__'
     | '/'
@@ -132,7 +177,11 @@ export interface FileRouteTypes {
     | '/goals_/guided'
     | '/meals/$mealId'
     | '/plan/days'
+    | '/plan/filters'
     | '/planned/$id'
+    | '/plan/'
+    | '/plan/requests/$id/'
+    | '/plan/requests/$id/suggestions/$suggestionId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -144,7 +193,11 @@ export interface RootRouteChildren {
   GoalsGuidedRoute: typeof GoalsGuidedRoute
   MealsMealIdRoute: typeof MealsMealIdRoute
   PlanDaysRoute: typeof PlanDaysRoute
+  PlanFiltersRoute: typeof PlanFiltersRoute
   PlannedIdRoute: typeof PlannedIdRoute
+  PlanIndexRoute: typeof PlanIndexRoute
+  PlanRequestsIdIndexRoute: typeof PlanRequestsIdIndexRoute
+  PlanRequestsIdSuggestionsSuggestionIdRoute: typeof PlanRequestsIdSuggestionsSuggestionIdRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -198,6 +251,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof MealsMealIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/plan/': {
+      id: '/plan/'
+      path: '/plan'
+      fullPath: '/plan/'
+      preLoaderRoute: typeof PlanIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/plan/days': {
       id: '/plan/days'
       path: '/plan/days'
@@ -205,11 +265,32 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PlanDaysRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/plan/filters': {
+      id: '/plan/filters'
+      path: '/plan/filters'
+      fullPath: '/plan/filters'
+      preLoaderRoute: typeof PlanFiltersRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/planned/$id': {
       id: '/planned/$id'
       path: '/planned/$id'
       fullPath: '/planned/$id'
       preLoaderRoute: typeof PlannedIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/plan/requests/$id/': {
+      id: '/plan/requests/$id/'
+      path: '/plan/requests/$id'
+      fullPath: '/plan/requests/$id/'
+      preLoaderRoute: typeof PlanRequestsIdIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/plan/requests/$id/suggestions/$suggestionId': {
+      id: '/plan/requests/$id/suggestions/$suggestionId'
+      path: '/plan/requests/$id/suggestions/$suggestionId'
+      fullPath: '/plan/requests/$id/suggestions/$suggestionId'
+      preLoaderRoute: typeof PlanRequestsIdSuggestionsSuggestionIdRouteImport
       parentRoute: typeof rootRouteImport
     }
   }
@@ -224,7 +305,12 @@ const rootRouteChildren: RootRouteChildren = {
   GoalsGuidedRoute: GoalsGuidedRoute,
   MealsMealIdRoute: MealsMealIdRoute,
   PlanDaysRoute: PlanDaysRoute,
+  PlanFiltersRoute: PlanFiltersRoute,
   PlannedIdRoute: PlannedIdRoute,
+  PlanIndexRoute: PlanIndexRoute,
+  PlanRequestsIdIndexRoute: PlanRequestsIdIndexRoute,
+  PlanRequestsIdSuggestionsSuggestionIdRoute:
+    PlanRequestsIdSuggestionsSuggestionIdRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

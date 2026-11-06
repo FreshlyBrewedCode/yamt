@@ -109,7 +109,7 @@ export const iconButtonClass =
  * The header's back button: back in the app's history (the day you came from, the overview),
  * or to `fallback` when the screen was opened directly (a deep link, a reload).
  */
-export function BackButton({ fallback = "/", className }: { fallback?: "/"; className?: string }) {
+export function BackButton({ fallback = "/", className }: { fallback?: "/" | "/plan"; className?: string }) {
   const router = useRouter();
   const canGoBack = useCanGoBack();
   return (

@@ -25,7 +25,12 @@ import {
   type MealsResponse,
   type MonthResponse,
   mealPaths,
+  type PickSuggestionBody,
+  type PickSuggestionResponse,
   type PlannedMealResponse,
+  type PlanningRequestDetail,
+  type PlanningRequestResponse,
+  type PlanningRequestsResponse,
   type PlanningSettingsBody,
   type PlanningSettingsResponse,
   type PlanResponse,
@@ -35,6 +40,7 @@ import {
   type PushSubscriptionResponse,
   type PushTestResponse,
   planningPaths,
+  planningRequestPaths,
   planningSettingsPaths,
   profilePaths,
   pushPaths,
@@ -45,6 +51,7 @@ import {
   type RestoreMealResponse,
   type RetractResponse,
   runPaths,
+  type SuggestionResponse,
   type TranscribeResponse,
   type UpdateMealBody,
   type UpdatePlannedMealBody,
@@ -90,6 +97,12 @@ export const keys = {
   agent: ["agent"] as const,
   agentOptions: (harness: string, model: string | null) => ["agent", "options", harness, model] as const,
   planningSettings: ["planning", "settings"] as const,
+  /**
+   * Under "meals" (#47): a push, a pick or an unplan and every meal change refresh the open
+   * requests and the threads (their fit reads the plan).
+   */
+  planningRequests: ["meals", "planning", "requests"] as const,
+  planningRequest: (id: string) => ["meals", "planning", "request", id] as const,
 };
 
 /** The browser's zone: days are the phone's calendar days. */
@@ -409,6 +422,85 @@ export function planError(e: Error, what: string): string {
     return `No connection: ${what} needs yamt. Try again once you're online.`;
   }
   return `Couldn't do it: ${e.message}`;
+}
+
+// ---- Planning requests (#47) -----------------------------------------------------------------
+
+const roundOpen = (s: string | undefined) => s === "queued" || s === "running";
+
+/** The open requests, newest first, each with its latest round counted; polls while one runs. */
+export function usePlanningRequests() {
+  return useQuery({
+    queryKey: keys.planningRequests,
+    queryFn: () => api.get<PlanningRequestsResponse>(planningRequestPaths.requests),
+    refetchInterval: (q) =>
+      q.state.data?.requests.some((r) => roundOpen(r.latestRound?.status)) ? POLL_MS : false,
+  });
+}
+
+/**
+ * A request's thread: inputs, rounds, suggestions with their fit. A request the server doesn't
+ * know (yet) is `null`: one made offline exists only in the upload queue until it is sent. Polls
+ * while a round is queued or running.
+ */
+export function usePlanningRequest(id: string, enabled = true) {
+  return useQuery({
+    queryKey: keys.planningRequest(id),
+    enabled: enabled && id !== "",
+    queryFn: async () => {
+      try {
+        return await api.get<PlanningRequestDetail>(planningRequestPaths.request(id));
+      } catch (e) {
+        if (e instanceof ApiError && e.status === 404) return null;
+        throw e;
+      }
+    },
+    refetchInterval: (q) => (q.state.data?.rounds.some((r) => roundOpen(r.status)) ? POLL_MS : false),
+  });
+}
+
+/** After a verdict or an archive: the thread and the lists, and the plan (a pick is a planned meal). */
+const requestChanged = (requestId: string) => {
+  void queryClient.invalidateQueries({ queryKey: keys.planningRequest(requestId) });
+  void queryClient.invalidateQueries({ queryKey: keys.meals });
+};
+
+/**
+ * Pick: the suggestion becomes a planned meal (on the proposed slot unless `body` says another, else
+ * the request's next open one). One request, not queued (like "Ate it"); `body.id` (made when the
+ * band rendered) makes a retry answer the same planned meal.
+ */
+export function usePickSuggestion(requestId: string) {
+  return useMutation({
+    mutationFn: (v: { suggestionId: string; body: PickSuggestionBody }) =>
+      api.post<PickSuggestionResponse>(planningRequestPaths.pick(v.suggestionId), v.body),
+    onSuccess: (r) => queryClient.setQueryData(keys.plannedMeal(r.plannedMeal.id), r.plannedMeal),
+    onSettled: () => requestChanged(requestId),
+  });
+}
+
+/** "No", or its undo. */
+export function useRejectSuggestion(requestId: string) {
+  return useMutation({
+    mutationFn: (v: { suggestionId: string; reject: boolean }) =>
+      api.post<SuggestionResponse>(
+        v.reject
+          ? planningRequestPaths.reject(v.suggestionId)
+          : planningRequestPaths.unreject(v.suggestionId),
+      ),
+    onSettled: () => requestChanged(requestId),
+  });
+}
+
+/** Out of the open lists (a running round stops), or back. */
+export function useArchiveRequest() {
+  return useMutation({
+    mutationFn: (v: { id: string; archive: boolean }) =>
+      api.post<PlanningRequestResponse>(
+        v.archive ? planningRequestPaths.archive(v.id) : planningRequestPaths.unarchive(v.id),
+      ),
+    onSettled: (_r, _e, v) => requestChanged(v.id),
+  });
 }
 
 /** Every goal, newest first (a short list); `goalInForce` picks a day's. */

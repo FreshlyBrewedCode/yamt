@@ -1,16 +1,17 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { type DayTotals, goalInForce } from "@yamt/shared";
+import { type DayTotals, goalInForce, requestTitle } from "@yamt/shared";
 import { CalendarDays, ChevronRight, CloudOff, Scale, Settings, Square } from "lucide-react";
 import { useMemo, useState } from "react";
 import { groupByDay, MealRow, type MealRowData } from "@/components/meal-row";
+import { PlanningStrip } from "@/components/plan-request";
 import { AteItSheet, PlannedNote, PlannedRow, SplitSlab } from "@/components/planning";
 import { iconButtonClass, Label, Strip } from "@/components/slab";
 import { TotalsSlab } from "@/components/totals-slab";
 import { dayLabel, formatLongDate, formatNumber, localDate, plural, startOfDay } from "@/lib/format";
 import { uuidv7 } from "@/lib/ids";
-import { useOutbox } from "@/lib/outbox";
+import { useOutbox, usePlanningOutbox } from "@/lib/outbox";
 import { stillPlanned, withPlanned } from "@/lib/planning";
-import { useGoals, useMeals, usePlan } from "@/lib/queries";
+import { useGoals, useMeals, usePlan, usePlanningRequests } from "@/lib/queries";
 
 export const Route = createFileRoute("/")({ component: Overview });
 
@@ -21,8 +22,10 @@ const DAYS = 14;
  * Home: today's totals against today's goal (a tap opens the day view), then the last two weeks'
  * meals by day (each day header opens that day, with its kcal against its own goal); today's
  * planned meals (#40) follow its eaten ones as quiet rows with Ate it, and the totals say what the
- * day comes to with them. The bottom slab is Log | Plan. The header's calendar opens the month
- * (#33), the scale goals and weight, the cog the settings.
+ * day comes to with them. Under the totals, the Planning strip (#47): requests whose suggestions
+ * wait, that are still suggesting or failed. The bottom slab is Log | Plan (the planning entry
+ * screen). The header's calendar opens the month (#33), the scale goals and weight, the cog the
+ * settings.
  */
 function Overview() {
   const navigate = useNavigate();
@@ -38,6 +41,14 @@ function Overview() {
   const planToday = plan.data?.days.find((d) => d.date === todayDate);
   const planned = stillPlanned(planToday);
   const [ate, setAte] = useState<string | null>(null);
+  const requests = usePlanningRequests();
+  const planningQueue = usePlanningOutbox();
+  const knownRequests = new Set((requests.data?.requests ?? []).map((r) => r.request.id));
+  const queuedRequests = planningQueue.entries.flatMap((e) =>
+    e.type === "plan-request" && !knownRequests.has(e.requestId)
+      ? [{ requestId: e.requestId, title: requestTitle(e.filters), refused: e.failed }]
+      : [],
+  );
 
   const days = useMemo(() => {
     const list = groupByDay(meals.data?.meals ?? [], outbox.entries);
@@ -100,6 +111,8 @@ function Overview() {
             ]}
           />
         </Link>
+
+        <PlanningStrip requests={requests.data?.requests ?? []} queued={queuedRequests} today={todayDate} />
 
         {meals.isError && !meals.data && (
           <p className="px-5 py-6 font-medium text-muted-foreground">
@@ -165,11 +178,11 @@ function Overview() {
         </Link>
       </main>
 
-      {/* Log | Plan is part of the layout: a slab at the bottom, never floating over the list. Until the
-          planning screens exist (#36), Plan opens the plan. */}
+      {/* Log | Plan is part of the layout: a slab at the bottom, never floating over the list. Plan
+          opens the planning entry screen (#47). */}
       <SplitSlab
         onLog={() => navigate({ to: "/meals/$mealId", params: { mealId: uuidv7() }, search: { new: true } })}
-        onPlan={() => navigate({ to: "/plan/days" })}
+        onPlan={() => navigate({ to: "/plan" })}
       />
       <AteItSheet
         planned={planned.find((p) => p.id === ate) ?? null}

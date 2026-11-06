@@ -168,8 +168,8 @@ API, auth, SQLite), `packages/web` (Vite + React + TanStack Router/Query + Tailw
 - Design: every screen follows [docs/design/design.md](docs/design/design.md) (filled bands, the
   ink / lime / tint / plain hierarchy, orange only for failure, the sticky bottom slab) and builds
   on the primitives in `components/slab.tsx`; light and dark both get a look before a PR.
-- Captures leave the phone only through the upload queue (`lib/outbox`, IndexedDB): never post a
-  capture directly, or it can be lost offline. The service worker caches the app shell only,
+- Captures and planning requests with their inputs (#47) leave the phone only through the upload
+  queue (`lib/outbox`, IndexedDB): never post a capture or input directly, or it can be lost offline. The service worker caches the app shell only,
   never `/api` or `/mcp`.
 - Notifications: personal data (titles, questions, errors) only inside the encrypted push
   payload, never in logs; meal notifications go through `notifyMeal` (`push/messages.ts`), which

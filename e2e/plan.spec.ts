@@ -119,8 +119,11 @@ test("ate it from the overview: one ingredient off at 1.5× logs those items; th
   );
   await expect(page.getByTestId("planned-row")).toHaveCount(0);
 
-  // the plan view (Plan in the bottom slab) shows it logged; its recipe opens to the meal
+  // the plan view (Plan in the bottom slab, then the entry screen's calendar) shows it logged; its
+  // recipe opens to the meal
   await page.getByTestId("plan-button").click();
+  await expect(page).toHaveURL(/\/plan$/);
+  await page.getByRole("link", { name: "Plan view" }).click();
   await expect(page).toHaveURL(/\/plan\/days$/);
   await expect(page.getByTestId("plan-square")).toHaveCount(7);
   const logged = page.getByTestId("planned-row").filter({ hasText: "Testcurry vom Plan" });

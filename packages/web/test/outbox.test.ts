@@ -1,12 +1,15 @@
 import { describe, expect, test } from "bun:test";
+import { PLANNING_DEFAULTS, type ResolvedPlanningFilters } from "@yamt/shared";
 import { backoffMs, CaptureRejected, Outbox } from "../src/lib/outbox/outbox";
 import { MemoryStore } from "../src/lib/outbox/store";
 import { type CaptureEntry, type OutboxTransport, TransportError } from "../src/lib/outbox/types";
+import { type ComposerDraft, sendDraft } from "../src/lib/plan-draft";
 
 /** A scripted server: records what arrives, fails as told. */
 function fakeServer() {
   const log: string[] = [];
   const meals = new Set<string>();
+  const requests = new Set<string>();
   const captures = new Map<string, CaptureEntry>();
   let fail: ((what: string) => TransportError | null) | null = null;
   const transport: OutboxTransport = {
@@ -29,6 +32,24 @@ function fakeServer() {
       const err = fail?.(`analyse ${mealId}`);
       if (err) throw err;
       log.push(`analyse ${mealId}`);
+    },
+    async createPlanningRequest(e) {
+      const err = fail?.(`request ${e.requestId}`);
+      if (err) throw err;
+      log.push(`request ${e.requestId}${e.text ? ` "${e.text}"` : ""}`);
+      requests.add(e.requestId);
+    },
+    async sendPlanningInput(e, onProgress) {
+      const err = fail?.(`input ${e.input.kind}`);
+      if (err) throw err;
+      if (!requests.has(e.requestId)) throw new TransportError("request not found", 404);
+      onProgress(1);
+      log.push(`input ${e.input.kind}${e.input.kind === "text" ? ` "${e.input.text}"` : ""}`);
+    },
+    async startRound(e) {
+      const err = fail?.(`round ${e.kind}`);
+      if (err) throw err;
+      log.push(`round ${e.kind} ${e.requestId}`);
     },
   };
   return {
@@ -240,6 +261,121 @@ describe("outbox", () => {
     expect(seen).toContain(0.5);
     expect(outbox.getSnapshot().progress).toEqual({});
     expect(outbox.getSnapshot().sending).toBeNull();
+  });
+});
+
+const filters: ResolvedPlanningFilters = { ...PLANNING_DEFAULTS, days: ["2026-11-06"] };
+const draft = (text: string, attachments = 0): ComposerDraft => ({
+  text,
+  filters: {},
+  attachments: Array.from({ length: attachments }, (_, i) => ({ id: `a${i}`, input: memo(), capturedAt: 7 })),
+});
+
+describe("outbox: planning requests (#47)", () => {
+  test("a new request: created with its text, then its attachments, then the first round", async () => {
+    const { server, outbox, store } = setup();
+    await outbox.start();
+    await sendDraft(outbox, draft("Kürbis, kein Ofen", 1), {
+      requestId: "r1",
+      create: { filters, tz: "Europe/Berlin" },
+      round: true,
+    });
+    await outbox.flush();
+    expect(server.log).toEqual(['request r1 "Kürbis, kein Ofen"', "input audio", "round suggest r1"]);
+    expect(store.map.size).toBe(0);
+  });
+
+  test("offline: everything waits on the phone, in order, and goes once the network is back", async () => {
+    let online = false;
+    const { server, outbox } = setup({ online: () => online });
+    await outbox.start();
+    await sendDraft(outbox, draft("", 2), { requestId: "r1", create: { filters, tz: "UTC" }, round: true });
+    await outbox.flush();
+    expect(server.log).toEqual([]);
+    expect(outbox.getSnapshot().entries.map((e) => e.type)).toEqual([
+      "plan-request",
+      "plan-input",
+      "plan-input",
+      "plan-round",
+    ]);
+    online = true;
+    outbox.wake();
+    await outbox.flush();
+    expect(server.log).toEqual(["request r1", "input audio", "input audio", "round suggest r1"]);
+  });
+
+  test("inputs and the round wait for the request; a refused request holds them, discarding drops them", async () => {
+    const { server, outbox, store } = setup();
+    await outbox.start();
+    server.failWith((what) =>
+      what.startsWith("request") ? new TransportError("days before today", 400) : null,
+    );
+    const req = await outbox.addPlanningRequest({ requestId: "r1", filters, tz: "UTC" });
+    await outbox.addPlanningInput("r1", { kind: "link", url: "https://example.com/rezept" });
+    await outbox.requestRound("r1", "suggest");
+    await outbox.flush();
+    expect(server.log).toEqual([]);
+    expect(outbox.getSnapshot().entries[0]).toMatchObject({ failed: true, error: "days before today" });
+
+    await outbox.discard(req.id);
+    expect(outbox.getSnapshot().entries).toEqual([]);
+    expect(store.map.size).toBe(0);
+  });
+
+  test("a round waits for the inputs queued before it, not for later ones; steering adds a text input", async () => {
+    const { server, outbox } = setup();
+    await outbox.start();
+    await outbox.addPlanningRequest({ requestId: "r1", filters, tz: "UTC" });
+    await outbox.flush();
+    let down = true;
+    server.failWith((what) => (down && what === "input audio" ? new TransportError("No connection") : null));
+    await sendDraft(outbox, draft("Weniger Fleisch", 1), { requestId: "r1", round: true });
+    await outbox.flush();
+    // the text went, the memo waits for the network, and the round for the memo
+    expect(server.log).toEqual(["request r1", 'input text "Weniger Fleisch"']);
+    expect(outbox.getSnapshot().entries.map((e) => e.type)).toEqual(["plan-input", "plan-round"]);
+
+    down = false;
+    outbox.wake();
+    await outbox.flush();
+    expect(server.log.slice(2)).toEqual(["input audio", "round suggest r1"]);
+  });
+
+  test("while a round runs, sending adds inputs only (for the next round)", async () => {
+    const { server, outbox } = setup();
+    await outbox.start();
+    await outbox.addPlanningRequest({ requestId: "r1", filters, tz: "UTC" });
+    await sendDraft(outbox, draft("Und ohne Pilze"), { requestId: "r1", round: false });
+    await outbox.flush();
+    expect(server.log).toEqual(["request r1", 'input text "Und ohne Pilze"']);
+  });
+
+  test("one waiting round per request; asking again retries a refused one", async () => {
+    const { server, outbox } = setup();
+    await outbox.start();
+    server.failWith((what) => (what.startsWith("round") ? new TransportError("a round is open", 409) : null));
+    await outbox.addPlanningRequest({ requestId: "r1", filters, tz: "UTC" });
+    const first = await outbox.requestRound("r1", "more");
+    expect(await outbox.requestRound("r1", "more")).toBe(first);
+    await outbox.flush();
+    expect(outbox.getSnapshot().entries).toMatchObject([{ id: first.id, failed: true }]);
+
+    server.failWith(null);
+    await outbox.requestRound("r1", "more");
+    await outbox.flush();
+    expect(server.log).toEqual(["request r1", "round more r1"]);
+  });
+
+  test("a planning input is checked like a capture", async () => {
+    const { outbox } = setup();
+    await outbox.start();
+    const big = {
+      kind: "image" as const,
+      blob: blob(2000, "image/jpeg"),
+      fileName: "f.jpg",
+      mimeType: "image/jpeg",
+    };
+    expect(outbox.addPlanningInput("r1", big)).rejects.toBeInstanceOf(CaptureRejected);
   });
 });
 

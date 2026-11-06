@@ -3,10 +3,21 @@ import { keys, queryClient } from "../queries";
 import { Outbox, type OutboxSnapshot } from "./outbox";
 import { openStore } from "./store";
 import { httpTransport } from "./transport";
-import type { OutboxEntry, OutboxStore } from "./types";
+import type { MealEntry, OutboxStore, PlanningEntry } from "./types";
 
-export { CaptureRejected, type OutboxSnapshot } from "./outbox";
-export type { AnalyseEntry, CaptureEntry, OutboxEntry, PendingCapture } from "./types";
+export { CaptureRejected, checkCapture, type OutboxSnapshot } from "./outbox";
+export type {
+  AnalyseEntry,
+  CaptureEntry,
+  MealEntry,
+  OutboxEntry,
+  PendingCapture,
+  PendingPlanningInput,
+  PlanInputEntry,
+  PlanningEntry,
+  PlanRequestEntry,
+  PlanRoundEntry,
+} from "./types";
 
 const opened = openStore();
 const store: OutboxStore = {
@@ -21,8 +32,14 @@ export const outbox = new Outbox({
   transport: httpTransport,
   isOnline: () => navigator.onLine,
   onSent: async (e) => {
-    void queryClient.invalidateQueries({ queryKey: keys.meals });
-    await queryClient.invalidateQueries({ queryKey: keys.meal(e.mealId) });
+    if (e.type === "capture" || e.type === "analyse") {
+      void queryClient.invalidateQueries({ queryKey: keys.meals });
+      await queryClient.invalidateQueries({ queryKey: keys.meal(e.mealId) });
+    } else {
+      // the thread first, so a sent input never blinks out of it
+      await queryClient.invalidateQueries({ queryKey: keys.planningRequest(e.requestId) });
+      void queryClient.invalidateQueries({ queryKey: keys.planningRequests });
+    }
   },
 });
 
@@ -41,8 +58,32 @@ export function useOutbox(): OutboxSnapshot {
 }
 
 /** The queue's entries for one meal, oldest first. */
-export function useMealOutbox(mealId: string): { snapshot: OutboxSnapshot; entries: OutboxEntry[] } {
+export function useMealOutbox(mealId: string): { snapshot: OutboxSnapshot; entries: MealEntry[] } {
   const snapshot = useOutbox();
-  const entries = useMemo(() => snapshot.entries.filter((e) => e.mealId === mealId), [snapshot, mealId]);
+  const entries = useMemo(
+    () =>
+      snapshot.entries.filter(
+        (e): e is MealEntry => (e.type === "capture" || e.type === "analyse") && e.mealId === mealId,
+      ),
+    [snapshot, mealId],
+  );
+  return { snapshot, entries };
+}
+
+/** The queue's planning entries (#47), oldest first: every request's, or one request's. */
+export function usePlanningOutbox(requestId?: string): {
+  snapshot: OutboxSnapshot;
+  entries: PlanningEntry[];
+} {
+  const snapshot = useOutbox();
+  const entries = useMemo(
+    () =>
+      snapshot.entries.filter(
+        (e): e is PlanningEntry =>
+          (e.type === "plan-request" || e.type === "plan-input" || e.type === "plan-round") &&
+          (requestId === undefined || e.requestId === requestId),
+      ),
+    [snapshot, requestId],
+  );
   return { snapshot, entries };
 }
