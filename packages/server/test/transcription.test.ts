@@ -21,7 +21,7 @@ import { NormaliseError, normalise, normaliseArgs } from "../src/transcription/f
 import { settleTranscript } from "../src/transcription/job.ts";
 import { LocalWhisperBackend, parseSttLine, sttRequest } from "../src/transcription/local.ts";
 import { NIX_FFMPEG_LINK, resolveFfmpeg, ToolMissingError } from "../src/transcription/tools.ts";
-import { fakeAgentConfig, fixture, tempDir } from "./helpers.ts";
+import { fakeAgentConfig, fakePlanningConfig, fixture, tempDir } from "./helpers.ts";
 
 setDefaultTimeout(30_000);
 
@@ -329,6 +329,11 @@ describe("transcription in the server", () => {
       // far longer than any test waits: an analysis only goes early when a transcript nudges it
       transcriptWaitMs: 60_000,
     },
+    planning: {
+      config: fakePlanningConfig(),
+      timeouts: { idleMs: 3000, toolIdleMs: 3000, turnMs: 10_000, cancelGraceMs: 300 },
+      transcriptWaitMs: 60_000,
+    },
     transcription: {
       backend: new LocalWhisperBackend({
         command: FAKE_STT,
@@ -488,8 +493,8 @@ describe("transcription in the server", () => {
     const input = res.body.input;
     expect(input).toMatchObject({ kind: "audio", mimeType: "audio/mp4" });
     expect(res.body.transcript).toMatchObject({ inputId: input.id, status: "pending" });
-    // the round takes the memo while it is transcribed; its plan job waits (no handler before #45)
-    const { jobId } = s.planningRequests.suggest(request.id);
+    // the round takes the memo while it is transcribed; its plan job waits for the transcript
+    const { jobId, round } = s.planningRequests.suggest(request.id);
     s.repos.db.query("UPDATE jobs SET run_after = ? WHERE id = ?").run(Date.now() + HOUR, jobId);
     const done = await waitFor("the input's transcript", () => {
       const t = s.repos.planningTranscripts.get(input.id);
@@ -499,8 +504,13 @@ describe("transcription in the server", () => {
       text: "Zum Frühstück achtzig Gramm Haferflocken mit Milch.",
       model: "fake-whisper",
     });
-    expect(s.repos.jobs.get(jobId)).toMatchObject({ status: "queued" });
-    expect(s.repos.jobs.get(jobId)!.runAfter).toBeLessThanOrEqual(Date.now());
+    // nudged: it runs (the fake agent's default planning script) with the transcript
+    const planned = await waitFor("the round done", () => {
+      const r = s.repos.planningRounds.get(round.id);
+      return r?.status === "done" && r;
+    });
+    expect(s.repos.jobs.get(jobId)).toMatchObject({ status: "done", attempts: 1 });
+    expect(s.repos.planningRuns.get(planned.runId!)).toMatchObject({ status: "succeeded", ready: 3 });
     expect(s.planningRequests.detail(request.id).transcripts).toMatchObject([
       { inputId: input.id, status: "done" },
     ]);
