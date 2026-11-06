@@ -1,7 +1,10 @@
 import type { Nutrients } from "@yamt/shared";
 
-/** Where a search candidate came from: the user's own history, Open Food Facts, USDA FDC. */
-export type CandidateOrigin = "history" | "off" | "fdc";
+/**
+ * Where a search candidate came from: the user's own history, yamt's food cache (anything looked
+ * up before, no network), Open Food Facts, USDA FDC.
+ */
+export type CandidateOrigin = "history" | "cache" | "off" | "fdc";
 
 export interface RankInput {
   origin: CandidateOrigin;
@@ -27,13 +30,13 @@ export function words(s: string): string[] {
 }
 
 /** Personal history outranks Open Food Facts outranks FDC at equal match quality. */
-const ORIGIN_BONUS: Record<CandidateOrigin, number> = { history: 0.4, off: 0.1, fdc: 0 };
+const ORIGIN_BONUS: Record<CandidateOrigin, number> = { history: 0.4, cache: 0.1, off: 0.1, fdc: 0 };
 
 /**
  * A candidate's score (higher is better), from:
  * - match: the share of query words that start a word of the name or brand (0..1), +0.1 when all
  *   of them are in the name itself, and up to +0.1 for a short name (generic beats "… mit Erdbeer");
- * - origin: history +0.4 (+0.05 per meal it was used in, up to 4), OFF +0.1, FDC 0;
+ * - origin: history +0.4 (+0.05 per meal it was used in, up to 4), the cache and OFF +0.1, FDC 0;
  * - the source's own order: −0.02 per place;
  * - completeness: −0.5 without energy, −0.05 per missing protein, fat or carbohydrate.
  */

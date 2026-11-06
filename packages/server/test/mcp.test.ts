@@ -180,7 +180,7 @@ describe("/mcp", () => {
     expect(res.headers.get("content-type")).toContain("application/json");
     expect(res.headers.get("mcp-session-id")).toBeNull();
     const body = (await res.json()) as { result: { tools: unknown[] } };
-    expect(body.result.tools).toHaveLength(14);
+    expect(body.result.tools).toHaveLength(19);
     const get = await fetch(app.mcpUrl, { headers: { Authorization: `Bearer ${interactive}` } });
     expect(get.status).toBe(405);
     expect(get.headers.get("allow")).toBe("POST");
@@ -189,7 +189,7 @@ describe("/mcp", () => {
   test("the SDK client connects, gets the instructions and the tools with their schemas", async () => {
     const client = await connect(interactive);
     expect(client.getInstructions()).toContain("yamt is the user's meal and macro log");
-    expect(client.getInstructions()?.split("\n")).toHaveLength(2);
+    expect(client.getInstructions()?.split("\n")).toHaveLength(3);
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name)).toEqual([
       "get_meal",
@@ -206,6 +206,11 @@ describe("/mcp", () => {
       "save_recipe",
       "plan_meal",
       "unplan_meal",
+      "get_planning_context",
+      "match_ingredients",
+      "save_round_outline",
+      "save_suggestion",
+      "fail_suggestion",
     ]);
     const save = tools.find((t) => t.name === "save_meal_revision")!;
     expect(save.inputSchema.required).toEqual(["mealId", "title", "items"]);
@@ -886,6 +891,11 @@ describe("run tokens", () => {
     for (const name of ["get_plan", "get_recipe", "save_recipe", "plan_meal", "unplan_meal"]) {
       expect(tools.map((t) => t.name)).not.toContain(name);
     }
+    // the planning tools are a planning run's (and the interactive token's); the matcher is a food tool
+    for (const name of ["get_planning_context", "save_round_outline", "save_suggestion", "fail_suggestion"]) {
+      expect(tools.map((t) => t.name)).not.toContain(name);
+    }
+    expect(tools.map((t) => t.name)).toContain("match_ingredients");
     expect(await fails(client, "get_day_summary", {})).toContain("no tool");
     expect(await fails(client, "get_meal", { mealId: other.id })).toContain(`only use meal ${meal.id}`);
     await ok(client, "get_meal", { mealId: meal.id });

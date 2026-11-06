@@ -102,6 +102,12 @@ export class FoodService {
         add(h.food, "history", i, h.meals);
       });
     }
+    // asked for explicitly only (#45's matcher): what was looked up before, without the network
+    if (sources.has("cache")) {
+      this.repos.foods.searchCached(q, limit).forEach((f, i) => {
+        add(f, "cache", i, null);
+      });
+    }
     const ask = async (origin: "off" | "fdc", run: () => Promise<Food[]>) => {
       try {
         const foods = await this.remoteSearch(origin, q, limit, run);

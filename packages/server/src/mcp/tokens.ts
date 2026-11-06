@@ -6,7 +6,9 @@ export type McpPrincipal =
   /** The long-lived token in the data dir: interactive Claude Code / T3 sessions, full access. */
   | { kind: "interactive" }
   /** An analysis run (#8): may read and write its own meal only. */
-  | { kind: "run"; runId: string; mealId: string };
+  | { kind: "run"; runId: string; mealId: string }
+  /** A planning run (#45): the planning tools of its own round, and the food tools; no meal tools. */
+  | { kind: "plan"; runId: string; roundId: string };
 
 /** Run tokens expire on their own if a run never revokes them (it crashed). */
 export const RUN_TOKEN_TTL_MS = 2 * 60 * 60_000;
@@ -15,11 +17,10 @@ export const RUN_TOKEN_TTL_MS = 2 * 60 * 60_000;
 const newToken = () => `yamt_${randomBytes(32).toString("base64url")}`;
 const sha256 = (s: string) => createHash("sha256").update(s).digest();
 
-interface RunToken {
+type RunToken = ({ kind: "run"; mealId: string } | { kind: "plan"; roundId: string }) & {
   runId: string;
-  mealId: string;
   expiresAt: number;
-}
+};
 
 /**
  * Bearer tokens for `/mcp`:
@@ -27,9 +28,10 @@ interface RunToken {
  * - **Interactive:** one long-lived token in `<data>/mcp-token` (0600), created on first use and
  *   printed by `yamt mcp-token` for `export YAMT_MCP_TOKEN=…`. Rotating renames a new file into
  *   place; a running server notices (it re-reads the file when its inode or mtime changes).
- * - **Per run:** `mintRun` gives an analysis run a token scoped to one meal; `revokeRun` ends it
- *   when the run finishes, and it expires after `ttlMs` regardless. Kept in memory only (as
- *   hashes): a run never outlives the server process.
+ * - **Per run:** `mintRun` gives an analysis run a token scoped to one meal, `mintPlanRun` a
+ *   planning run one scoped to its round; `revokeRun` ends it when the run finishes, and it
+ *   expires after `ttlMs` regardless. Kept in memory only (as hashes): a run never outlives the
+ *   server process.
  */
 export class McpTokens {
   private runs = new Map<string, RunToken>();
@@ -62,12 +64,20 @@ export class McpTokens {
 
   /** A token for one analysis run, valid for its meal only. */
   mintRun(run: { runId: string; mealId: string; ttlMs?: number }): string {
+    return this.mint({ kind: "run", runId: run.runId, mealId: run.mealId }, run.ttlMs);
+  }
+
+  /** A token for one planning run, valid for its round only. */
+  mintPlanRun(run: { runId: string; roundId: string; ttlMs?: number }): string {
+    return this.mint({ kind: "plan", runId: run.runId, roundId: run.roundId }, run.ttlMs);
+  }
+
+  private mint(
+    t: { kind: "run"; runId: string; mealId: string } | { kind: "plan"; runId: string; roundId: string },
+    ttlMs = RUN_TOKEN_TTL_MS,
+  ): string {
     const token = newToken();
-    this.runs.set(sha256(token).toString("hex"), {
-      runId: run.runId,
-      mealId: run.mealId,
-      expiresAt: this.now() + (run.ttlMs ?? RUN_TOKEN_TTL_MS),
-    });
+    this.runs.set(sha256(token).toString("hex"), { ...t, expiresAt: this.now() + ttlMs });
     return token;
   }
 
@@ -81,7 +91,11 @@ export class McpTokens {
     const hash = sha256(token);
     const run = this.runs.get(hash.toString("hex"));
     if (run) {
-      if (run.expiresAt > this.now()) return { kind: "run", runId: run.runId, mealId: run.mealId };
+      if (run.expiresAt > this.now()) {
+        return run.kind === "run"
+          ? { kind: "run", runId: run.runId, mealId: run.mealId }
+          : { kind: "plan", runId: run.runId, roundId: run.roundId };
+      }
       this.runs.delete(hash.toString("hex"));
       return null;
     }

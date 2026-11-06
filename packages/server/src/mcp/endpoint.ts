@@ -8,6 +8,7 @@ import { IDENTITY_HEADER } from "../auth/identity.ts";
 import { VERSION } from "../config.ts";
 import { HttpError } from "../domain/errors.ts";
 import { handleError } from "../http/middleware.ts";
+import { planningTools } from "../planning/tools.ts";
 import type { Services } from "../services.ts";
 import type { McpPrincipal } from "./tokens.ts";
 import { allowed, callTool, MCP_INSTRUCTIONS, type Tool, yamtTools } from "./tools.ts";
@@ -36,7 +37,7 @@ const localOnly: MiddlewareHandler = async (c, next) => {
  * run token only ever sees the tools it may use.
  */
 export function createMcpApp(s: Services): Hono<BearerEnv<McpPrincipal>> {
-  const tools = yamtTools(s);
+  const tools = [...yamtTools(s), ...planningTools(s)];
   const app = new Hono<BearerEnv<McpPrincipal>>();
   app.onError(handleError);
   app.use("*", localOnly, requireBearer(s.mcpTokens.verify));

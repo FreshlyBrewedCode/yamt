@@ -29,7 +29,8 @@ import type { McpPrincipal } from "./tokens.ts";
 
 /** Sent as the MCP `instructions` (Claude Code puts them into the system prompt). */
 export const MCP_INSTRUCTIONS = `yamt is the user's meal and macro log: a meal is a set of raw captures (voice transcripts, photos, text, links); an analysis saves a revision of items (a food + grams, with provenance and confidence) whose totals yamt computes.
-Read a meal with get_meal, find foods with search_foods / lookup_barcode (personal history first, then Open Food Facts, then USDA) or create_food from a label, then save_meal_revision; never compute or state totals yourself.`;
+Read a meal with get_meal, find foods with search_foods / lookup_barcode (personal history first, then Open Food Facts, then USDA) or create_food from a label, then save_meal_revision; never compute or state totals yourself.
+A planning round (meal suggestions for the user's plan) is filled with get_planning_context, save_round_outline, match_ingredients (one call per recipe) and save_suggestion; yamt computes every number.`;
 
 /** Who calls a tool. */
 export interface ToolContext {
@@ -37,10 +38,11 @@ export interface ToolContext {
 }
 
 /**
- * Which callers may use a tool: `meal` tools take a `mealId` that a run token must match,
- * `food` tools are open to every token, `interactive` tools only to the interactive token.
+ * Which callers may use a tool: `meal` tools take a `mealId` that an analysis run's token must
+ * match, `plan` tools a `roundId` that a planning run's token must match (#45), `food` tools are
+ * open to every token, `interactive` tools only to the interactive token, which may use them all.
  */
-type Scope = "meal" | "food" | "interactive";
+export type Scope = "meal" | "plan" | "food" | "interactive";
 
 export interface Tool {
   name: string;
@@ -50,7 +52,7 @@ export interface Tool {
   run(args: Record<string, unknown>, ctx: ToolContext): Promise<unknown> | unknown;
 }
 
-function tool<S extends z.ZodObject>(def: {
+export function tool<S extends z.ZodObject>(def: {
   name: string;
   description: string;
   scope: Scope;
@@ -120,7 +122,7 @@ const QuestionInput = z
   })
   .strict();
 
-const RecipeItemInput = ItemInput.extend({
+export const RecipeItemInput = ItemInput.extend({
   grams: z
     .number()
     .positive()
@@ -309,6 +311,9 @@ export function yamtTools(s: Services): Tool[] {
           const c = s.repos.captures.get(args.captureId);
           if (c && c.mealId !== ctx.principal.mealId)
             throw new ToolError("that capture belongs to another meal");
+        }
+        if (args.captureId && ctx.principal.kind === "plan") {
+          throw new ToolError("captureId: a planning run has no captures; leave it out");
         }
         return foodOut(s.foods.create(args), iso);
       },
@@ -594,7 +599,7 @@ function foodOut(f: Food, iso: (ms: number | null) => string | null) {
   };
 }
 
-const totalsOut = (t: Totals) => ({
+export const totalsOut = (t: Totals) => ({
   grams: t.grams,
   ...t.nutrients,
   ...(Object.values(t.missing).some((n) => n > 0)
@@ -620,7 +625,7 @@ function plannedOut(p: PlannedMealView) {
   };
 }
 
-function recipeOut(v: RecipeView, iso: (ms: number | null) => string | null) {
+export function recipeOut(v: RecipeView, iso: (ms: number | null) => string | null) {
   const r = v.recipe;
   return {
     recipeId: r.id,
@@ -713,6 +718,9 @@ export async function callTool(
   if (t.scope === "meal" && ctx.principal.kind === "run" && input.mealId !== ctx.principal.mealId) {
     return errorResult(`this run may only use meal ${ctx.principal.mealId}`);
   }
+  if (t.scope === "plan" && ctx.principal.kind === "plan" && input.roundId !== ctx.principal.roundId) {
+    return errorResult(`this run may only use planning round ${ctx.principal.roundId}`);
+  }
   try {
     const out = await t.run(input, ctx);
     return { content: [{ type: "text", text: JSON.stringify(out, null, 1) }] };
@@ -725,7 +733,10 @@ export async function callTool(
 }
 
 export const allowed = (t: Tool, p: McpPrincipal): boolean =>
-  t.scope !== "interactive" || p.kind === "interactive";
+  p.kind === "interactive" ||
+  t.scope === "food" ||
+  (t.scope === "meal" && p.kind === "run") ||
+  (t.scope === "plan" && p.kind === "plan");
 
 const errorResult = (message: string): CallToolResult => ({
   content: [{ type: "text", text: message }],
