@@ -141,7 +141,7 @@ function NightlyRow({
           dish={Math.max(0, withKcal - (before?.energyKcal ?? 0))}
           target={kcalTarget}
           surface={picked ? "tint" : "page"}
-          className="mt-2.5 h-2"
+          className={cn("mt-2.5 h-2", quiet && "opacity-40")}
         />
       )}
       <Label className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-muted-foreground">
@@ -154,15 +154,12 @@ function NightlyRow({
           </>
         )}
         {per && proteinOpen !== null && (
-          <>
-            <span className={cn(!quiet && "text-foreground")}>
-              {formatNumber(per.protein)} of {formatNumber(proteinOpen)} g P
-            </span>
-            <span>·</span>
-          </>
+          <span className={cn(!quiet && "text-foreground")}>
+            {formatNumber(per.protein)} of {formatNumber(proteinOpen)} g P
+          </span>
         )}
-        {recipe && <span>{sourceLabel(recipe)}</span>}
       </Label>
+      {recipe && <Label className="mt-1 block truncate text-muted-foreground">{sourceLabel(recipe)}</Label>}
       {error && (
         <p className="mt-2.5 bg-orange px-3 py-2 font-bold text-orange-foreground text-sm" role="alert">
           {planError(error, "picking")}
