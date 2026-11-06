@@ -117,7 +117,10 @@ export interface NightlyResponse {
    * regenerated one hasn't finished (the earlier one stays until it has).
    */
   requests: PlanningRequestDetail[];
-  /** The latest run's starters (at most `STARTERS_MAX_AGE_MS` old), in its order; [] without. */
+  /**
+   * The latest run's starters (at most `STARTERS_MAX_AGE_MS` old), in its order; [] without, and
+   * while the run is off.
+   */
   starters: PlanningStarterView[];
 }
 

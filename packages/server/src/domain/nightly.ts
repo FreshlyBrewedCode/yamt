@@ -199,7 +199,8 @@ export class NightlyService {
 
   /**
    * The entry screen's nightly part: the settings, when the run is due, the open nightly requests
-   * for today or later (newest first) and the latest starters with what their references name.
+   * for today or later (newest first) and, while the run is on, the latest starters with what
+   * their references name.
    */
   view(): NightlyResponse {
     const now = this.now();
@@ -216,7 +217,10 @@ export class NightlyService {
         ? (this.repos.jobs.queued(dedupeKeys.nightly)?.runAfter ?? this.nextRunAt(now))
         : null,
       requests,
-      starters: this.repos.planningStarters.latest(now - STARTERS_MAX_AGE_MS).map((s) => this.starterView(s)),
+      // turned off: the code's starters again
+      starters: settings.enabled
+        ? this.repos.planningStarters.latest(now - STARTERS_MAX_AGE_MS).map((s) => this.starterView(s))
+        : [],
     };
   }
 

@@ -557,7 +557,13 @@ describe("save_starters (#48)", () => {
         starter({ kind: "like_meal", text: "Like Lachs", ref: { mealId: meal.id } }),
       ],
     });
-    // the view: the latest set, each reference read now (the app computes the number from it)
+    // the view: nothing while the run is off; on, the latest set, each reference read now (the app
+    // computes the number from it)
+    expect(s.nightly.view().starters).toEqual([]);
+    s.repos.settings.set(PLANNING_SETTINGS_KEY, {
+      ...DEFAULT_PLANNING_SETTINGS,
+      nightly: { ...DEFAULT_PLANNING_SETTINGS.nightly, enabled: true },
+    });
     const view = s.nightly.view();
     expect(view.starters.map((x) => [x.position, x.kind])).toEqual([
       [0, "variety"],
@@ -576,6 +582,7 @@ describe("save_starters (#48)", () => {
     // older than STARTERS_MAX_AGE_MS: not offered
     s.repos.db.query("UPDATE planning_starters SET created_at = created_at - ?").run(49 * 3_600_000);
     expect(s.nightly.view().starters).toEqual([]);
+    s.repos.settings.set(PLANNING_SETTINGS_KEY, DEFAULT_PLANNING_SETTINGS);
   });
 
   test("only a nightly round saves starters", async () => {
